@@ -254,8 +254,8 @@ type AbsenceKind = "business_trip" | "training" | "leave" | "other";  // 固定�
 | 進め方1 | リポジトリの構成 | **新しいリポジトリ1つにまとめる**。pnpm のワークスペースで、`platform/`（共通基盤）・`schedule/`（行事予定の本実装）・`packages/calendar-types/`（型の共有パッケージ）を置く。配備はサービスごとに別々に行う。school-timetable は今のまま別リポジトリで、型の共有パッケージを読み込む |
 | 進め方2 | 名前 | **`overdozer1124/school-manage`**（school-manage.jp に揃える）。リポジトリの作成は荒木が GitHub 上で行う（このセッションからは新規作成できない） |
 | 進め方3 | 最初に作るもの | **土台＋型＋共通基盤の認証**。①ワークスペースの土台（pnpm・TypeScript・drizzle・Postgres・CI・テスト）、②型の共有パッケージ（学校暦・共通マスタ・イベント）、③共通基盤の学校・人・所属・役割・ログイン（時間割の認証コードを移植） |
-| 進め方4 | 担い手 | **Builder は Cursor**。Claude は起票とレビューを担う |
-| 進め方4-2 | 受け渡し | **GitHub の Issue と PR で受け渡す**。Claude が設計書に沿って、作業を小さな Issue（目的・範囲・完了条件・テスト）に分けて起票する。Cursor が実装して PR を出し、Claude がレビューする（テストを自分で実行する）。マージは荒木が行う。台帳ファイルは使わず、Issue と PR の状態で進捗を追う。school-timetable 側の作業は、先方の運用に従う |
+| 進め方4 | 担い手 | **Builder は Muse**（同日、Cursor から変更。起動は荒木）。Claude は起票とレビューを担う |
+| 進め方4-2 | 受け渡し | **GitHub の Issue と PR で受け渡す**。Claude が設計書に沿って、作業を小さな Issue（目的・範囲・完了条件・テスト）に分けて起票する。Muse が実装して PR を出し、Claude がレビューする（テストを自分で実行する）。マージは荒木が行う。台帳ファイルは使わず、Issue と PR の状態で進捗を追う。swarmchat は連絡の通路だけに使い、正本は Issue と PR とする（`docs/WORKFLOW.md`）。school-timetable 側の作業は、先方の運用に従う |
 | 進め方5 | 設計書の置き場 | **school-manage へ移す**。school-manage の `docs/` を正本にし、school-schedule の各設計書は移転先を書いた短い文書にする。DESIGN.md（行事予定の定義駆動モデル）も、school-manage の schedule の設計として移す |
 
 ### 9.1 手順
@@ -268,5 +268,5 @@ type AbsenceKind = "business_trip" | "training" | "leave" | "other";  // 固定�
    - 共通基盤の DB（学校・人・所属・製品ごとの役割・契約・年度）
    - ログイン（Google OAuth・パスワード・JWT・所属承認の移植）
    - 開発用の認証アダプタ
-4. Cursor が Issue ごとに実装して PR を出し、Claude がレビューし、荒木がマージする。
+4. Muse が Issue ごとに実装して PR を出し、Claude がレビューし、荒木がマージする。
 5. school-timetable 側の Task（§8-2-2 ③、学校 ID の統一、「行事予定」ボタンの削除、設計メモの更新）は、先方の運用で起票する。
