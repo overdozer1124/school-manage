@@ -8,4 +8,4 @@ school-manage.jp の製品群のリポジトリです。
 
 時間割アプリは別リポジトリ（overdozer1124/school-timetable）です。
 
-設計の正本は `docs/` です（準備中）。
+設計の正本は `docs/` です（目次：[docs/README.md](docs/README.md)）。作業の流れは [docs/WORKFLOW.md](docs/WORKFLOW.md)。
