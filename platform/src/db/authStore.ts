@@ -1,14 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "./client.js";
 import {
   auditLog,
   memberships,
   persons,
   platformAdmins,
+  productEntitlements,
+  productRoles,
   schools,
   type Membership,
   type Person,
+  type Product,
+  type ProductEntitlement,
+  type ProductRole,
   type School,
 } from "./schema.js";
 
@@ -28,6 +33,8 @@ export interface AuthStore {
   findSchoolBySlug(slug: string): Promise<School | undefined>;
   findSchoolsByIds(schoolIds: string[]): Promise<School[]>;
   isPlatformAdmin(personId: string): Promise<boolean>;
+  findProductRole(membershipId: string, product: Product): Promise<ProductRole | undefined>;
+  findEntitlement(schoolId: string, product: Product): Promise<ProductEntitlement | undefined>;
   linkGoogleId(personId: string, googleId: string): Promise<void>;
   appendAudit(entry: {
     schoolId?: string | null;
@@ -85,6 +92,26 @@ export function createAuthStore(db: Db): AuthStore {
         .where(eq(platformAdmins.personId, personId))
         .limit(1);
       return rows.length > 0;
+    },
+
+    async findProductRole(membershipId, product) {
+      const rows = await db
+        .select()
+        .from(productRoles)
+        .where(and(eq(productRoles.membershipId, membershipId), eq(productRoles.product, product)))
+        .limit(1);
+      return rows[0];
+    },
+
+    async findEntitlement(schoolId, product) {
+      const rows = await db
+        .select()
+        .from(productEntitlements)
+        .where(
+          and(eq(productEntitlements.schoolId, schoolId), eq(productEntitlements.product, product)),
+        )
+        .limit(1);
+      return rows[0];
     },
 
     async linkGoogleId(personId, googleId) {

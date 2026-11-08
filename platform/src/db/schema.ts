@@ -192,3 +192,7 @@ export const auditLog = pgTable("audit_log", {
 export type School = typeof schools.$inferSelect;
 export type Person = typeof persons.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
+export type ProductRole = typeof productRoles.$inferSelect;
+export type ProductEntitlement = typeof productEntitlements.$inferSelect;
+export type Product = (typeof productEnum.enumValues)[number];
+export type Role = (typeof roleEnum.enumValues)[number];

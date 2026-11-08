@@ -1,0 +1,23 @@
+{
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./dev": "./src/dev.ts"
+  },
+  "name": "@school-manage/platform-client",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module",
+  "version": "0.1.0"
+}

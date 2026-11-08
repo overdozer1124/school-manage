@@ -1,5 +1,5 @@
 import type { AuthStore } from "../db/authStore.js";
-import type { Membership, Person, School } from "../db/schema.js";
+import type { Membership, Person, Product, Role, School } from "../db/schema.js";
 import type { AuthConfig } from "./config.js";
 import { AuthError } from "./errors.js";
 import type { GoogleAuthClient } from "./google.js";
@@ -357,6 +357,68 @@ export async function getMe(ctx: Ctx, claims: SessionClaims): Promise<MeResult> 
   return {
     user: personSummary(person),
     school: schoolSummary(school),
+    teacherId: membership.teacherId,
+  };
+}
+
+export interface AuthContextResult {
+  /** The platform's person id (the products' userId). */
+  userId: string;
+  schoolId: string;
+  product: Product;
+  role: Role;
+  isSuperAdmin: boolean;
+  teacherId: string | null;
+}
+
+const PRODUCTS: readonly Product[] = ["schedule", "timetable"];
+
+/**
+ * The authorization context a product service asks for (Issue #6,
+ * DESIGN-AUTH-TENANCY 4.1): the caller has already verified the session
+ * token, so an unknown person is 401, while everything the token is
+ * not entitled to — an unapproved or out-of-period membership, a
+ * missing product role, a stopped or out-of-period entitlement — is
+ * 403. The client distinguishes the two (4.8): 401 sends the person to
+ * the login page, 403 shows "no permission".
+ */
+export async function getAuthContext(
+  ctx: Ctx,
+  claims: SessionClaims,
+  productParam: string,
+): Promise<AuthContextResult> {
+  if (!PRODUCTS.includes(productParam as Product)) {
+    throw new AuthError(400, "製品の指定が正しくありません");
+  }
+  const product = productParam as Product;
+
+  const person = await ctx.store.findPersonById(claims.personId);
+  if (!person) throw new AuthError(401, "認証が必要です");
+
+  const candidates = await candidatesFor(ctx, person.id);
+  const membership = candidates.find((m) => m.schoolId === claims.schoolId);
+  if (!membership) throw new AuthError(403, "権限がありません");
+
+  const roleRow = await ctx.store.findProductRole(membership.id, product);
+  if (!roleRow) throw new AuthError(403, "権限がありません");
+
+  const entitlement = await ctx.store.findEntitlement(claims.schoolId, product);
+  const today = todayString();
+  if (
+    !entitlement ||
+    entitlement.status !== "active" ||
+    entitlement.startsOn > today ||
+    (entitlement.endsOn !== null && entitlement.endsOn < today)
+  ) {
+    throw new AuthError(403, "権限がありません");
+  }
+
+  return {
+    userId: person.id,
+    schoolId: claims.schoolId,
+    product,
+    role: roleRow.role,
+    isSuperAdmin: await ctx.store.isPlatformAdmin(person.id),
     teacherId: membership.teacherId,
   };
 }
