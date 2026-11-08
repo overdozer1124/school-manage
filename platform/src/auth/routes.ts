@@ -92,10 +92,14 @@ function requireClaims(deps: AuthRouterDeps, token: string | null): TokenClaims 
 function sendLoginResult(deps: AuthRouterDeps, res: Response, result: LoginResult): void {
   if (result.kind === "session") {
     // The cookie's Max-Age follows JWT_EXPIRES_IN so the two cannot drift.
-    res.setHeader(
-      "Set-Cookie",
+    // Issuing a session also clears the selection cookie: /select-school
+    // reads platform_select first, so a leftover selection token from a
+    // previous user of the same browser could otherwise be exchanged
+    // for that person's session.
+    res.setHeader("Set-Cookie", [
       sessionCookie(result.token, expiresInToSeconds(deps.config.jwtExpiresIn)),
-    );
+      clearedSelectionCookie(),
+    ]);
     // The token travels only in the HttpOnly cookie, never in the body:
     // a body token would be readable by any script on the page.
     res.json({ user: result.user, school: result.school });

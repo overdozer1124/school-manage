@@ -26,6 +26,18 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     );
   }
 
+  // JWT_EXPIRES_IN must be a number with an explicit unit (s/m/h/d).
+  // jsonwebtoken also accepts shapes like "7 days" or a bare "3600"
+  // (which it reads as milliseconds), but the session cookie's Max-Age
+  // is derived from this value in whole seconds — shapes the two sides
+  // would read differently are refused here so they can never drift.
+  const jwtExpiresIn = env.JWT_EXPIRES_IN || "7d";
+  if (!/^\d+[smhd]$/.test(jwtExpiresIn)) {
+    throw new Error(
+      'JWT_EXPIRES_IN must be a number followed by one of s, m, h, d (for example "7d" or "12h").',
+    );
+  }
+
   const googleClientId = env.GOOGLE_CLIENT_ID || undefined;
   const googleClientSecret = env.GOOGLE_CLIENT_SECRET || undefined;
   if ((googleClientId === undefined) !== (googleClientSecret === undefined)) {
@@ -36,7 +48,7 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
 
   return {
     jwtSecret,
-    jwtExpiresIn: env.JWT_EXPIRES_IN || "7d",
+    jwtExpiresIn,
     googleClientId,
     googleClientSecret,
     allowSuperAdminGoogleLogin:

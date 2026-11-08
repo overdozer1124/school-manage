@@ -33,6 +33,13 @@ describe("loadAuthConfig", () => {
     expect(config.googleClientId).toBeUndefined();
   });
 
+  it("refuses JWT_EXPIRES_IN shapes the cookie lifetime cannot mirror", () => {
+    const base = { JWT_SECRET: "unit-test-secret" };
+    expect(() => loadAuthConfig({ ...base, JWT_EXPIRES_IN: "3600" })).toThrow(/JWT_EXPIRES_IN/);
+    expect(() => loadAuthConfig({ ...base, JWT_EXPIRES_IN: "7 days" })).toThrow(/JWT_EXPIRES_IN/);
+    expect(loadAuthConfig({ ...base, JWT_EXPIRES_IN: "12h" }).jwtExpiresIn).toBe("12h");
+  });
+
   it("requires the Google pair to be set together", () => {
     expect(() =>
       loadAuthConfig({ JWT_SECRET: "unit-test-secret", GOOGLE_CLIENT_ID: "id-only" }),
@@ -163,7 +170,10 @@ describe("expiresInToSeconds", () => {
     expect(expiresInToSeconds("7d")).toBe(604_800);
     expect(expiresInToSeconds("12h")).toBe(43_200);
     expect(expiresInToSeconds("30m")).toBe(1_800);
-    expect(expiresInToSeconds("3600")).toBe(3_600);
+    // A unit is required (loadAuthConfig refuses unit-less values,
+    // which jsonwebtoken would read as milliseconds); the fallback
+    // here is the 7-day default.
+    expect(expiresInToSeconds("3600")).toBe(604_800);
     expect(expiresInToSeconds("bogus")).toBe(604_800);
   });
 });

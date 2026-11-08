@@ -304,6 +304,10 @@ describe.skipIf(!url)("auth API", () => {
     );
     expect(chosen.status).toBe(200);
     expect(chosen.json.school?.schoolId).toBe(B);
+    // Issuing the session clears the selection cookie, so a leftover
+    // selection token can never be exchanged on a shared browser.
+    expect(chosen.setCookie).toContain("platform_select=;");
+    expect(chosen.setCookie).toContain("Max-Age=0");
 
     const switched = await post(
       "/platform/api/v1/auth/select-school",

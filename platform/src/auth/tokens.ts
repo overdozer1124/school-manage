@@ -54,15 +54,17 @@ export function signSelectionToken(config: AuthConfig, personId: string): string
 }
 
 /**
- * Seconds for a jsonwebtoken-style expiry ("7d", "12h", "30m", "3600"),
- * so the cookie's Max-Age can follow JWT_EXPIRES_IN instead of drifting
- * away from it. Unrecognised shapes fall back to the 7-day default.
+ * Seconds for a JWT_EXPIRES_IN value ("7d", "12h", "30m"), so the
+ * cookie's Max-Age follows the token's own lifetime instead of drifting
+ * away from it. loadAuthConfig only accepts this shape (a unit is
+ * required — jsonwebtoken would read a bare number as milliseconds),
+ * so the fallback here is unreachable for configured values.
  */
 export function expiresInToSeconds(expiresIn: string): number {
-  const match = /^(\d+)\s*([smhd])?$/.exec(expiresIn.trim());
+  const match = /^(\d+)([smhd])$/.exec(expiresIn.trim());
   if (!match) return 7 * 24 * 60 * 60;
   const value = Number(match[1]);
-  const unit = match[2] ?? "s";
+  const unit = match[2] as string;
   const multiplier = unit === "d" ? 86_400 : unit === "h" ? 3_600 : unit === "m" ? 60 : 1;
   return value * multiplier;
 }
