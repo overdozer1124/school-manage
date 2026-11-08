@@ -11,6 +11,13 @@ import type { AuthConfig } from "./config.js";
 export interface GoogleProfile {
   googleId: string;
   email?: string | undefined;
+  /**
+   * Whether Google has verified the person owns this email address
+   * (the id token's email_verified claim). An unverified email must
+   * never be used to look a person up: anyone can register a Google
+   * account carrying someone else's address.
+   */
+  emailVerified: boolean;
   name?: string | undefined;
 }
 
@@ -41,7 +48,12 @@ export function createGoogleAuthClient(config: AuthConfig): GoogleAuthClient {
       if (!payload?.sub) {
         throw new Error("IDトークンの検証に失敗しました");
       }
-      return { googleId: payload.sub, email: payload.email, name: payload.name };
+      return {
+        googleId: payload.sub,
+        email: payload.email,
+        emailVerified: payload.email_verified === true,
+        name: payload.name,
+      };
     },
   };
 }

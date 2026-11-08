@@ -12,7 +12,12 @@ import {
   selectSchool,
   type LoginResult,
 } from "./service.js";
-import { isSelectionClaims, verifyAuthToken, type TokenClaims } from "./tokens.js";
+import {
+  expiresInToSeconds,
+  isSelectionClaims,
+  verifyAuthToken,
+  type TokenClaims,
+} from "./tokens.js";
 
 /**
  * HTTP surface for the login flow: /platform/api/v1/auth/* (versioned
@@ -21,6 +26,14 @@ import { isSelectionClaims, verifyAuthToken, type TokenClaims } from "./tokens.j
  * HttpOnly; Secure; SameSite=Lax; Path=/ (DESIGN-AUTH-TENANCY 4.8).
  */
 export const SESSION_COOKIE = "platform_session";
+
+/**
+ * The pre-selection token gets its own cookie, scoped to the auth API:
+ * other services read only platform_session, so a token that has no
+ * school yet can never be mistaken for a session there.
+ */
+export const SELECT_COOKIE = "platform_select";
+const SELECT_COOKIE_PATH = "/platform/api/v1/auth";
 
 export interface AuthRouterDeps {
   store: AuthStore;
@@ -37,40 +50,60 @@ function clearedCookie(): string {
   return `${SESSION_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
-function readToken(req: Request): string | null {
+function selectionCookie(token: string): string {
+  return `${SELECT_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Lax; Path=${SELECT_COOKIE_PATH}; Max-Age=${10 * 60}`;
+}
+
+function clearedSelectionCookie(): string {
+  return `${SELECT_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=${SELECT_COOKIE_PATH}; Max-Age=0`;
+}
+
+function readCookie(req: Request, name: string): string | null {
   const cookieHeader = req.headers.cookie;
-  if (cookieHeader) {
-    for (const part of cookieHeader.split(";")) {
-      const eq = part.indexOf("=");
-      if (eq > 0 && part.slice(0, eq).trim() === SESSION_COOKIE) {
-        return decodeURIComponent(part.slice(eq + 1).trim());
-      }
+  if (!cookieHeader) return null;
+  for (const part of cookieHeader.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq > 0 && part.slice(0, eq).trim() === name) {
+      return decodeURIComponent(part.slice(eq + 1).trim());
     }
-  }
-  const authorization = req.headers.authorization;
-  if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length);
   }
   return null;
 }
 
-function requireClaims(deps: AuthRouterDeps, req: Request): TokenClaims {
-  const token = readToken(req);
+/** The session cookie only: tokens are never read from headers or bodies. */
+function readSessionToken(req: Request): string | null {
+  return readCookie(req, SESSION_COOKIE);
+}
+
+/**
+ * For choosing a school: the selection cookie if present, else the
+ * session cookie (a signed-in person switching schools).
+ */
+function readChoiceToken(req: Request): string | null {
+  return readCookie(req, SELECT_COOKIE) ?? readCookie(req, SESSION_COOKIE);
+}
+
+function requireClaims(deps: AuthRouterDeps, token: string | null): TokenClaims {
   const claims = token ? verifyAuthToken(deps.config, token) : null;
   if (!claims) throw new AuthError(401, "認証が必要です");
   return claims;
 }
 
-function sendLoginResult(res: Response, result: LoginResult): void {
+function sendLoginResult(deps: AuthRouterDeps, res: Response, result: LoginResult): void {
   if (result.kind === "session") {
-    res.setHeader("Set-Cookie", sessionCookie(result.token, 7 * 24 * 60 * 60));
-    res.json({ token: result.token, user: result.user, school: result.school });
+    // The cookie's Max-Age follows JWT_EXPIRES_IN so the two cannot drift.
+    res.setHeader(
+      "Set-Cookie",
+      sessionCookie(result.token, expiresInToSeconds(deps.config.jwtExpiresIn)),
+    );
+    // The token travels only in the HttpOnly cookie, never in the body:
+    // a body token would be readable by any script on the page.
+    res.json({ user: result.user, school: result.school });
     return;
   }
-  res.setHeader("Set-Cookie", sessionCookie(result.selectionToken, 10 * 60));
+  res.setHeader("Set-Cookie", selectionCookie(result.selectionToken));
   res.json({
     schoolSelectionRequired: true,
-    selectionToken: result.selectionToken,
     user: result.user,
     schools: result.schools,
   });
@@ -149,7 +182,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         password: input.password,
         ...(input.schoolId !== undefined ? { schoolId: input.schoolId } : {}),
       });
-      sendLoginResult(res, result);
+      sendLoginResult(deps, res, result);
     } catch (error) {
       handleError(res, error);
     }
@@ -157,12 +190,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
 
   router.post("/select-school", async (req, res) => {
     try {
-      const claims = requireClaims(deps, req);
+      const claims = requireClaims(deps, readChoiceToken(req));
       const input = parseBody(selectSchoolSchema, req);
       // Both a selection token and a live session may choose: the first
       // completes the login, the second is switching schools.
       const result = await selectSchool(ctx, claims.personId, input.schoolId);
-      sendLoginResult(res, result);
+      sendLoginResult(deps, res, result);
     } catch (error) {
       handleError(res, error);
     }
@@ -173,13 +206,13 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     // the shared cookie, which is what the browsers of the three
     // services use. The token itself expires on its own schedule.
     void req;
-    res.setHeader("Set-Cookie", clearedCookie());
+    res.setHeader("Set-Cookie", [clearedCookie(), clearedSelectionCookie()]);
     res.json({ success: true });
   });
 
   router.get("/me", async (req, res) => {
     try {
-      const claims = requireClaims(deps, req);
+      const claims = requireClaims(deps, readSessionToken(req));
       if (isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
       const me = await getMe(ctx, claims);
       res.json(me);
@@ -223,7 +256,7 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           ...(input.schoolId !== undefined ? { schoolId: input.schoolId } : {}),
         },
       );
-      sendLoginResult(res, result);
+      sendLoginResult(deps, res, result);
     } catch (error) {
       handleError(res, error);
     }

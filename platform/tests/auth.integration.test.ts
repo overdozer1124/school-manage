@@ -25,6 +25,7 @@ const SECRET = "integration-test-secret";
 let fakeProfile: GoogleProfile = {
   googleId: "google-sub-1",
   email: "google@example.jp",
+  emailVerified: true,
   name: "Google利用者",
 };
 const fakeGoogle: GoogleAuthClient = {
@@ -83,6 +84,11 @@ describe.skipIf(!url)("auth API", () => {
 
   function cookieOf(setCookie: string): string {
     return setCookie.split(";")[0] as string;
+  }
+
+  function tokenOf(setCookie: string): string {
+    const pair = cookieOf(setCookie);
+    return decodeURIComponent(pair.slice(pair.indexOf("=") + 1));
   }
 
   beforeAll(async () => {
@@ -222,6 +228,7 @@ describe.skipIf(!url)("auth API", () => {
     expect(login.setCookie).toContain("Secure");
     expect(login.setCookie).toContain("SameSite=Lax");
     expect(login.setCookie).toContain("Path=/");
+    expect("token" in login.json).toBe(false);
 
     const me = await get("/platform/api/v1/auth/me", {
       cookie: cookieOf(login.setCookie),
@@ -237,7 +244,7 @@ describe.skipIf(!url)("auth API", () => {
       email: "single@example.jp",
       password: "single-pass-1",
     });
-    const payload = jwt.verify(login.json.token ?? "", SECRET) as jwt.JwtPayload;
+    const payload = jwt.verify(tokenOf(login.setCookie), SECRET) as jwt.JwtPayload;
     expect(payload.personId).toBe("p-single");
     expect(payload.schoolId).toBe(A);
     expect("role" in payload).toBe(false);
@@ -278,6 +285,10 @@ describe.skipIf(!url)("auth API", () => {
     });
     expect(login.status).toBe(200);
     expect(login.json.schoolSelectionRequired).toBe(true);
+    expect(login.setCookie).toContain("platform_select=");
+    expect(login.setCookie).toContain("Path=/platform/api/v1/auth");
+    expect("token" in login.json).toBe(false);
+    expect("selectionToken" in login.json).toBe(false);
     expect((login.json.schools ?? []).map((s) => s.schoolId).sort()).toEqual([A, B]);
 
     // A selection token alone does not open /me.
@@ -355,6 +366,7 @@ describe.skipIf(!url)("auth API", () => {
     fakeProfile = {
       googleId: "google-sub-1",
       email: "google@example.jp",
+      emailVerified: true,
       name: "Google利用者",
     };
     const urlRes = await post("/platform/api/v1/auth/google/url", {
@@ -373,6 +385,48 @@ describe.skipIf(!url)("auth API", () => {
     expect(callback.status).toBe(200);
     expect(callback.json.user?.id).toBe("p-google");
     expect(callback.json.school?.schoolId).toBe(B);
+  });
+
+  it("never matches a Google account by an unverified email", async () => {
+    const urlRes = await post("/platform/api/v1/auth/google/url", {
+      redirectUri: "http://localhost/callback",
+    });
+    // The address belongs to the registered person, but Google has not
+    // verified this account owns it, and the Google id is unknown:
+    // matching on the address would hand over the person's account.
+    fakeProfile = {
+      googleId: "google-sub-attacker",
+      email: "google@example.jp",
+      emailVerified: false,
+      name: "未確認",
+    };
+    const res = await post("/platform/api/v1/auth/google/callback", {
+      code: "fake-code",
+      state: urlRes.json.state,
+      redirectUri: "http://localhost/callback",
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("still logs in by Google id when the email is unverified", async () => {
+    const urlRes = await post("/platform/api/v1/auth/google/url", {
+      redirectUri: "http://localhost/callback",
+      schoolSlug: "school-b",
+    });
+    fakeProfile = {
+      googleId: "google-sub-1",
+      email: "google@example.jp",
+      emailVerified: false,
+      name: "Google利用者",
+    };
+    const res = await post("/platform/api/v1/auth/google/callback", {
+      code: "fake-code",
+      state: urlRes.json.state,
+      redirectUri: "http://localhost/callback",
+    });
+    expect(res.status).toBe(200);
+    expect(res.json.user?.id).toBe("p-google");
+    expect(res.json.school?.schoolId).toBe(B);
   });
 
   it("refuses a tampered OAuth state, an unregistered Google account and a bad code", async () => {
@@ -398,6 +452,7 @@ describe.skipIf(!url)("auth API", () => {
     fakeProfile = {
       googleId: "google-sub-unknown",
       email: "stranger@example.jp",
+      emailVerified: true,
       name: "未登録",
     };
     const stranger = await post("/platform/api/v1/auth/google/callback", {
@@ -410,6 +465,7 @@ describe.skipIf(!url)("auth API", () => {
     fakeProfile = {
       googleId: "google-sub-1",
       email: "google@example.jp",
+      emailVerified: true,
       name: "Google利用者",
     };
     const badCode = await post("/platform/api/v1/auth/google/callback", {

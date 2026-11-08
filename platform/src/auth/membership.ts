@@ -17,9 +17,23 @@ export const UNCONFIRMED_SCHOOL_MEMBERSHIP_MESSAGE =
 export const AMBIGUOUS_SCHOOL_MEMBERSHIP_MESSAGE =
   "同じメールアドレスが複数の学校に登録されています。学校を指定してログインしてください。";
 
-/** Today as a YYYY-MM-DD date string, matching the date columns. */
+/**
+ * Today as a YYYY-MM-DD date string, matching the date columns. The
+ * schools are in Japan, so "today" is the Asia/Tokyo calendar date —
+ * with UTC, the enrolment period would turn over at 09:00 JST instead
+ * of at midnight, and a membership starting on 1 April could not be
+ * chosen until 09:00 that morning. The parts are assembled by hand so
+ * the result does not depend on a locale's date ordering.
+ */
 export function todayString(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const byType = new Map(parts.map((p) => [p.type, p.value]));
+  return `${byType.get("year")}-${byType.get("month")}-${byType.get("day")}`;
 }
 
 export function isMembershipApproved(membership: Pick<Membership, "status">): boolean {

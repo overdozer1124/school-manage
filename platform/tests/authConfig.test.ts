@@ -1,8 +1,14 @@
+import jwt from "jsonwebtoken";
 import { describe, expect, it } from "vitest";
 import { loadAuthConfig } from "../src/auth/config.js";
-import { candidateMemberships, isMembershipCandidate } from "../src/auth/membership.js";
+import {
+  candidateMemberships,
+  isMembershipCandidate,
+  todayString,
+} from "../src/auth/membership.js";
 import { createLoginOAuthState, parseLoginOAuthState } from "../src/auth/oauthState.js";
 import {
+  expiresInToSeconds,
   hashPassword,
   signSelectionToken,
   signSessionToken,
@@ -113,6 +119,15 @@ describe("tokens and passwords", () => {
     });
   });
 
+  it("refuses tokens signed with a different algorithm (HS256 only)", () => {
+    const token = jwt.sign(
+      { personId: "person-1", schoolId: "school-a", email: "a@example.jp" },
+      "unit-test-secret",
+      { algorithm: "HS512", expiresIn: "1h" },
+    );
+    expect(verifyAuthToken(config, token)).toBeNull();
+  });
+
   it("refuses tokens signed with another secret and garbage", () => {
     const other = loadAuthConfig({ JWT_SECRET: "another-secret" });
     const token = signSessionToken(other, {
@@ -129,5 +144,26 @@ describe("tokens and passwords", () => {
     expect(hash).not.toContain("correct horse");
     await expect(verifyPassword("correct horse battery staple", hash)).resolves.toBe(true);
     await expect(verifyPassword("wrong", hash)).resolves.toBe(false);
+  });
+});
+
+describe("todayString (Asia/Tokyo)", () => {
+  it("turns over at midnight JST, not at 09:00 JST", () => {
+    // 2026-03-31T16:00:00Z is 2026-04-01 01:00 in Tokyo: already April.
+    expect(todayString(new Date("2026-03-31T16:00:00Z"))).toBe("2026-04-01");
+    // One second before midnight JST it is still 31 March.
+    expect(todayString(new Date("2026-03-31T14:59:59Z"))).toBe("2026-03-31");
+    // Exactly midnight JST at the start of 2 April.
+    expect(todayString(new Date("2026-04-01T15:00:00Z"))).toBe("2026-04-02");
+  });
+});
+
+describe("expiresInToSeconds", () => {
+  it("converts the shapes JWT_EXPIRES_IN takes", () => {
+    expect(expiresInToSeconds("7d")).toBe(604_800);
+    expect(expiresInToSeconds("12h")).toBe(43_200);
+    expect(expiresInToSeconds("30m")).toBe(1_800);
+    expect(expiresInToSeconds("3600")).toBe(3_600);
+    expect(expiresInToSeconds("bogus")).toBe(604_800);
   });
 });

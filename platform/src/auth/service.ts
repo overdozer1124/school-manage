@@ -253,18 +253,26 @@ export async function loginWithGoogle(
     await audit(ctx, { action: "auth.google_login.failure", summary: "Google認証に失敗" });
     throw new AuthError(500, "Googleログインに失敗しました");
   }
-  if (!profile.email) {
-    throw new AuthError(400, "メールアドレスが取得できませんでした");
-  }
   if (!profile.googleId) {
     throw new AuthError(400, "Google IDが取得できませんでした");
   }
 
   // Registered and confirmed only (source: resolveConfirmedSchoolUser-
-  // ForGoogleLogin). Look up by email first, then by Google id.
-  let person = await ctx.store.findPersonByEmail(profile.email);
-  if (!person && profile.googleId) {
-    person = await ctx.store.findPersonByGoogleId(profile.googleId);
+  // ForGoogleLogin). Look the person up by Google id (the stable
+  // subject) first. The email address may only be used when Google has
+  // verified the person owns it (email_verified): an unverified email
+  // can belong to somebody else, and matching on it would hand over
+  // that person's account.
+  let person = await ctx.store.findPersonByGoogleId(profile.googleId);
+  if (!person && (!profile.email || !profile.emailVerified)) {
+    await audit(ctx, {
+      action: "auth.google_login.failure",
+      summary: "メールアドレスが確認されていない",
+    });
+    throw new AuthError(403, UNCONFIRMED_SCHOOL_MEMBERSHIP_MESSAGE);
+  }
+  if (!person) {
+    person = await ctx.store.findPersonByEmail(profile.email as string);
   }
   if (!person) {
     await audit(ctx, {
