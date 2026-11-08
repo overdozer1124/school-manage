@@ -7,7 +7,7 @@ services:
       PLATFORM_DB_PASSWORD: ${PLATFORM_DB_PASSWORD:?Set PLATFORM_DB_PASSWORD in .env}
       SCHEDULE_DB_PASSWORD: ${SCHEDULE_DB_PASSWORD:?Set SCHEDULE_DB_PASSWORD in .env}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro

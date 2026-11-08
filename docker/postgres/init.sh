@@ -4,18 +4,18 @@
 # the superuser) and by CI (run manually against the Postgres service).
 # A role for one database gets no CONNECT privilege on the other database,
 # so credentials cannot cross the platform / schedule boundary (8-3-2).
+# Passwords are passed as psql variables, never interpolated into the SQL
+# text, so a password containing a quote cannot break the script.
 set -eu
 
 : "${PLATFORM_DB_PASSWORD:?PLATFORM_DB_PASSWORD is required}"
 : "${SCHEDULE_DB_PASSWORD:?SCHEDULE_DB_PASSWORD is required}"
 
-psql_admin() {
-  psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER:-postgres}" "$@"
-}
-
-psql_admin <<SQL
-CREATE ROLE platform_app LOGIN PASSWORD '${PLATFORM_DB_PASSWORD}';
-CREATE ROLE schedule_app LOGIN PASSWORD '${SCHEDULE_DB_PASSWORD}';
+psql -v ON_ERROR_STOP=1 --username "${POSTGRES_USER:-postgres}" \
+  -v platform_pw="$PLATFORM_DB_PASSWORD" \
+  -v schedule_pw="$SCHEDULE_DB_PASSWORD" <<SQL
+CREATE ROLE platform_app LOGIN PASSWORD :'platform_pw';
+CREATE ROLE schedule_app LOGIN PASSWORD :'schedule_pw';
 CREATE DATABASE platform OWNER platform_app;
 CREATE DATABASE schedule OWNER schedule_app;
 REVOKE CONNECT ON DATABASE platform FROM PUBLIC;
