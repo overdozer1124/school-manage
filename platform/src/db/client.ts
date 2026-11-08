@@ -14,3 +14,5 @@ export function createDb(connectionString: string | undefined = process.env.PLAT
   const queryClient = postgres(connectionString, { max: 1 });
   return { db: drizzle(queryClient), queryClient };
 }
+
+export type Db = ReturnType<typeof createDb>["db"];
