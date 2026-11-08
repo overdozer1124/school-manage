@@ -1,14 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db } from "./client.js";
 import {
   auditLog,
   memberships,
   persons,
   platformAdmins,
+  productEntitlements,
+  productRoles,
   schools,
   type Membership,
   type Person,
+  type Product,
+  type ProductEntitlement,
+  type ProductRole,
   type School,
 } from "./schema.js";
 
@@ -28,6 +33,19 @@ export interface AuthStore {
   findSchoolBySlug(slug: string): Promise<School | undefined>;
   findSchoolsByIds(schoolIds: string[]): Promise<School[]>;
   isPlatformAdmin(personId: string): Promise<boolean>;
+  findProductRole(membershipId: string, product: Product): Promise<ProductRole | undefined>;
+  /**
+   * The entitlement in force on `today` for a school and product, or
+   * undefined. A school can hold several rows for one product over
+   * time (a cancelled contract, then a new one), so validity is part
+   * of the query itself; picking any single row with limit 1 and no
+   * order would leave the answer to chance.
+   */
+  findValidEntitlement(
+    schoolId: string,
+    product: Product,
+    today: string,
+  ): Promise<ProductEntitlement | undefined>;
   linkGoogleId(personId: string, googleId: string): Promise<void>;
   appendAudit(entry: {
     schoolId?: string | null;
@@ -85,6 +103,33 @@ export function createAuthStore(db: Db): AuthStore {
         .where(eq(platformAdmins.personId, personId))
         .limit(1);
       return rows.length > 0;
+    },
+
+    async findProductRole(membershipId, product) {
+      const rows = await db
+        .select()
+        .from(productRoles)
+        .where(and(eq(productRoles.membershipId, membershipId), eq(productRoles.product, product)))
+        .limit(1);
+      return rows[0];
+    },
+
+    async findValidEntitlement(schoolId, product, today) {
+      const rows = await db
+        .select()
+        .from(productEntitlements)
+        .where(
+          and(
+            eq(productEntitlements.schoolId, schoolId),
+            eq(productEntitlements.product, product),
+            eq(productEntitlements.status, "active"),
+            lte(productEntitlements.startsOn, today),
+            or(isNull(productEntitlements.endsOn), gte(productEntitlements.endsOn, today)),
+          ),
+        )
+        .orderBy(desc(productEntitlements.startsOn))
+        .limit(1);
+      return rows[0];
     },
 
     async linkGoogleId(personId, googleId) {

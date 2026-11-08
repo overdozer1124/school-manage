@@ -6,6 +6,7 @@ import { AuthError } from "./errors.js";
 import { createGoogleAuthClient, type GoogleAuthClient } from "./google.js";
 import {
   buildGoogleAuthUrl,
+  getAuthContext,
   getMe,
   loginWithGoogle,
   loginWithPassword,
@@ -220,6 +221,21 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       if (isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
       const me = await getMe(ctx, claims);
       res.json(me);
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  // The context lookup the product services' verifyRequest calls
+  // (Issue #6): the session cookie in, the AuthContext out, with
+  // 401 (not logged in) and 403 (not entitled) kept apart.
+  router.get("/context", async (req, res) => {
+    try {
+      const claims = requireClaims(deps, readSessionToken(req));
+      if (isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
+      const product = typeof req.query.product === "string" ? req.query.product : "";
+      const context = await getAuthContext(ctx, claims, product);
+      res.json(context);
     } catch (error) {
       handleError(res, error);
     }

@@ -9,9 +9,15 @@ import { hashPassword } from "../src/auth/tokens.js";
 import { createAuthStore } from "../src/db/authStore.js";
 import { createDb, type Db } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { auditLog, persons, schools } from "../src/db/schema.js";
+import {
+  auditLog,
+  memberships,
+  persons,
+  productEntitlements,
+  productRoles,
+  schools,
+} from "../src/db/schema.js";
 import { tenantDb } from "../src/db/tenant.js";
-import { memberships } from "../src/db/schema.js";
 
 // Login flow tests (Issue #5) against a real Postgres and the real HTTP
 // app, with a fake Google client (the Issue allows a mock for Google).
@@ -55,6 +61,10 @@ describe.skipIf(!url)("auth API", () => {
     state?: string;
     schoolId?: string;
     teacherId?: string | null;
+    userId?: string;
+    product?: string;
+    role?: string;
+    isSuperAdmin?: boolean;
   }
 
   async function post(
@@ -192,6 +202,36 @@ describe.skipIf(!url)("auth API", () => {
     });
     await tdbB.insert(memberships, { id: "m-google-b", personId: "p-google", status: "approved" });
     await tdbA.insert(memberships, { id: "m-nopw-a", personId: "p-nopw", status: "approved" });
+
+    // For the context endpoint (Issue #6): school A has an active
+    // schedule entitlement and p-single is its Admin; school B's
+    // entitlement is suspended even though p-multi holds a role there.
+    await tdbA.insert(productRoles, {
+      id: "pr-single-a-schedule",
+      membershipId: "m-single-a",
+      product: "schedule",
+      role: "Admin",
+    });
+    await tdbB.insert(productRoles, {
+      id: "pr-multi-b-schedule",
+      membershipId: "m-multi-b",
+      product: "schedule",
+      role: "Editor",
+    });
+    await tdbA.insert(productEntitlements, {
+      id: "ent-a-schedule",
+      product: "schedule",
+      plan: "standard",
+      status: "active",
+      startsOn: "2020-01-01",
+    });
+    await tdbB.insert(productEntitlements, {
+      id: "ent-b-schedule",
+      product: "schedule",
+      plan: "standard",
+      status: "suspended",
+      startsOn: "2020-01-01",
+    });
 
     const config = loadAuthConfig({
       JWT_SECRET: SECRET,
@@ -499,6 +539,129 @@ describe.skipIf(!url)("auth API", () => {
       { origin: baseUrl },
     );
     expect(sameOrigin.status).toBe(200);
+  });
+
+  it("answers the context lookup with role and entitlement checks (Issue #6)", async () => {
+    const login = await post("/platform/api/v1/auth/login", {
+      email: "single@example.jp",
+      password: "single-pass-1",
+    });
+    expect(login.status).toBe(200);
+    const cookie = cookieOf(login.setCookie);
+
+    const context = await get("/platform/api/v1/auth/context?product=schedule", { cookie });
+    expect(context.status).toBe(200);
+    expect(context.json.userId).toBe("p-single");
+    expect(context.json.schoolId).toBe(A);
+    expect(context.json.product).toBe("schedule");
+    expect(context.json.role).toBe("Admin");
+    expect(context.json.isSuperAdmin).toBe(false);
+    expect(context.json.teacherId).toBe("t-1");
+
+    // No role for the other product.
+    const noRole = await get("/platform/api/v1/auth/context?product=timetable", { cookie });
+    expect(noRole.status).toBe(403);
+
+    // The product must be named and known.
+    expect((await get("/platform/api/v1/auth/context", { cookie })).status).toBe(400);
+    expect((await get("/platform/api/v1/auth/context?product=unknown", { cookie })).status).toBe(
+      400,
+    );
+  });
+
+  it("uses the entitlement in force when a school holds several rows", async () => {
+    // Rebuild school A's rows in the order a real history leaves
+    // them: the cancelled contract from last year first, then an
+    // active one whose period has ended, and the row in force last.
+    // Putting the old rows first matters: an unordered "any one row"
+    // lookup (the bug this guards against) tends to meet the oldest
+    // row first, so this order is the one that exposes it.
+    const tdbA = tenantDb(db, A);
+    await tdbA.delete(productEntitlements);
+    await tdbA.insert(productEntitlements, {
+      id: "ent-a-schedule-cancelled",
+      product: "schedule",
+      plan: "standard",
+      status: "cancelled",
+      startsOn: "2019-04-01",
+      endsOn: "2020-03-31",
+    });
+    await tdbA.insert(productEntitlements, {
+      id: "ent-a-schedule-expired",
+      product: "schedule",
+      plan: "standard",
+      status: "active",
+      startsOn: "2020-04-01",
+      endsOn: "2021-03-31",
+    });
+    await tdbA.insert(productEntitlements, {
+      id: "ent-a-schedule",
+      product: "schedule",
+      plan: "standard",
+      status: "active",
+      startsOn: "2020-01-01",
+    });
+
+    const login = await post("/platform/api/v1/auth/login", {
+      email: "single@example.jp",
+      password: "single-pass-1",
+    });
+    expect(login.status).toBe(200);
+    const context = await get("/platform/api/v1/auth/context?product=schedule", {
+      cookie: cookieOf(login.setCookie),
+    });
+    expect(context.status).toBe(200);
+    expect(context.json.role).toBe("Admin");
+  });
+
+  it("refuses the context lookup with 401 for bad tokens and 403 for a stopped entitlement", async () => {
+    // No cookie at all.
+    expect((await get("/platform/api/v1/auth/context?product=schedule")).status).toBe(401);
+
+    // A tampered token.
+    const login = await post("/platform/api/v1/auth/login", {
+      email: "single@example.jp",
+      password: "single-pass-1",
+    });
+    const token = tokenOf(login.setCookie);
+    const tampered = await get("/platform/api/v1/auth/context?product=schedule", {
+      cookie: `platform_session=${token}x`,
+    });
+    expect(tampered.status).toBe(401);
+
+    // An expired token (signed with the real secret, in the past).
+    const expired = jwt.sign(
+      { personId: "p-single", schoolId: A, email: "single@example.jp" },
+      SECRET,
+      { algorithm: "HS256", expiresIn: -10 },
+    );
+    const expiredRes = await get("/platform/api/v1/auth/context?product=schedule", {
+      cookie: `platform_session=${expired}`,
+    });
+    expect(expiredRes.status).toBe(401);
+
+    // A selection token is not a session.
+    const multi = await post("/platform/api/v1/auth/login", {
+      email: "multi@example.jp",
+      password: "multi-pass-1",
+    });
+    expect(multi.status).toBe(200);
+    const selection = await get("/platform/api/v1/auth/context?product=schedule", {
+      cookie: cookieOf(multi.setCookie),
+    });
+    expect(selection.status).toBe(401);
+
+    // School B: the role exists but the entitlement is suspended.
+    const chosen = await post(
+      "/platform/api/v1/auth/select-school",
+      { schoolId: B },
+      { cookie: cookieOf(multi.setCookie) },
+    );
+    expect(chosen.status).toBe(200);
+    const stopped = await get("/platform/api/v1/auth/context?product=schedule", {
+      cookie: cookieOf(chosen.setCookie),
+    });
+    expect(stopped.status).toBe(403);
   });
 
   it("writes audit rows for success and failure, without secrets", async () => {
