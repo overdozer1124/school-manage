@@ -12,13 +12,17 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.44.7",
     "express": "^5.1.0",
+    "google-auth-library": "^11.3.3",
+    "jsonwebtoken": "^9.0.3",
     "postgres": "^3.4.7",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.18.0",
     "drizzle-kit": "^0.31.5",
     "tsx": "^4.20.6",

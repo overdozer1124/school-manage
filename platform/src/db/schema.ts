@@ -188,3 +188,7 @@ export const auditLog = pgTable("audit_log", {
   summary: text("summary").notNull(),
   createdAt: createdAt(),
 });
+
+export type School = typeof schools.$inferSelect;
+export type Person = typeof persons.$inferSelect;
+export type Membership = typeof memberships.$inferSelect;
