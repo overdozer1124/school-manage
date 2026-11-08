@@ -1,0 +1,4 @@
+packages:
+  - platform
+  - schedule
+  - packages/*
