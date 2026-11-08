@@ -80,12 +80,21 @@ export const memberships = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    unique("memberships_school_person_unique").on(t.schoolId, t.personId),
+    // One row per enrolment period (Issue #14): a person who returns
+    // to a school gets a new row and the old period stays on record.
+    // Overlapping periods for the same school and person are refused
+    // by the memberships_no_overlap_period exclusion constraint,
+    // which migration 0002 adds in raw SQL (drizzle cannot model
+    // exclusion constraints).
     unique("memberships_school_id_unique").on(t.schoolId, t.id),
     check("memberships_period_order", sql`${t.startsOn} <= ${t.endsOn}`),
   ],
 );
 
+// Roles attach to a membership row, not to the person (Issue #14):
+// when a person returns to a school on a new membership row, roles
+// are granted on the new row; the old row's roles stay as its record
+// and are not copied over automatically.
 export const productRoles = pgTable(
   "product_roles",
   {

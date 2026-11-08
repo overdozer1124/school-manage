@@ -61,9 +61,22 @@ export function isMembershipCandidate(
   return isMembershipApproved(membership) && isWithinEnrolmentPeriod(membership, today);
 }
 
-export function candidateMemberships<T extends Pick<Membership, "status" | "startsOn" | "endsOn">>(
-  memberships: T[],
-  today: string,
-): T[] {
-  return memberships.filter((m) => isMembershipCandidate(m, today));
+export function candidateMemberships<
+  T extends Pick<Membership, "status" | "startsOn" | "endsOn" | "schoolId">,
+>(memberships: T[], today: string): T[] {
+  const bySchool = new Map<string, T>();
+  for (const membership of memberships) {
+    if (!isMembershipCandidate(membership, today)) continue;
+    // One candidate per school (Issue #14): a person who left and came
+    // back holds one row per enrolment period, and only the period
+    // containing today can be a candidate — the filter above already
+    // ensures that. Should history still leave two in-period rows for
+    // one school, the later-starting row is the current one, so the
+    // school is offered exactly once.
+    const previous = bySchool.get(membership.schoolId);
+    if (!previous || (membership.startsOn ?? "") >= (previous.startsOn ?? "")) {
+      bySchool.set(membership.schoolId, membership);
+    }
+  }
+  return [...bySchool.values()];
 }

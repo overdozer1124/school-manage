@@ -98,6 +98,17 @@ describe("membership candidacy", () => {
     ] as const;
     expect(candidateMemberships([...rows], today).map((m) => m.schoolId)).toEqual(["a"]);
   });
+
+  it("offers one candidate per school, the later-starting row (Issue #14)", () => {
+    const rows = [
+      { status: "approved", startsOn: "2020-04-01", endsOn: null, schoolId: "a", id: "old" },
+      { status: "approved", startsOn: "2025-04-01", endsOn: null, schoolId: "a", id: "new" },
+      { status: "approved", startsOn: null, endsOn: null, schoolId: "b", id: "other" },
+    ] as const;
+    const result = candidateMemberships([...rows], today);
+    expect(result.map((m) => m.schoolId).sort()).toEqual(["a", "b"]);
+    expect(result.find((m) => m.schoolId === "a")?.id).toBe("new");
+  });
 });
 
 describe("tokens and passwords", () => {
