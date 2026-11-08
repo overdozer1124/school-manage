@@ -1,9 +1,5 @@
 {
-  "dependencies": {
-    "jsonwebtoken": "^9.0.3"
-  },
   "devDependencies": {
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.18.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"

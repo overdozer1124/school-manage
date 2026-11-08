@@ -9,14 +9,15 @@ import { createPlatformClient } from "@school-manage/platform-client";
 
 const platform = createPlatformClient({
   platformBaseUrl: process.env.PLATFORM_BASE_URL,
-  jwtSecret: process.env.JWT_SECRET,
   product: "schedule",
 });
 
-// リクエストごと：Cookie の JWT を検証し、共通基盤に所属・役割・契約を
-// 問い合わせる。401 は未ログイン、403 は権限なし（AuthAccessError）。
+// リクエストごと：Cookie の JWT を共通基盤にそのまま渡し、所属・役割・
+// 契約を問い合わせる。401 は未ログイン、403 は権限なし（AuthAccessError）。
 const auth = await platform.verifyRequest(req);
 ```
+
+製品の側は `JWT_SECRET` を持たない。署名の検証は共通基盤だけが行い、製品はトークンを検証せず、毎回共通基盤の応答で判断する（鍵が製品側から漏れてセッションを偽造される、という経路を作らないため）。
 
 問い合わせ結果は既定で30秒キャッシュする（成功だけ。失敗はキャッシュしない）。
 

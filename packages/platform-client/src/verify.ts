@@ -1,4 +1,3 @@
-import jwt from "jsonwebtoken";
 import { AuthAccessError } from "./errors.js";
 import type { AuthContext, PlatformContextResponse, Product } from "./types.js";
 
@@ -15,8 +14,6 @@ export interface RequestLike {
 export interface PlatformClientOptions {
   /** Origin of the platform service, without a trailing slash. */
   platformBaseUrl: string;
-  /** The shared JWT secret (the same one the platform signs with). */
-  jwtSecret: string;
   /** The product this service is verifying for. */
   product: Product;
   /** How long a successful context lookup is cached. Default 30s. */
@@ -51,41 +48,19 @@ function readSessionCookie(req: RequestLike): string | null {
   return null;
 }
 
-interface VerifiedClaims {
-  personId: string;
-  schoolId: string;
-}
-
-/**
- * Local first pass: the token's signature, expiry and kind. A
- * school-selection token is not a session and never passes. Failures
- * here are 401 without asking the platform anything.
- */
-function verifySessionToken(secret: string, token: string): VerifiedClaims {
-  let decoded: jwt.JwtPayload;
-  try {
-    decoded = jwt.verify(token, secret, { algorithms: ["HS256"] }) as jwt.JwtPayload;
-  } catch {
-    throw new AuthAccessError(401, "認証が必要です");
-  }
-  if (
-    typeof decoded.personId !== "string" ||
-    typeof decoded.schoolId !== "string" ||
-    "purpose" in decoded
-  ) {
-    throw new AuthAccessError(401, "認証が必要です");
-  }
-  return { personId: decoded.personId, schoolId: decoded.schoolId };
-}
-
 /**
  * Creates the verifier a product service uses for every request
- * (DESIGN-AUTH-TENANCY 4.1/4.3 step 1-2): verify the session JWT
- * locally, then ask the platform whether the membership is approved
- * and in period, the product role exists, and the entitlement is live.
- * Successful answers are cached briefly (30 seconds by default), so a
- * suspension or period end takes effect within that window at the
- * latest; failures are never cached.
+ * (DESIGN-AUTH-TENANCY 4.1/4.3 step 1-2).
+ *
+ * The products never hold the JWT secret (Araki's decision on
+ * PR #15): the token is not verified locally at all. A request with
+ * no session cookie is 401 at once; any token is passed to the
+ * platform's context endpoint as-is, and the platform decides —
+ * signature, expiry, membership approval and period, product role,
+ * entitlement — returning 401, 403 or the context. Successful answers
+ * are cached briefly (30 seconds by default), keyed by the whole
+ * token, so a suspension or period end takes effect within that
+ * window at the latest; failures are never cached.
  */
 export function createPlatformClient(options: PlatformClientOptions): PlatformClient {
   const cacheTtlMs = options.cacheTtlMs ?? 30_000;
@@ -113,7 +88,6 @@ export function createPlatformClient(options: PlatformClientOptions): PlatformCl
   async function verifyRequest(req: RequestLike): Promise<AuthContext> {
     const token = readSessionCookie(req);
     if (!token) throw new AuthAccessError(401, "認証が必要です");
-    verifySessionToken(options.jwtSecret, token);
 
     const cached = cache.get(token);
     if (cached && cached.expiresAt > now()) return cached.context;
