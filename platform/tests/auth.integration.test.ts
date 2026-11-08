@@ -570,11 +570,14 @@ describe.skipIf(!url)("auth API", () => {
   });
 
   it("uses the entitlement in force when a school holds several rows", async () => {
-    // School A already has its current active row (seeded); add the
-    // rows a real history leaves behind: a cancelled contract from
-    // last year and an active one whose period has ended. Neither may
-    // shadow the row in force.
+    // Rebuild school A's rows in the order a real history leaves
+    // them: the cancelled contract from last year first, then an
+    // active one whose period has ended, and the row in force last.
+    // Putting the old rows first matters: an unordered "any one row"
+    // lookup (the bug this guards against) tends to meet the oldest
+    // row first, so this order is the one that exposes it.
     const tdbA = tenantDb(db, A);
+    await tdbA.delete(productEntitlements);
     await tdbA.insert(productEntitlements, {
       id: "ent-a-schedule-cancelled",
       product: "schedule",
@@ -590,6 +593,13 @@ describe.skipIf(!url)("auth API", () => {
       status: "active",
       startsOn: "2020-04-01",
       endsOn: "2021-03-31",
+    });
+    await tdbA.insert(productEntitlements, {
+      id: "ent-a-schedule",
+      product: "schedule",
+      plan: "standard",
+      status: "active",
+      startsOn: "2020-01-01",
     });
 
     const login = await post("/platform/api/v1/auth/login", {
