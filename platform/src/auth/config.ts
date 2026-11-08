@@ -15,6 +15,34 @@ export interface AuthConfig {
   googleClientSecret?: string | undefined;
   /** Source parity: platform operators may not use Google login unless set. */
   allowSuperAdminGoogleLogin: boolean;
+  /** Failed password logins allowed per email address before a 429 (Issue #16). */
+  loginRateLimitMaxFailures: number;
+  /** The sliding window those failures are counted in, in seconds. */
+  loginRateLimitWindowSeconds: number;
+  /**
+   * The same window's allowance per source address. Deliberately far
+   * larger than the per-email limit: a whole school's teachers share
+   * one outward address (NAT), so a per-source limit as small as the
+   * per-email one would lock out colleagues who typed nothing wrong.
+   */
+  loginRateLimitIpMaxFailures: number;
+  /**
+   * Express's "trust proxy" setting, from TRUST_PROXY (for example
+   * "loopback"). Unset by default: without it Express ignores
+   * X-Forwarded-For, and behind the reverse proxy of DESIGN 8-3-1
+   * every request would carry the proxy's own address — set it there
+   * so req.ip is the real source.
+   */
+  trustProxy: string | undefined;
+}
+
+function positiveIntEnv(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
+  if (raw === undefined || raw === "") return fallback;
+  if (!/^\d+$/.test(raw) || Number(raw) <= 0) {
+    throw new Error(`${name} must be a positive integer (got "${raw}").`);
+  }
+  return Number(raw);
 }
 
 export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig {
@@ -53,5 +81,9 @@ export function loadAuthConfig(env: NodeJS.ProcessEnv = process.env): AuthConfig
     googleClientSecret,
     allowSuperAdminGoogleLogin:
       env.ALLOW_SUPERADMIN_GOOGLE_LOGIN === "true" || env.ALLOW_SUPERADMIN_GOOGLE_LOGIN === "1",
+    loginRateLimitMaxFailures: positiveIntEnv(env, "LOGIN_RATE_LIMIT_MAX_FAILURES", 10),
+    loginRateLimitWindowSeconds: positiveIntEnv(env, "LOGIN_RATE_LIMIT_WINDOW_SECONDS", 900),
+    loginRateLimitIpMaxFailures: positiveIntEnv(env, "LOGIN_RATE_LIMIT_IP_MAX_FAILURES", 100),
+    trustProxy: env.TRUST_PROXY || undefined,
   };
 }

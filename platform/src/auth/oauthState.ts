@@ -33,22 +33,48 @@ export interface LoginOAuthStateParts {
 }
 
 /**
- * Builds a state with a CSRF nonce; a school id is embedded under the
- * signature. Format: login-{ts}-{rand}[|school={id}]|sig={hmac}
+ * How long a state stays usable (Issue #16). The state is created
+ * when the login page asks for the Google URL and spent at the
+ * callback; ten minutes is ample for a person to pick an account,
+ * and a state replayed later than that is refused.
  */
-export function createLoginOAuthState(secret: string, schoolId?: string): string {
-  const nonce = `${STATE_PREFIX}${Date.now()}-${randomBytes(8).toString("hex")}`;
+export const LOGIN_OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Builds a state with a CSRF nonce; a school id and the browser
+ * binding are embedded under the signature. Format:
+ * login-{ts}-{rand}[|school={id}][|bind={random}]|sig={hmac}
+ *
+ * The binding is a random value the caller also sets as a short-lived
+ * cookie (see routes.ts): the callback only accepts a state whose
+ * binding matches the cookie, so a state created in one browser
+ * cannot be spent in another.
+ */
+export function createLoginOAuthState(
+  secret: string,
+  schoolId?: string,
+  binding?: string,
+  nowMs: number = Date.now(),
+): string {
+  const nonce = `${STATE_PREFIX}${nowMs}-${randomBytes(8).toString("hex")}`;
   const trimmed = schoolId?.trim();
-  const payload = trimmed ? `${nonce}|school=${trimmed}` : nonce;
+  let payload = trimmed ? `${nonce}|school=${trimmed}` : nonce;
+  if (binding) payload = `${payload}|bind=${binding}`;
   return `${payload}|sig=${signPayload(secret, payload)}`;
 }
 
 /**
- * Verifies the signature and extracts the school id. Tampered or
+ * Verifies the signature, the age and (when expectedBinding is given)
+ * the browser binding, and extracts the school id. Tampered or
  * malformed states are refused (400 for shape, 403 for signature,
- * matching the source's BAD_REQUEST / FORBIDDEN split).
+ * expiry and binding, matching the source's BAD_REQUEST / FORBIDDEN
+ * split).
  */
-export function parseLoginOAuthState(secret: string, state: string): LoginOAuthStateParts {
+export function parseLoginOAuthState(
+  secret: string,
+  state: string,
+  options: { expectedBinding?: string; nowMs?: number } = {},
+): LoginOAuthStateParts {
   const raw = state?.trim() ?? "";
   if (!raw.startsWith(STATE_PREFIX)) {
     throw new AuthError(400, "無効な認証 state です");
@@ -64,6 +90,25 @@ export function parseLoginOAuthState(secret: string, state: string): LoginOAuthS
   const sig = raw.slice(sigIndex + sigSep.length);
   if (!sig || !timingSafeEqualHex(sig, signPayload(secret, payload))) {
     throw new AuthError(403, "認証 state の検証に失敗しました。再度ログインしてください。");
+  }
+
+  const tsMatch = /^login-(\d+)-/.exec(payload);
+  if (!tsMatch) {
+    throw new AuthError(400, "無効な認証 state です");
+  }
+  const ageMs = (options.nowMs ?? Date.now()) - Number(tsMatch[1]);
+  if (ageMs > LOGIN_OAUTH_STATE_MAX_AGE_MS || ageMs < -60_000) {
+    throw new AuthError(403, "認証 state の有効期限が切れています。再度ログインしてください。");
+  }
+
+  if (options.expectedBinding !== undefined) {
+    const bindMatch = /(?:^|\|)bind=([^|]+)/.exec(payload);
+    if (!bindMatch || bindMatch[1] !== options.expectedBinding) {
+      throw new AuthError(
+        403,
+        "認証 state がこのブラウザで作られたものではありません。再度ログインしてください。",
+      );
+    }
   }
 
   const schoolMatch = /(?:^|\|)school=([^|]+)/.exec(payload);

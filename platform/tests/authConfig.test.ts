@@ -40,6 +40,35 @@ describe("loadAuthConfig", () => {
     expect(loadAuthConfig({ ...base, JWT_EXPIRES_IN: "12h" }).jwtExpiresIn).toBe("12h");
   });
 
+  it("reads the login rate limit with defaults and validation (Issue #16)", () => {
+    const base = { JWT_SECRET: "unit-test-secret" } as NodeJS.ProcessEnv;
+    const defaults = loadAuthConfig({ ...base });
+    expect(defaults.loginRateLimitMaxFailures).toBe(10);
+    expect(defaults.loginRateLimitWindowSeconds).toBe(900);
+    expect(defaults.loginRateLimitIpMaxFailures).toBe(100);
+    expect(defaults.trustProxy).toBeUndefined();
+    const custom = loadAuthConfig({
+      ...base,
+      LOGIN_RATE_LIMIT_MAX_FAILURES: "3",
+      LOGIN_RATE_LIMIT_WINDOW_SECONDS: "60",
+      LOGIN_RATE_LIMIT_IP_MAX_FAILURES: "5",
+      TRUST_PROXY: "loopback",
+    });
+    expect(custom.loginRateLimitMaxFailures).toBe(3);
+    expect(custom.loginRateLimitWindowSeconds).toBe(60);
+    expect(custom.loginRateLimitIpMaxFailures).toBe(5);
+    expect(custom.trustProxy).toBe("loopback");
+    expect(() => loadAuthConfig({ ...base, LOGIN_RATE_LIMIT_MAX_FAILURES: "0" })).toThrow(
+      /LOGIN_RATE_LIMIT_MAX_FAILURES/,
+    );
+    expect(() => loadAuthConfig({ ...base, LOGIN_RATE_LIMIT_WINDOW_SECONDS: "abc" })).toThrow(
+      /LOGIN_RATE_LIMIT_WINDOW_SECONDS/,
+    );
+    expect(() => loadAuthConfig({ ...base, LOGIN_RATE_LIMIT_IP_MAX_FAILURES: "-1" })).toThrow(
+      /LOGIN_RATE_LIMIT_IP_MAX_FAILURES/,
+    );
+  });
+
   it("requires the Google pair to be set together", () => {
     expect(() =>
       loadAuthConfig({ JWT_SECRET: "unit-test-secret", GOOGLE_CLIENT_ID: "id-only" }),
@@ -66,6 +95,28 @@ describe("OAuth state", () => {
     expect(() => parseLoginOAuthState(secret, tampered)).toThrow();
     expect(() => parseLoginOAuthState("another-secret", state)).toThrow();
     expect(() => parseLoginOAuthState(secret, "not-a-state")).toThrow();
+  });
+
+  it("refuses a state older than ten minutes (Issue #16)", () => {
+    const created = Date.now();
+    const state = createLoginOAuthState(secret, "school-a", undefined, created);
+    expect(parseLoginOAuthState(secret, state, { nowMs: created + 9 * 60_000 })).toEqual({
+      schoolId: "school-a",
+    });
+    expect(() => parseLoginOAuthState(secret, state, { nowMs: created + 11 * 60_000 })).toThrow(
+      /有効期限/,
+    );
+  });
+
+  it("checks the browser binding when one is expected (Issue #16)", () => {
+    const state = createLoginOAuthState(secret, "school-a", "bind-123");
+    expect(parseLoginOAuthState(secret, state, { expectedBinding: "bind-123" })).toEqual({
+      schoolId: "school-a",
+    });
+    expect(() => parseLoginOAuthState(secret, state, { expectedBinding: "bind-999" })).toThrow();
+    // A state created before bindings existed carries none to match.
+    const unbound = createLoginOAuthState(secret, "school-a");
+    expect(() => parseLoginOAuthState(secret, unbound, { expectedBinding: "bind-123" })).toThrow();
   });
 });
 
