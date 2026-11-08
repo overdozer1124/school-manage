@@ -177,9 +177,10 @@ school-manage.jp
 
 ### 7.1 Webhook と再取得の約束事（7-4）
 
-- **イベント**：`{ seq, school_id, kind, entity_id, revision, op（upsert/delete）, occurred_at, actor（user_id・via） }`。`seq` は共通基盤全体の通し番号。
+- **キーの書き方**：JSON と TypeScript のキーはキャメルケース（`schoolId`・`entityId`）、DB の列はスネークケース（`school_id`・`entity_id`）。時間割の `shared/src/schemas.ts` と同じ（2026-11-08 確定）。
+- **イベント**：`{ seq, schoolId, kind, entityId, revision, op（upsert/delete）, occurredAt, actor（userId・via） }`。`seq` は共通基盤全体の通し番号。
 - **受け口**：各アプリが `/integration/webhook` を持つ。共通基盤は HMAC の署名と送信時刻を付けて送り、受け口は署名と時刻を検証する。
-- **一度だけ効かせる**：受け口は `(school_id, entity_id, revision)` で重複を捨てる。順序が入れ替わって届いても、古い revision は無視する。
+- **一度だけ効かせる**：受け口は `(schoolId, entityId, revision)` で重複を捨てる。順序が入れ替わって届いても、古い revision は無視する。
 - **再取得**：`GET /v1/changes?after=<seq>&limit=<n>`。起動時と、受け口で `seq` の飛びを見つけたときに呼ぶ。受け口が落ちていても、再開後にここで追いつける。
 - **再送**：共通基盤は、失敗した送信を間隔を伸ばしながら再送する。一定回数で諦めても、再取得で埋まるので失われない。
 
