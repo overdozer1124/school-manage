@@ -10,6 +10,13 @@ if (existsSync(rootEnv)) {
   process.loadEnvFile(rootEnv);
 }
 
+// Tests rebuild the schema from scratch, so they run against the
+// dedicated test database when one is configured (see .env.example);
+// the development database is never dropped by a test run.
+if (process.env.PLATFORM_TEST_DATABASE_URL) {
+  process.env.PLATFORM_DATABASE_URL = process.env.PLATFORM_TEST_DATABASE_URL;
+}
+
 export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],

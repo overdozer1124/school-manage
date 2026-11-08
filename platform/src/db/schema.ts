@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   date,
   integer,
   pgEnum,
@@ -7,6 +9,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   foreignKey,
 } from "drizzle-orm/pg-core";
 
@@ -43,14 +46,20 @@ export const schools = pgTable("schools", {
   createdAt: createdAt(),
 });
 
-export const persons = pgTable("persons", {
-  id: text("id").primaryKey(),
-  email: text("email").notNull().unique(),
-  displayName: text("display_name").notNull(),
-  googleId: text("google_id").unique(),
-  passwordHash: text("password_hash"),
-  createdAt: createdAt(),
-});
+export const persons = pgTable(
+  "persons",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    displayName: text("display_name").notNull(),
+    googleId: text("google_id").unique(),
+    passwordHash: text("password_hash"),
+    createdAt: createdAt(),
+  },
+  // Email identity is case-insensitive: uniqueness is on lower(email),
+  // so "A@x.jp" and "a@x.jp" cannot become two different persons.
+  (t) => [uniqueIndex("persons_email_lower_unique").on(sql`lower(${t.email})`)],
+);
 
 export const memberships = pgTable(
   "memberships",
@@ -73,6 +82,7 @@ export const memberships = pgTable(
   (t) => [
     unique("memberships_school_person_unique").on(t.schoolId, t.personId),
     unique("memberships_school_id_unique").on(t.schoolId, t.id),
+    check("memberships_period_order", sql`${t.startsOn} <= ${t.endsOn}`),
   ],
 );
 
@@ -119,7 +129,10 @@ export const productEntitlements = pgTable(
     endsOn: date("ends_on"),
     createdAt: createdAt(),
   },
-  (t) => [unique("product_entitlements_school_id_unique").on(t.schoolId, t.id)],
+  (t) => [
+    unique("product_entitlements_school_id_unique").on(t.schoolId, t.id),
+    check("product_entitlements_period_order", sql`${t.startsOn} <= ${t.endsOn}`),
+  ],
 );
 
 export const schoolYears = pgTable(
@@ -139,6 +152,7 @@ export const schoolYears = pgTable(
   (t) => [
     unique("school_years_school_year_unique").on(t.schoolId, t.year),
     unique("school_years_school_id_unique").on(t.schoolId, t.id),
+    check("school_years_period_order", sql`${t.startsOn} <= ${t.endsOn}`),
   ],
 );
 
@@ -156,6 +170,7 @@ export const terms = pgTable(
   },
   (t) => [
     unique("terms_school_id_unique").on(t.schoolId, t.id),
+    check("terms_period_order", sql`${t.startsOn} <= ${t.endsOn}`),
     foreignKey({
       columns: [t.schoolId, t.schoolYearId],
       foreignColumns: [schoolYears.schoolId, schoolYears.id],

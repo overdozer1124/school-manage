@@ -25,7 +25,7 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ["postgres", "**/db/client", "**/db/client.js"],
+              group: ["postgres", "drizzle-orm/postgres-js", "**/db/client", "**/db/client.js"],
               message:
                 "Raw database access is limited to platform/src/db; use tenantDb (src/db/tenant.ts).",
             },
@@ -35,7 +35,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["platform/src/db/**/*.ts", "platform/src/index.ts"],
+    files: ["platform/src/db/**/*.ts"],
     rules: { "no-restricted-imports": "off" },
   },
 );

@@ -33,6 +33,10 @@ describe.skipIf(!url)("tenant isolation", () => {
     const admin = postgres(url as string, { max: 1 });
     await admin.unsafe("drop schema public cascade");
     await admin.unsafe("create schema public");
+    // Drizzle keeps its applied-migrations record in the "drizzle"
+    // schema; without dropping it too, a second test run believes the
+    // migrations are already applied and creates no tables.
+    await admin.unsafe("drop schema if exists drizzle cascade");
     await admin.end();
 
     const created = createDb(url);
