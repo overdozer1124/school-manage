@@ -1,9 +1,11 @@
+import { randomBytes } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import type { AuthStore } from "../db/authStore.js";
 import type { AuthConfig } from "./config.js";
 import { AuthError } from "./errors.js";
 import { createGoogleAuthClient, type GoogleAuthClient } from "./google.js";
+import { createRateLimiter } from "./rateLimit.js";
 import {
   buildGoogleAuthUrl,
   getAuthContext,
@@ -35,6 +37,23 @@ export const SESSION_COOKIE = "platform_session";
  */
 export const SELECT_COOKIE = "platform_select";
 const SELECT_COOKIE_PATH = "/platform/api/v1/auth";
+
+/**
+ * The Google login browser binding (Issue #16): /google/url sets a
+ * random value here and embeds the same value in the signed state;
+ * the callback compares the two and clears the cookie. Same path and
+ * flags as the selection cookie; ten minutes matches the state's age
+ * limit.
+ */
+export const OAUTH_COOKIE = "platform_oauth";
+
+function oauthCookie(binding: string): string {
+  return `${OAUTH_COOKIE}=${encodeURIComponent(binding)}; HttpOnly; Secure; SameSite=Lax; Path=${SELECT_COOKIE_PATH}; Max-Age=${10 * 60}`;
+}
+
+function clearedOAuthCookie(): string {
+  return `${OAUTH_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=${SELECT_COOKIE_PATH}; Max-Age=0`;
+}
 
 export interface AuthRouterDeps {
   store: AuthStore;
@@ -90,7 +109,12 @@ function requireClaims(deps: AuthRouterDeps, token: string | null): TokenClaims 
   return claims;
 }
 
-function sendLoginResult(deps: AuthRouterDeps, res: Response, result: LoginResult): void {
+function sendLoginResult(
+  deps: AuthRouterDeps,
+  res: Response,
+  result: LoginResult,
+  extraCookies: string[] = [],
+): void {
   if (result.kind === "session") {
     // The cookie's Max-Age follows JWT_EXPIRES_IN so the two cannot drift.
     // Issuing a session also clears the selection cookie: /select-school
@@ -100,13 +124,14 @@ function sendLoginResult(deps: AuthRouterDeps, res: Response, result: LoginResul
     res.setHeader("Set-Cookie", [
       sessionCookie(result.token, expiresInToSeconds(deps.config.jwtExpiresIn)),
       clearedSelectionCookie(),
+      ...extraCookies,
     ]);
     // The token travels only in the HttpOnly cookie, never in the body:
     // a body token would be readable by any script on the page.
     res.json({ user: result.user, school: result.school });
     return;
   }
-  res.setHeader("Set-Cookie", selectionCookie(result.selectionToken));
+  res.setHeader("Set-Cookie", [selectionCookie(result.selectionToken), ...extraCookies]);
   res.json({
     schoolSelectionRequired: true,
     user: result.user,
@@ -156,6 +181,19 @@ const googleCallbackSchema = z.object({
 export function createAuthRouter(deps: AuthRouterDeps): Router {
   const router = Router();
   const ctx = { store: deps.store, config: deps.config };
+  // Password login failures (Issue #16), counted per email address
+  // and per source address with separate allowances — the source
+  // allowance is far larger because a school's teachers share one
+  // outward address. One pair of limiters per router, i.e. per process.
+  const windowMs = deps.config.loginRateLimitWindowSeconds * 1000;
+  const emailLimiter = createRateLimiter({
+    maxFailures: deps.config.loginRateLimitMaxFailures,
+    windowMs,
+  });
+  const ipLimiter = createRateLimiter({
+    maxFailures: deps.config.loginRateLimitIpMaxFailures,
+    windowMs,
+  });
 
   // CSRF guard for state-changing calls (4.8): when a browser sends an
   // Origin header it must name this host. Requests without an Origin
@@ -180,15 +218,52 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   });
 
   router.post("/login", async (req, res) => {
+    // Declared outside the try so the catch can record the failure
+    // against the same keys; a body that fails to parse leaves them
+    // undefined and records nothing.
+    let emailKey: string | undefined;
+    let ipKey: string | undefined;
     try {
       const input = parseBody(loginSchema, req);
+      emailKey = `email:${input.email.toLowerCase()}`;
+      ipKey = `ip:${req.ip ?? "unknown"}`;
+      if (emailLimiter.isBlocked(emailKey) || ipLimiter.isBlocked(ipKey)) {
+        // The refusal itself is audited (best effort, like the
+        // service's own audit entries); no credential is recorded.
+        try {
+          await deps.store.appendAudit({
+            schoolId: null,
+            personId: null,
+            action: "auth.login.rate_limited",
+            target: "auth",
+            summary: "ログイン試行の回数制限で拒否",
+          });
+        } catch {
+          /* best effort */
+        }
+        throw new AuthError(
+          429,
+          "ログインの試行回数が上限を超えました。しばらく待ってから再度お試しください。Google ログインも利用できます。",
+        );
+      }
       const result = await loginWithPassword(ctx, {
         email: input.email,
         password: input.password,
         ...(input.schoolId !== undefined ? { schoolId: input.schoolId } : {}),
       });
+      // A success clears the email key's slate: a person who mistyped
+      // a few times and then got in is not close to the limit the next
+      // time they log in. The source key keeps its failures.
+      emailLimiter.reset(emailKey);
       sendLoginResult(deps, res, result);
     } catch (error) {
+      // Only credential failures count (401). A 403 means the
+      // credentials were right but the membership was not usable —
+      // retrying that is not password guessing.
+      if (error instanceof AuthError && error.status === 401) {
+        if (emailKey) emailLimiter.recordFailure(emailKey);
+        if (ipKey) ipLimiter.recordFailure(ipKey);
+      }
       handleError(res, error);
     }
   });
@@ -253,10 +328,16 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
         }
         schoolId = school.schoolId;
       }
+      // Bind this login attempt to this browser (Issue #16): the same
+      // random value goes into the signed state and into a short-lived
+      // cookie only this browser holds.
+      const binding = randomBytes(16).toString("hex");
       const result = buildGoogleAuthUrl(ctx, {
         redirectUri: input.redirectUri,
         ...(schoolId !== undefined ? { schoolId } : {}),
+        binding,
       });
+      res.setHeader("Set-Cookie", oauthCookie(binding));
       res.json(result);
     } catch (error) {
       handleError(res, error);
@@ -275,9 +356,14 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
           redirectUri: input.redirectUri,
           ...(input.schoolId !== undefined ? { schoolId: input.schoolId } : {}),
         },
+        readCookie(req, OAUTH_COOKIE),
       );
-      sendLoginResult(deps, res, result);
+      // The binding is single-use: its clearing cookie rides along
+      // with the login result's own cookies, because headers cannot
+      // be added after the response is sent.
+      sendLoginResult(deps, res, result, [clearedOAuthCookie()]);
     } catch (error) {
+      res.setHeader("Set-Cookie", clearedOAuthCookie());
       handleError(res, error);
     }
   });

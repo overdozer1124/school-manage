@@ -14,6 +14,13 @@ export interface AppDeps {
 
 export function createApp(deps: AppDeps = {}) {
   const app = express();
+  // Behind the reverse proxy (DESIGN 8-3-1), req.ip is the proxy's
+  // address unless the deployment says which proxies to trust; the
+  // login rate limit counts by req.ip, so this decides whose failures
+  // are counted together (Issue #16).
+  if (deps.auth?.config.trustProxy) {
+    app.set("trust proxy", deps.auth.config.trustProxy);
+  }
   app.use(express.json());
 
   app.get("/healthz", (_req, res) => {

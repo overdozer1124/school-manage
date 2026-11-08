@@ -421,11 +421,15 @@ describe.skipIf(!url)("auth API", () => {
     expect(urlRes.json.authUrl).toContain("https://accounts.google.com/o/oauth2/v2/auth");
     expect(urlRes.json.schoolId).toBe(B);
 
-    const callback = await post("/platform/api/v1/auth/google/callback", {
-      code: "fake-code",
-      state: urlRes.json.state,
-      redirectUri: "http://localhost/callback",
-    });
+    const callback = await post(
+      "/platform/api/v1/auth/google/callback",
+      {
+        code: "fake-code",
+        state: urlRes.json.state,
+        redirectUri: "http://localhost/callback",
+      },
+      { cookie: cookieOf(urlRes.setCookie) },
+    );
     expect(callback.status).toBe(200);
     expect(callback.json.user?.id).toBe("p-google");
     expect(callback.json.school?.schoolId).toBe(B);
@@ -444,11 +448,15 @@ describe.skipIf(!url)("auth API", () => {
       emailVerified: false,
       name: "未確認",
     };
-    const res = await post("/platform/api/v1/auth/google/callback", {
-      code: "fake-code",
-      state: urlRes.json.state,
-      redirectUri: "http://localhost/callback",
-    });
+    const res = await post(
+      "/platform/api/v1/auth/google/callback",
+      {
+        code: "fake-code",
+        state: urlRes.json.state,
+        redirectUri: "http://localhost/callback",
+      },
+      { cookie: cookieOf(urlRes.setCookie) },
+    );
     expect(res.status).toBe(403);
   });
 
@@ -463,11 +471,15 @@ describe.skipIf(!url)("auth API", () => {
       emailVerified: false,
       name: "Google利用者",
     };
-    const res = await post("/platform/api/v1/auth/google/callback", {
-      code: "fake-code",
-      state: urlRes.json.state,
-      redirectUri: "http://localhost/callback",
-    });
+    const res = await post(
+      "/platform/api/v1/auth/google/callback",
+      {
+        code: "fake-code",
+        state: urlRes.json.state,
+        redirectUri: "http://localhost/callback",
+      },
+      { cookie: cookieOf(urlRes.setCookie) },
+    );
     expect(res.status).toBe(200);
     expect(res.json.user?.id).toBe("p-google");
     expect(res.json.school?.schoolId).toBe(B);
@@ -478,19 +490,27 @@ describe.skipIf(!url)("auth API", () => {
       redirectUri: "http://localhost/callback",
     });
     const tampered = (urlRes.json.state ?? "").replace("login-", "login-x");
-    const badState = await post("/platform/api/v1/auth/google/callback", {
-      code: "fake-code",
-      state: tampered,
-      redirectUri: "http://localhost/callback",
-    });
+    const badState = await post(
+      "/platform/api/v1/auth/google/callback",
+      {
+        code: "fake-code",
+        state: tampered,
+        redirectUri: "http://localhost/callback",
+      },
+      { cookie: cookieOf(urlRes.setCookie) },
+    );
     // The prefix survives this edit, so the state reaches the signature
     // check and is refused there (403), like the source's FORBIDDEN.
     expect(badState.status).toBe(403);
-    const malformed = await post("/platform/api/v1/auth/google/callback", {
-      code: "fake-code",
-      state: "not-a-state",
-      redirectUri: "http://localhost/callback",
-    });
+    const malformed = await post(
+      "/platform/api/v1/auth/google/callback",
+      {
+        code: "fake-code",
+        state: "not-a-state",
+        redirectUri: "http://localhost/callback",
+      },
+      { cookie: cookieOf(urlRes.setCookie) },
+    );
     expect(malformed.status).toBe(400);
 
     fakeProfile = {
@@ -499,11 +519,15 @@ describe.skipIf(!url)("auth API", () => {
       emailVerified: true,
       name: "未登録",
     };
-    const stranger = await post("/platform/api/v1/auth/google/callback", {
-      code: "fake-code",
-      state: urlRes.json.state,
-      redirectUri: "http://localhost/callback",
-    });
+    const stranger = await post(
+      "/platform/api/v1/auth/google/callback",
+      {
+        code: "fake-code",
+        state: urlRes.json.state,
+        redirectUri: "http://localhost/callback",
+      },
+      { cookie: cookieOf(urlRes.setCookie) },
+    );
     expect(stranger.status).toBe(403);
 
     fakeProfile = {
@@ -512,11 +536,15 @@ describe.skipIf(!url)("auth API", () => {
       emailVerified: true,
       name: "Google利用者",
     };
-    const badCode = await post("/platform/api/v1/auth/google/callback", {
-      code: "bad-code",
-      state: urlRes.json.state,
-      redirectUri: "http://localhost/callback",
-    });
+    const badCode = await post(
+      "/platform/api/v1/auth/google/callback",
+      {
+        code: "bad-code",
+        state: urlRes.json.state,
+        redirectUri: "http://localhost/callback",
+      },
+      { cookie: cookieOf(urlRes.setCookie) },
+    );
     expect(badCode.status).toBe(500);
   });
 

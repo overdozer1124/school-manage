@@ -200,7 +200,7 @@ export async function loginWithPassword(
 
 export function buildGoogleAuthUrl(
   ctx: Ctx,
-  input: { redirectUri: string; schoolId?: string },
+  input: { redirectUri: string; schoolId?: string; binding?: string },
 ): { authUrl: string; state: string; schoolId: string | null } {
   const { googleClientId, googleClientSecret } = ctx.config;
   if (!googleClientId || !googleClientSecret) {
@@ -216,7 +216,7 @@ export function buildGoogleAuthUrl(
     throw new AuthError(400, `無効なリダイレクトURIです: ${input.redirectUri}`);
   }
   const schoolId = input.schoolId?.trim() || undefined;
-  const state = createLoginOAuthState(ctx.config.jwtSecret, schoolId);
+  const state = createLoginOAuthState(ctx.config.jwtSecret, schoolId, input.binding);
   const params = new URLSearchParams({
     client_id: googleClientId,
     redirect_uri: input.redirectUri,
@@ -236,10 +236,23 @@ export function buildGoogleAuthUrl(
 export async function loginWithGoogle(
   ctx: Ctx & { google: GoogleAuthClient },
   input: { code: string; state: string; redirectUri: string; schoolId?: string },
+  binding: string | null,
 ): Promise<LoginResult> {
   // The signed state is verified before anything else, so a tampered or
-  // swapped school id is refused early (source order, R6).
-  const stateParts = parseLoginOAuthState(ctx.config.jwtSecret, input.state);
+  // swapped school id is refused early (source order, R6). Issue #16
+  // adds the age check inside the parse and the browser binding: the
+  // state must have been created for the browser presenting it, which
+  // the caller proves with the binding cookie it set at /google/url
+  // time. No cookie, no login.
+  if (!binding) {
+    throw new AuthError(
+      403,
+      "認証 state がこのブラウザで作られたものではありません。再度ログインしてください。",
+    );
+  }
+  const stateParts = parseLoginOAuthState(ctx.config.jwtSecret, input.state, {
+    expectedBinding: binding,
+  });
   const schoolIdFromState = stateParts.schoolId;
   if (input.schoolId?.trim() && schoolIdFromState && input.schoolId.trim() !== schoolIdFromState) {
     throw new AuthError(403, "学校の指定が認証 state と一致しません");
