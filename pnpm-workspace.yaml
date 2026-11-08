@@ -2,3 +2,5 @@ packages:
   - platform
   - schedule
   - packages/*
+allowBuilds:
+  esbuild: true
