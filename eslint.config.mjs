@@ -14,4 +14,28 @@ export default tseslint.config(
       sourceType: "module",
     },
   },
+  {
+    // Tenancy guard (DESIGN-AUTH-TENANCY 3.3): outside platform/src/db,
+    // code must go through tenantDb and must not touch the raw client or
+    // the postgres driver directly.
+    files: ["platform/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["postgres", "drizzle-orm/postgres-js", "**/db/client", "**/db/client.js"],
+              message:
+                "Raw database access is limited to platform/src/db; use tenantDb (src/db/tenant.ts).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["platform/src/db/**/*.ts"],
+    rules: { "no-restricted-imports": "off" },
+  },
 );
