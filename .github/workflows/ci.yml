@@ -42,3 +42,21 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+
+  calendar-types-zod3:
+    # Issue #3: @school-manage/calendar-types must work with both zod 3
+    # (school-timetable) and zod 4. This job swaps the dev copy to zod 3
+    # in the CI checkout only; the committed lockfile keeps zod 4.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Switch calendar-types to zod 3 (CI checkout only)
+        run: pnpm --filter @school-manage/calendar-types add -D zod@^3.25.0
+      - run: pnpm --filter @school-manage/calendar-types typecheck
+      - run: pnpm --filter @school-manage/calendar-types test
