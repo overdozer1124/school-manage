@@ -569,6 +569,41 @@ describe.skipIf(!url)("auth API", () => {
     );
   });
 
+  it("uses the entitlement in force when a school holds several rows", async () => {
+    // School A already has its current active row (seeded); add the
+    // rows a real history leaves behind: a cancelled contract from
+    // last year and an active one whose period has ended. Neither may
+    // shadow the row in force.
+    const tdbA = tenantDb(db, A);
+    await tdbA.insert(productEntitlements, {
+      id: "ent-a-schedule-cancelled",
+      product: "schedule",
+      plan: "standard",
+      status: "cancelled",
+      startsOn: "2019-04-01",
+      endsOn: "2020-03-31",
+    });
+    await tdbA.insert(productEntitlements, {
+      id: "ent-a-schedule-expired",
+      product: "schedule",
+      plan: "standard",
+      status: "active",
+      startsOn: "2020-04-01",
+      endsOn: "2021-03-31",
+    });
+
+    const login = await post("/platform/api/v1/auth/login", {
+      email: "single@example.jp",
+      password: "single-pass-1",
+    });
+    expect(login.status).toBe(200);
+    const context = await get("/platform/api/v1/auth/context?product=schedule", {
+      cookie: cookieOf(login.setCookie),
+    });
+    expect(context.status).toBe(200);
+    expect(context.json.role).toBe("Admin");
+  });
+
   it("refuses the context lookup with 401 for bad tokens and 403 for a stopped entitlement", async () => {
     // No cookie at all.
     expect((await get("/platform/api/v1/auth/context?product=schedule")).status).toBe(401);

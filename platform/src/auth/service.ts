@@ -402,16 +402,11 @@ export async function getAuthContext(
   const roleRow = await ctx.store.findProductRole(membership.id, product);
   if (!roleRow) throw new AuthError(403, "権限がありません");
 
-  const entitlement = await ctx.store.findEntitlement(claims.schoolId, product);
-  const today = todayString();
-  if (
-    !entitlement ||
-    entitlement.status !== "active" ||
-    entitlement.startsOn > today ||
-    (entitlement.endsOn !== null && entitlement.endsOn < today)
-  ) {
-    throw new AuthError(403, "権限がありません");
-  }
+  // The store returns only an entitlement in force today (active and
+  // in period); a school with no such row is not entitled, whatever
+  // old or future rows it may also hold.
+  const entitlement = await ctx.store.findValidEntitlement(claims.schoolId, product, todayString());
+  if (!entitlement) throw new AuthError(403, "権限がありません");
 
   return {
     userId: person.id,

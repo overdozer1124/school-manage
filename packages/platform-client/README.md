@@ -22,9 +22,10 @@ const auth = await platform.verifyRequest(req);
 
 ## 開発用アダプタ
 
-共通基盤が手元に無くても開発・テストできるよう、固定の利用者と役割を返すアダプタがある。本番（`NODE_ENV=production`）で読み込むと例外を投げる。
+共通基盤が手元に無くても開発・テストできるよう、固定の利用者と役割を返すアダプタがある。安全側に倒すため、明示の指定（`PLATFORM_DEV_AUTH=1`）があるときだけ読み込め、本番（`NODE_ENV=production`）では指定があっても例外を投げる。
 
 ```ts
+// PLATFORM_DEV_AUTH=1 の環境でのみ読み込める
 import { createDevAuthAdapter } from "@school-manage/platform-client/dev";
 
 const adapter = createDevAuthAdapter({ role: "Editor" });

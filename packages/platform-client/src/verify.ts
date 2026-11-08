@@ -21,6 +21,8 @@ export interface PlatformClientOptions {
   product: Product;
   /** How long a successful context lookup is cached. Default 30s. */
   cacheTtlMs?: number;
+  /** Cap on cached lookups; the oldest entries go first. Default 1000. */
+  maxCacheEntries?: number;
   /** Tests inject a fake; the default is the global fetch. */
   fetchImpl?: typeof fetch;
   /** Tests inject a clock for the cache. */
@@ -87,9 +89,26 @@ function verifySessionToken(secret: string, token: string): VerifiedClaims {
  */
 export function createPlatformClient(options: PlatformClientOptions): PlatformClient {
   const cacheTtlMs = options.cacheTtlMs ?? 30_000;
+  const maxCacheEntries = options.maxCacheEntries ?? 1000;
   const fetchImpl = options.fetchImpl ?? fetch;
   const now = options.now ?? Date.now;
   const cache = new Map<string, { context: AuthContext; expiresAt: number }>();
+
+  /**
+   * Keeps the cache bounded in a long-lived process: expired entries
+   * are swept on every store, and past the cap the oldest entries go.
+   */
+  function pruneCache() {
+    const at = now();
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt <= at) cache.delete(key);
+    }
+    while (cache.size >= maxCacheEntries) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  }
 
   async function verifyRequest(req: RequestLike): Promise<AuthContext> {
     const token = readSessionCookie(req);
@@ -98,6 +117,7 @@ export function createPlatformClient(options: PlatformClientOptions): PlatformCl
 
     const cached = cache.get(token);
     if (cached && cached.expiresAt > now()) return cached.context;
+    if (cached) cache.delete(token);
 
     const url =
       `${options.platformBaseUrl}/platform/api/v1/auth/context` +
@@ -133,6 +153,7 @@ export function createPlatformClient(options: PlatformClientOptions): PlatformCl
       personId: null,
       teacherId: typeof body.teacherId === "string" ? body.teacherId : null,
     };
+    pruneCache();
     cache.set(token, { context, expiresAt: now() + cacheTtlMs });
     return context;
   }

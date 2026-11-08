@@ -77,6 +77,20 @@ describe("verifyRequest", () => {
     expect(fetchImpl.mock.calls.length).toBe(2);
   });
 
+  it("bounds the cache: past the cap the oldest lookup is asked again", async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => contextResponse());
+    const client = makeClient(fetchImpl as typeof fetch, { maxCacheEntries: 2 });
+    const reqs = [1, 2, 3].map((n) => reqWith(sessionToken({ jti: `tok-${n}` })));
+    for (const req of reqs) await client.verifyRequest(req);
+    expect(fetchImpl.mock.calls.length).toBe(3);
+    // The newest two are still cached; the oldest was evicted.
+    await client.verifyRequest(reqs[2] as RequestLike);
+    await client.verifyRequest(reqs[1] as RequestLike);
+    expect(fetchImpl.mock.calls.length).toBe(3);
+    await client.verifyRequest(reqs[0] as RequestLike);
+    expect(fetchImpl.mock.calls.length).toBe(4);
+  });
+
   it("refuses tampered, expired and selection tokens with 401, without asking", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => contextResponse());
     const client = makeClient(fetchImpl as typeof fetch);

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db } from "./client.js";
 import {
   auditLog,
@@ -34,7 +34,18 @@ export interface AuthStore {
   findSchoolsByIds(schoolIds: string[]): Promise<School[]>;
   isPlatformAdmin(personId: string): Promise<boolean>;
   findProductRole(membershipId: string, product: Product): Promise<ProductRole | undefined>;
-  findEntitlement(schoolId: string, product: Product): Promise<ProductEntitlement | undefined>;
+  /**
+   * The entitlement in force on `today` for a school and product, or
+   * undefined. A school can hold several rows for one product over
+   * time (a cancelled contract, then a new one), so validity is part
+   * of the query itself; picking any single row with limit 1 and no
+   * order would leave the answer to chance.
+   */
+  findValidEntitlement(
+    schoolId: string,
+    product: Product,
+    today: string,
+  ): Promise<ProductEntitlement | undefined>;
   linkGoogleId(personId: string, googleId: string): Promise<void>;
   appendAudit(entry: {
     schoolId?: string | null;
@@ -103,13 +114,20 @@ export function createAuthStore(db: Db): AuthStore {
       return rows[0];
     },
 
-    async findEntitlement(schoolId, product) {
+    async findValidEntitlement(schoolId, product, today) {
       const rows = await db
         .select()
         .from(productEntitlements)
         .where(
-          and(eq(productEntitlements.schoolId, schoolId), eq(productEntitlements.product, product)),
+          and(
+            eq(productEntitlements.schoolId, schoolId),
+            eq(productEntitlements.product, product),
+            eq(productEntitlements.status, "active"),
+            lte(productEntitlements.startsOn, today),
+            or(isNull(productEntitlements.endsOn), gte(productEntitlements.endsOn, today)),
+          ),
         )
+        .orderBy(desc(productEntitlements.startsOn))
         .limit(1);
       return rows[0];
     },
