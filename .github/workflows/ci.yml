@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      PLATFORM_DB_PASSWORD: platform-ci-password
+      SCHEDULE_DB_PASSWORD: schedule-ci-password
+      PLATFORM_DATABASE_URL: postgres://platform_app:platform-ci-password@localhost:5432/platform
+      SCHEDULE_DATABASE_URL: postgres://schedule_app:schedule-ci-password@localhost:5432/schedule
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Create the databases and per-database roles
+        env:
+          PGHOST: localhost
+          PGUSER: postgres
+          PGPASSWORD: postgres-ci-password
+        run: sh docker/postgres/init.sh
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test

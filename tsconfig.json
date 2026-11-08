@@ -1,0 +1,4 @@
+{
+  "files": [],
+  "references": [{ "path": "platform" }, { "path": "packages/calendar-types" }]
+}
