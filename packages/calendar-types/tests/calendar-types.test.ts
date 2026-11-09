@@ -9,6 +9,7 @@ import {
   changeEventSchema,
   dateStringSchema,
   dayPatternSchema,
+  derivedImpactSchema,
   effectiveWeekday,
   timeStringSchema,
   type PeriodTime,
@@ -146,6 +147,15 @@ describe("calendarTimeToPeriods", () => {
       2, 3, 4, 5, 6,
     ]);
   });
+
+  it("yields no period for a point in time falling in a break", () => {
+    // 09:45 is the break between period 1 (ends 09:40) and period 2
+    // (starts 09:50): with endsAt null, no period contains the moment,
+    // so the result is an empty array.
+    expect(
+      calendarTimeToPeriods({ kind: "clock", startsAt: "09:45", endsAt: null }, normalDay),
+    ).toEqual([]);
+  });
 });
 
 describe("effectiveWeekday", () => {
@@ -201,5 +211,22 @@ describe("dayPattern and changeEvent", () => {
     } as const;
     expect(changeEventSchema.parse(event).seq).toBe(42);
     expect(changeEventSchema.safeParse({ ...event, op: "update" }).success).toBe(false);
+  });
+});
+
+describe("derivedImpact", () => {
+  const impact = {
+    date: "2026-11-09",
+    periods: [2, 3],
+    targets: [{ axis: "grade", id: "grade-1" }],
+  } as const;
+
+  it("accepts a real date", () => {
+    expect(derivedImpactSchema.parse(impact).date).toBe("2026-11-09");
+  });
+
+  it("rejects a date string that is not a real date", () => {
+    expect(derivedImpactSchema.safeParse({ ...impact, date: "2026-02-30" }).success).toBe(false);
+    expect(derivedImpactSchema.safeParse({ ...impact, date: "not-a-date" }).success).toBe(false);
   });
 });
