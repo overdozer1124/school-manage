@@ -10,6 +10,8 @@ import {
   dateStringSchema,
   dayPatternSchema,
   derivedImpactSchema,
+  staffMemberRecordSchema,
+  staffMemberSchema,
   effectiveWeekday,
   timeStringSchema,
   type PeriodTime,
@@ -183,19 +185,59 @@ describe("absence privacy shape", () => {
   });
 });
 
+describe("masters", () => {
+  const staff = {
+    schoolId: "school-1",
+    id: "staff-1",
+    name: "山田太郎",
+    shortName: "山田",
+    sortOrder: 1,
+    active: true,
+    personId: null,
+  };
+
+  it("requires the active flag on a staff member", () => {
+    expect(staffMemberSchema.safeParse(staff).success).toBe(true);
+    expect(staffMemberSchema.safeParse({ ...staff, active: undefined }).success).toBe(false);
+  });
+
+  it("parses a staff record with the entity meta, and rejects revision 0", () => {
+    const record = { ...staff, revision: 3, updatedBy: "person-1", updatedVia: "platform" };
+    expect(staffMemberRecordSchema.safeParse(record).success).toBe(true);
+    expect(staffMemberRecordSchema.safeParse({ ...record, revision: 0 }).success).toBe(false);
+  });
+});
+
 describe("dayPattern and changeEvent", () => {
   it("rejects duplicate period numbers in a day pattern", () => {
     const pattern = dayPatternSchema.safeParse({
       schoolId: "school-1",
       id: "pattern-1",
+      code: "A",
       name: "通常日課",
       kind: "normal",
       periods: [
-        { period: 1, startsAt: "08:50", endsAt: "09:40" },
-        { period: 1, startsAt: "09:50", endsAt: "10:40" },
+        { period: 1, label: "1限", startsAt: "08:50", endsAt: "09:40" },
+        { period: 1, label: "1限", startsAt: "09:50", endsAt: "10:40" },
       ],
     });
     expect(pattern.success).toBe(false);
+  });
+
+  it("accepts the out-of-range bands (0 = morning, 99 = after school) with labels", () => {
+    const pattern = dayPatternSchema.safeParse({
+      schoolId: "school-1",
+      id: "pattern-1",
+      code: "A",
+      name: "通常日課",
+      kind: "normal",
+      periods: [
+        { period: 0, label: "朝", startsAt: "08:00", endsAt: "08:40" },
+        { period: 1, label: "1限", startsAt: "08:50", endsAt: "09:40" },
+        { period: 99, label: "放課後", startsAt: "15:40", endsAt: "16:30" },
+      ],
+    });
+    expect(pattern.success).toBe(true);
   });
 
   it("parses a change event and rejects an unknown op", () => {

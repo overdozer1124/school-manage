@@ -1,6 +1,7 @@
 import express from "express";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createChangesRouter, type ChangesRouterDeps } from "./changes/routes.js";
+import { createMastersRouter, type MastersRouterDeps } from "./masters/routes.js";
 
 /**
  * The platform HTTP app: the health check the external monitoring pings
@@ -13,6 +14,7 @@ import { createChangesRouter, type ChangesRouterDeps } from "./changes/routes.js
 export interface AppDeps {
   auth?: AuthRouterDeps;
   changes?: ChangesRouterDeps;
+  masters?: MastersRouterDeps;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -36,6 +38,10 @@ export function createApp(deps: AppDeps = {}) {
 
   if (deps.changes) {
     app.use("/platform/api/v1", createChangesRouter(deps.changes));
+  }
+
+  if (deps.masters) {
+    app.use("/platform/api/v1", createMastersRouter(deps.masters));
   }
 
   return app;
