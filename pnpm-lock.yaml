@@ -208,6 +208,9 @@ importers:
 
   platform:
     dependencies:
+      '@school-manage/calendar-types':
+        specifier: workspace:*
+        version: link:../packages/calendar-types
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3
