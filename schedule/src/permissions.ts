@@ -1,0 +1,44 @@
+import {
+  secureAction,
+  type AuthContext,
+  type PermissionTable,
+  type SecureAction,
+} from "@school-manage/platform-client";
+
+/**
+ * Schedule's permission table (DESIGN-AUTH-TENANCY 4.4, rebuilt for
+ * this implementation per the 2026-11-09 note in that section). It
+ * guards only the data in schedule's own database. Events, days,
+ * absences and the shared masters are read and written through the
+ * platform, which checks its own permissions (DESIGN-INTEGRATION 10,
+ * implementation 1), so their permissions are not listed here.
+ *
+ * A permission name is a key of this table (Issue #26): declaring any
+ * other name in an action is a compile error. Where 4.4 marks a role
+ * △ (duty.write for Viewer), the role may call the action and the
+ * restriction (own assignments only) is enforced per row inside the
+ * handler, with a pure function, as 4.3 prescribes.
+ */
+export const schedulePermissions = {
+  "view.read": ["Admin", "Editor", "Viewer"],
+  "daily.write": ["Admin", "Editor"],
+  "duty.write": ["Admin", "Editor", "Viewer"],
+  publish: ["Admin", "Editor"],
+  "view.layout": ["Admin", "Editor"],
+  "definition.write": ["Admin"],
+  "school.admin": ["Admin"],
+} as const satisfies PermissionTable;
+
+/** A schedule permission name: a key of the table above. */
+export type SchedulePermission = keyof typeof schedulePermissions;
+
+/**
+ * Declares a schedule action: secureAction with this product's table
+ * filled in, so call sites name only their permission and handler.
+ */
+export function scheduleAction<Req, Res>(
+  permission: SchedulePermission,
+  handler: (ctx: { auth: AuthContext; request: Req }) => Promise<Res> | Res,
+): SecureAction<Req, Res> {
+  return secureAction({ permission, permissions: schedulePermissions, handler });
+}

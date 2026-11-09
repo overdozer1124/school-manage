@@ -7,17 +7,19 @@ import type { AuthContext, Role } from "./types.js";
  * publicAction; an action that went through neither does not fit the
  * registry type and is a compile error.
  *
- * The permission names and the role table (4.4) are filled in by the
- * schedule issues; this skeleton only fixes the shape: a permission is
- * a string, and a table maps each permission to the roles allowed.
+ * A permission is a key of the product's permission table (4.4): the
+ * table lives with the product (schedule's is in schedule/), and
+ * `Permission<T>` names its keys as a type, so declaring a permission
+ * that is not in the table does not compile (Issue #26).
  */
-export type Permission = string;
-
 export type PermissionTable = Readonly<Record<string, readonly Role[]>>;
+
+/** A permission name: one of the keys of a permission table. */
+export type Permission<T extends PermissionTable> = Extract<keyof T, string>;
 
 export interface SecureAction<Req, Res> {
   readonly kind: "secure";
-  readonly permission: Permission;
+  readonly permission: string;
   run(auth: AuthContext, request: Req): Promise<Res>;
 }
 
@@ -28,11 +30,11 @@ export interface PublicAction<Req, Res> {
 
 export type AnyAction<Req, Res> = SecureAction<Req, Res> | PublicAction<Req, Res>;
 
-export interface SecureActionDefinition<Req, Res> {
-  /** Mandatory: an action without a declared permission does not compile. */
-  permission: Permission;
+export interface SecureActionDefinition<T extends PermissionTable, Req, Res> {
+  /** Mandatory, and a key of `permissions`: anything else does not compile. */
+  permission: Permission<T>;
   /** The role table (4.4) the permission is checked against. */
-  permissions: PermissionTable;
+  permissions: T;
   handler: (ctx: { auth: AuthContext; request: Req }) => Promise<Res> | Res;
 }
 
@@ -40,16 +42,18 @@ export interface SecureActionDefinition<Req, Res> {
  * Wraps a handler so the declared permission is checked against the
  * caller's role before the handler runs (4.3 step 3). Steps 1-2
  * (getting the AuthContext, membership and entitlement) happen in
- * verifyRequest before this is called.
+ * verifyRequest before this is called. The runtime check stays even
+ * though the type system keeps undeclared names out: a caller that
+ * bypasses the types (plain JS, a cast) is still refused.
  */
-export function secureAction<Req, Res>(
-  definition: SecureActionDefinition<Req, Res>,
+export function secureAction<T extends PermissionTable, Req, Res>(
+  definition: SecureActionDefinition<T, Req, Res>,
 ): SecureAction<Req, Res> {
   return {
     kind: "secure",
     permission: definition.permission,
     async run(auth, request) {
-      const allowed = definition.permissions[definition.permission];
+      const allowed: readonly Role[] | undefined = definition.permissions[definition.permission];
       if (!allowed || !allowed.includes(auth.role)) {
         throw new AuthAccessError(403, "権限がありません");
       }
