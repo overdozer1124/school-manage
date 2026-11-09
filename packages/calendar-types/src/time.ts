@@ -98,7 +98,9 @@ function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: number): b
  * - half_day: periods overlapping the morning (before 12:00) or the
  *   afternoon (from 12:00). A period spanning noon belongs to both.
  * - clock: periods overlapping [startsAt, endsAt). With endsAt null, the
- *   single period containing startsAt.
+ *   single period containing startsAt — so a start time falling in a
+ *   break between periods (or outside the day's periods) yields an
+ *   empty array: no period contains that moment.
  * - periods: the range itself, clipped to periods the day actually has.
  */
 export function calendarTimeToPeriods(time: CalendarTime, dayPeriods: PeriodTime[]): number[] {
