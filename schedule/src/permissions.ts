@@ -25,6 +25,10 @@ export const schedulePermissions = {
   "duty.write": ["Admin", "Editor", "Viewer"],
   publish: ["Admin", "Editor"],
   "view.layout": ["Admin", "Editor"],
+  // Locations are schedule's own master (DESIGN schedule 4.5.1), so
+  // 4.4's master.write applies to them here from Issue #27 on. The
+  // shared masters (staff, holidays) stay platform-side.
+  "master.write": ["Admin", "Editor"],
   "definition.write": ["Admin"],
   "school.admin": ["Admin"],
 } as const satisfies PermissionTable;
