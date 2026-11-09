@@ -16,6 +16,7 @@ import {
   productEntitlements,
   productRoles,
   schools,
+  staffMembers,
 } from "../src/db/schema.js";
 import { tenantDb } from "../src/db/tenant.js";
 
@@ -174,6 +175,18 @@ describe.skipIf(!url)("auth API", () => {
 
     const tdbA = tenantDb(db, A);
     const tdbB = tenantDb(db, B);
+    // Since Issue #22 a membership's teacher_id must name a staff
+    // member of the same school (composite foreign key).
+    await db.insert(staffMembers).values({
+      schoolId: A,
+      id: "t-1",
+      name: "教員1",
+      shortName: "教1",
+      sortOrder: 1,
+      revision: 1,
+      updatedBy: "p-single",
+      updatedVia: "platform",
+    });
     await tdbA.insert(memberships, {
       id: "m-single-a",
       personId: "p-single",

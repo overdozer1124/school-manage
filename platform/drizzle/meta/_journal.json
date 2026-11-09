@@ -29,6 +29,13 @@
       "when": 1794205901057,
       "tag": "0003_elite_boomerang",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794218880982,
+      "tag": "0004_young_warlock",
+      "breakpoints": true
     }
   ]
 }

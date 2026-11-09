@@ -8,7 +8,7 @@ import { hashPassword } from "../src/auth/tokens.js";
 import { createAuthStore } from "../src/db/authStore.js";
 import { createDb, type Db } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { memberships, persons, schools } from "../src/db/schema.js";
+import { memberships, persons, schools, staffMembers } from "../src/db/schema.js";
 import { tenantDb } from "../src/db/tenant.js";
 
 // Membership periods (Issue #14): one row per enrolment period, the
@@ -47,6 +47,31 @@ describe.skipIf(!url)("membership periods", () => {
     await runMigrations(db);
 
     await db.insert(schools).values([{ schoolId: A, slug: "school-a", name: "A校" }]);
+    // The memberships below link to these staff rows: since Issue
+    // #22 a membership's teacher_id must name a staff member of the
+    // same school (composite foreign key).
+    await db.insert(staffMembers).values([
+      {
+        schoolId: A,
+        id: "t-old",
+        name: "旧担当",
+        shortName: "旧",
+        sortOrder: 1,
+        revision: 1,
+        updatedBy: "p-return",
+        updatedVia: "platform",
+      },
+      {
+        schoolId: A,
+        id: "t-new",
+        name: "新担当",
+        shortName: "新",
+        sortOrder: 2,
+        revision: 1,
+        updatedBy: "p-return",
+        updatedVia: "platform",
+      },
+    ]);
     await db.insert(persons).values([
       {
         id: "p-return",

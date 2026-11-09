@@ -12,7 +12,10 @@ export type Role = "Admin" | "Editor" | "Viewer";
  * platform supplies userId, schoolId, role, isSuperAdmin and teacherId.
  * `personId` is the consuming app's own people-row id, which the
  * platform cannot know: verifyRequest leaves it null and the app
- * resolves it locally (for example via teacherId) when it needs it.
+ * resolves it locally when it needs it. The schedule app keeps no
+ * people table of its own: whether a record is "one's own" is judged
+ * by teacherId, matched against the shared staff master
+ * (DESIGN-INTEGRATION 10).
  */
 export interface AuthContext {
   /** The platform's person id. */

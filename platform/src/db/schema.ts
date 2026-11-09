@@ -63,6 +63,141 @@ export const persons = pgTable(
   (t) => [uniqueIndex("persons_email_lower_unique").on(sql`lower(${t.email})`)],
 );
 
+/** Which side a write came from (DESIGN-INTEGRATION 3.1: updated_via). */
+export const updatedViaEnum = pgEnum("updated_via", ["platform", "schedule", "timetable"]);
+
+/**
+ * The shared masters (Issue #22, DESIGN-INTEGRATION 2.4): staff,
+ * grades, classes, special-needs classes, and the day patterns with
+ * their periods. Both products read and write them through the
+ * platform API; neither product keeps its own copy. Every master
+ * carries the shared entity meta (revision for the optimistic lock,
+ * updated_by / updated_via — 3.1), and children reference their
+ * parent through a composite (school_id, parent_id) key, so a class
+ * can never point at another school's grade.
+ */
+const masterMeta = {
+  revision: integer("revision").notNull(),
+  updatedBy: text("updated_by").notNull(),
+  updatedVia: updatedViaEnum("updated_via").notNull(),
+  createdAt: createdAt(),
+};
+
+export const staffMembers = pgTable(
+  "staff_members",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    shortName: text("short_name").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    active: boolean("active").notNull().default(true),
+    personId: text("person_id").references(() => persons.id),
+    ...masterMeta,
+  },
+  (t) => [unique("staff_members_school_id_unique").on(t.schoolId, t.id)],
+);
+
+export const grades = pgTable(
+  "grades",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    /** The school's grouping of grades （前期課程など）, if any. */
+    stage: text("stage"),
+    ...masterMeta,
+  },
+  (t) => [unique("grades_school_id_unique").on(t.schoolId, t.id)],
+);
+
+export const classes = pgTable(
+  "classes",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").primaryKey(),
+    gradeId: text("grade_id").notNull(),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    ...masterMeta,
+  },
+  (t) => [
+    unique("classes_school_id_unique").on(t.schoolId, t.id),
+    foreignKey({
+      columns: [t.schoolId, t.gradeId],
+      foreignColumns: [grades.schoolId, grades.id],
+      name: "classes_grade_fk",
+    }),
+  ],
+);
+
+export const specialNeedsClasses = pgTable(
+  "special_needs_classes",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    ...masterMeta,
+  },
+  (t) => [unique("special_needs_classes_school_id_unique").on(t.schoolId, t.id)],
+);
+
+export const dayPatterns = pgTable(
+  "day_patterns",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").primaryKey(),
+    /** The pattern kind code （通常／短縮／考査／特別， calendar-types dayScheduleKind). */
+    kind: text("kind").notNull(),
+    name: text("name").notNull(),
+    ...masterMeta,
+  },
+  (t) => [unique("day_patterns_school_id_unique").on(t.schoolId, t.id)],
+);
+
+/**
+ * The periods of a day pattern. Periods are subordinate rows: they
+ * are replaced wholesale when the pattern is updated, so they carry
+ * no revision of their own — the pattern's revision covers them.
+ * period is the pattern-local number; the out-of-range bands are
+ * ordinary rows (0 = morning, 99 = after school).
+ */
+export const dayPatternPeriods = pgTable(
+  "day_pattern_periods",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").primaryKey(),
+    dayPatternId: text("day_pattern_id").notNull(),
+    period: integer("period").notNull(),
+    label: text("label").notNull(),
+    startsAt: text("starts_at").notNull(),
+    endsAt: text("ends_at").notNull(),
+  },
+  (t) => [
+    unique("day_pattern_periods_school_id_unique").on(t.schoolId, t.id),
+    unique("day_pattern_periods_pattern_period_unique").on(t.schoolId, t.dayPatternId, t.period),
+    foreignKey({
+      columns: [t.schoolId, t.dayPatternId],
+      foreignColumns: [dayPatterns.schoolId, dayPatterns.id],
+      name: "day_pattern_periods_pattern_fk",
+    }),
+  ],
+);
+
 export const memberships = pgTable(
   "memberships",
   {
@@ -90,6 +225,14 @@ export const memberships = pgTable(
     // exclusion constraints).
     unique("memberships_school_id_unique").on(t.schoolId, t.id),
     check("memberships_period_order", sql`${t.startsOn} <= ${t.endsOn}`),
+    // teacher_id names a staff member of the SAME school (8-2-1):
+    // the composite key makes the database itself refuse another
+    // school's staff id (Issue #22).
+    foreignKey({
+      columns: [t.schoolId, t.teacherId],
+      foreignColumns: [staffMembers.schoolId, staffMembers.id],
+      name: "memberships_teacher_fk",
+    }),
   ],
 );
 
@@ -212,8 +355,6 @@ export const changeKindEnum = pgEnum("change_entity_kind", [
   "day_pattern",
 ]);
 export const changeOpEnum = pgEnum("change_op", ["upsert", "delete"]);
-/** Which side a write came from (DESIGN-INTEGRATION 3.1: updated_via). */
-export const updatedViaEnum = pgEnum("updated_via", ["platform", "schedule", "timetable"]);
 
 /**
  * The change outbox (Issue #21, DESIGN-INTEGRATION 3.2 / 7.1): one row
@@ -248,3 +389,9 @@ export type ProductEntitlement = typeof productEntitlements.$inferSelect;
 export type Product = (typeof productEnum.enumValues)[number];
 export type Role = (typeof roleEnum.enumValues)[number];
 export type OutboxRow = typeof outbox.$inferSelect;
+export type StaffRow = typeof staffMembers.$inferSelect;
+export type GradeRow = typeof grades.$inferSelect;
+export type ClassRow = typeof classes.$inferSelect;
+export type SpecialNeedsClassRow = typeof specialNeedsClasses.$inferSelect;
+export type DayPatternRow = typeof dayPatterns.$inferSelect;
+export type DayPatternPeriodRow = typeof dayPatternPeriods.$inferSelect;
