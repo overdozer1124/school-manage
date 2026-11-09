@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from "express";
 import type { AuthConfig } from "../auth/config.js";
 import { AuthError } from "../auth/errors.js";
 import { isMembershipCandidate, todayString } from "../auth/membership.js";
-import { SESSION_COOKIE } from "../auth/routes.js";
+import { readSessionToken } from "../auth/routes.js";
 import { isSelectionClaims, verifyAuthToken, type SessionClaims } from "../auth/tokens.js";
 import type { AuthStore } from "../db/authStore.js";
 import type { ChangeStore } from "../db/changes.js";
@@ -23,19 +23,6 @@ export interface ChangesRouterDeps {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
-
-/** The session cookie only: tokens are never read from headers or bodies. */
-function readSessionToken(req: Request): string | null {
-  const cookieHeader = req.headers.cookie;
-  if (!cookieHeader) return null;
-  for (const part of cookieHeader.split(";")) {
-    const eq = part.indexOf("=");
-    if (eq > 0 && part.slice(0, eq).trim() === SESSION_COOKIE) {
-      return decodeURIComponent(part.slice(eq + 1).trim());
-    }
-  }
-  return null;
-}
 
 function requireSession(deps: ChangesRouterDeps, req: Request): SessionClaims {
   const token = readSessionToken(req);

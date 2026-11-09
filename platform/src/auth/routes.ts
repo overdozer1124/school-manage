@@ -91,7 +91,7 @@ function readCookie(req: Request, name: string): string | null {
 }
 
 /** The session cookie only: tokens are never read from headers or bodies. */
-function readSessionToken(req: Request): string | null {
+export function readSessionToken(req: Request): string | null {
   return readCookie(req, SESSION_COOKIE);
 }
 

@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, sql, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { ChangeEntityKind, ChangeEvent } from "@school-manage/calendar-types";
 import type { Db } from "./client.js";
@@ -41,8 +41,24 @@ function toChangeEvent(row: OutboxRow): ChangeEvent {
   };
 }
 
-/** Appends one change event inside the caller's transaction. */
+/**
+ * Appends one change event inside the caller's transaction.
+ *
+ * Appends are serialized with a transaction-scoped advisory lock:
+ * `seq` is a bigserial assigned at insert time, not at commit time,
+ * so without serialization a transaction that inserted seq 1 but
+ * committed after seq 2 would surface seq 1 only after readers had
+ * already advanced their watermark to 2 — and `after=2` would never
+ * return it (the change would be lost for good, breaking the
+ * refetch guarantee of DESIGN-INTEGRATION 7.1). Holding the lock
+ * until the transaction ends makes insert order and commit order
+ * agree; appendChange runs last in a write, so the lock is held
+ * only briefly.
+ */
 export async function appendChange(tx: Transaction, change: ChangeInput): Promise<ChangeEvent> {
+  // 727001 is a fixed key reserved for the outbox; no other feature
+  // may take an advisory lock with this key.
+  await tx.execute(sql`select pg_advisory_xact_lock(727001)`);
   const rows = await tx
     .insert(outbox)
     .values({
@@ -62,15 +78,22 @@ export async function appendChange(tx: Transaction, change: ChangeInput): Promis
  * Runs `write` and records its change event in a single transaction:
  * if the write throws, the event is not recorded either (and the
  * event's insert failing rolls the write back too).
+ *
+ * `change` may be a plain value, or a function of the write's result
+ * for values only the write itself can know — above all the revision
+ * an update produced (see updateRevisioned): computing it on the
+ * caller side (`expectedRevision + 1`) can drift from the revision
+ * the update actually stamped.
  */
 export async function saveWithChange<T>(
   db: Db,
-  change: ChangeInput,
+  change: ChangeInput | ((result: T) => ChangeInput),
   write: (tx: Transaction) => Promise<T>,
 ): Promise<T> {
   return db.transaction(async (tx) => {
     const result = await write(tx);
-    await appendChange(tx, change);
+    const input = typeof change === "function" ? change(result) : change;
+    await appendChange(tx, input);
     return result;
   });
 }

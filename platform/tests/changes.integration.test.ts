@@ -8,6 +8,7 @@ import { loadAuthConfig, type AuthConfig } from "../src/auth/config.js";
 import { signSessionToken } from "../src/auth/tokens.js";
 import { createAuthStore } from "../src/db/authStore.js";
 import {
+  appendChange,
   createChangeStore,
   saveWithChange,
   updateRevisioned,
@@ -261,5 +262,120 @@ describe.skipIf(!url)("change outbox", () => {
     const cookie = sessionCookie("person-2", A, "person2@example.jp");
     const refused = await getChanges("/platform/api/v1/changes", cookie);
     expect(refused.status).toBe(403);
+  });
+
+  it("never lets a later change become visible before an earlier one commits", async () => {
+    // Two independent connections. While the first transaction still
+    // holds its appended change uncommitted, the second save must not
+    // complete — otherwise a reader could see the second change
+    // alone, move its watermark past the first, and never refetch
+    // the first once it commits.
+    const first = createDb(url as string);
+    const second = createDb(url as string);
+    try {
+      let releaseFirst!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let firstAppended = false;
+      const txFirst = first.db.transaction(async (tx) => {
+        await appendChange(tx, {
+          schoolId: A,
+          kind: "day_pattern",
+          entityId: "entity-lock-first",
+          revision: 1,
+          op: "upsert",
+          actor,
+        });
+        firstAppended = true;
+        await gate;
+      });
+      for (let i = 0; i < 100 && !firstAppended; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(firstAppended).toBe(true);
+
+      let secondSettled = false;
+      const txSecond = saveWithChange(
+        second.db,
+        {
+          schoolId: A,
+          kind: "day_pattern",
+          entityId: "entity-lock-second",
+          revision: 1,
+          op: "upsert",
+          actor,
+        },
+        async (tx) => {
+          const rows = await tx
+            .insert(testEntities)
+            .values({
+              schoolId: A,
+              id: "entity-lock-second",
+              revision: 1,
+              updatedBy: actor.userId,
+              updatedVia: actor.via,
+              label: "直列化の確認",
+            })
+            .returning();
+          return rows[0];
+        },
+      ).then(
+        () => {
+          secondSettled = true;
+        },
+        () => {
+          secondSettled = true;
+        },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(secondSettled).toBe(false);
+      const visible = await changeStore.listChanges(A, 0, 100);
+      expect(visible.map((c) => c.entityId)).not.toContain("entity-lock-first");
+      expect(visible.map((c) => c.entityId)).not.toContain("entity-lock-second");
+
+      releaseFirst();
+      await txFirst;
+      await txSecond;
+      expect(secondSettled).toBe(true);
+
+      const all = await changeStore.listChanges(A, 0, 100);
+      const firstEvent = all.find((c) => c.entityId === "entity-lock-first");
+      const secondEvent = all.find((c) => c.entityId === "entity-lock-second");
+      expect(firstEvent).toBeDefined();
+      expect(secondEvent).toBeDefined();
+      expect((firstEvent as ChangeEvent).seq).toBeLessThan((secondEvent as ChangeEvent).seq);
+    } finally {
+      await first.queryClient.end();
+      await second.queryClient.end();
+    }
+  });
+
+  it("records the revision the write actually produced when change is a function", async () => {
+    const updated = await saveWithChange(
+      db,
+      (row: typeof testEntities.$inferSelect) => ({
+        schoolId: A,
+        kind: "day_pattern" as const,
+        entityId: "entity-1",
+        revision: row.revision,
+        op: "upsert" as const,
+        actor,
+      }),
+      async (tx) =>
+        updateRevisioned(tx, testEntities, {
+          schoolId: A,
+          id: "entity-1",
+          expectedRevision: 2,
+          actor,
+          set: { label: "版番号は書き込みの結果から" },
+        }),
+    );
+    expect(updated.revision).toBe(3);
+    const mine = (await changeStore.listChanges(A, 0, 100)).filter(
+      (c) => c.entityId === "entity-1",
+    );
+    expect(mine[mine.length - 1]?.revision).toBe(3);
   });
 });
