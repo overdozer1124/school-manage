@@ -22,10 +22,13 @@ CREATE ROLE schedule_app LOGIN PASSWORD :'schedule_pw';
 CREATE DATABASE platform OWNER platform_app;
 CREATE DATABASE schedule OWNER schedule_app;
 CREATE DATABASE platform_test OWNER platform_app;
+CREATE DATABASE schedule_test OWNER schedule_app;
 REVOKE CONNECT ON DATABASE platform FROM PUBLIC;
 REVOKE CONNECT ON DATABASE schedule FROM PUBLIC;
 REVOKE CONNECT ON DATABASE platform_test FROM PUBLIC;
+REVOKE CONNECT ON DATABASE schedule_test FROM PUBLIC;
 GRANT CONNECT ON DATABASE platform TO platform_app;
 GRANT CONNECT ON DATABASE schedule TO schedule_app;
 GRANT CONNECT ON DATABASE platform_test TO platform_app;
+GRANT CONNECT ON DATABASE schedule_test TO schedule_app;
 SQL

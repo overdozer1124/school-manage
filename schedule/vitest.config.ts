@@ -11,10 +11,14 @@ if (existsSync(rootEnv)) {
 }
 
 // Tests rebuild the schema from scratch, so they run against the
-// dedicated test database when one is configured; the development
-// database is never dropped by a test run.
+// dedicated test database. When none is configured, the development
+// database URL is removed instead of falling through to it: the
+// schema-rebuilding tests then skip, and a test run can never drop
+// the development database.
 if (process.env.SCHEDULE_TEST_DATABASE_URL) {
   process.env.SCHEDULE_DATABASE_URL = process.env.SCHEDULE_TEST_DATABASE_URL;
+} else {
+  delete process.env.SCHEDULE_DATABASE_URL;
 }
 
 export default defineConfig({
