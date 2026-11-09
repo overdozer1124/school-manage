@@ -1,15 +1,18 @@
 import express from "express";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
+import { createChangesRouter, type ChangesRouterDeps } from "./changes/routes.js";
 
 /**
  * The platform HTTP app: the health check the external monitoring pings
- * (8-3-3) and, when the auth dependencies are provided, the login API
- * under /platform/api/v1/auth. The entry point always provides them; the
+ * (8-3-3) and, when the dependencies are provided, the login API under
+ * /platform/api/v1/auth and the change refetch API under
+ * /platform/api/v1/changes. The entry point always provides them; the
  * health test builds the app without, so /healthz stays answerable on
  * its own.
  */
 export interface AppDeps {
   auth?: AuthRouterDeps;
+  changes?: ChangesRouterDeps;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -29,6 +32,10 @@ export function createApp(deps: AppDeps = {}) {
 
   if (deps.auth) {
     app.use("/platform/api/v1/auth", createAuthRouter(deps.auth));
+  }
+
+  if (deps.changes) {
+    app.use("/platform/api/v1", createChangesRouter(deps.changes));
   }
 
   return app;

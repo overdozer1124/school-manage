@@ -1,8 +1,10 @@
 import { sql } from "drizzle-orm";
 import {
+  bigserial,
   boolean,
   check,
   date,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -198,6 +200,46 @@ export const auditLog = pgTable("audit_log", {
   createdAt: createdAt(),
 });
 
+/** Entity kinds a change event can be about (calendar-types events.ts). */
+export const changeKindEnum = pgEnum("change_entity_kind", [
+  "day",
+  "event",
+  "absence",
+  "staff",
+  "grade",
+  "class",
+  "special_needs_class",
+  "day_pattern",
+]);
+export const changeOpEnum = pgEnum("change_op", ["upsert", "delete"]);
+/** Which side a write came from (DESIGN-INTEGRATION 3.1: updated_via). */
+export const updatedViaEnum = pgEnum("updated_via", ["platform", "schedule", "timetable"]);
+
+/**
+ * The change outbox (Issue #21, DESIGN-INTEGRATION 3.2 / 7.1): one row
+ * per change to the school calendar or the shared masters, written in
+ * the same transaction as the change itself (see src/db/changes.ts).
+ * `seq` is a platform-wide sequence number; products remember the last
+ * seq they processed and refetch the rest through
+ * GET /platform/api/v1/changes. Like audit_log this is an append-only
+ * record, so school_id carries no foreign key.
+ */
+export const outbox = pgTable(
+  "outbox",
+  {
+    seq: bigserial("seq", { mode: "number" }).primaryKey(),
+    schoolId: text("school_id").notNull(),
+    kind: changeKindEnum("kind").notNull(),
+    entityId: text("entity_id").notNull(),
+    revision: integer("revision").notNull(),
+    op: changeOpEnum("op").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    actorVia: updatedViaEnum("actor_via").notNull(),
+  },
+  (t) => [index("outbox_school_seq_index").on(t.schoolId, t.seq)],
+);
+
 export type School = typeof schools.$inferSelect;
 export type Person = typeof persons.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
@@ -205,3 +247,4 @@ export type ProductRole = typeof productRoles.$inferSelect;
 export type ProductEntitlement = typeof productEntitlements.$inferSelect;
 export type Product = (typeof productEnum.enumValues)[number];
 export type Role = (typeof roleEnum.enumValues)[number];
+export type OutboxRow = typeof outbox.$inferSelect;
