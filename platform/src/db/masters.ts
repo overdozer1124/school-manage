@@ -89,7 +89,9 @@ function pgCode(error: unknown): string | undefined {
 function mapWriteError(error: unknown, context: "write" | "remove", kind: ChangeEntityKind): never {
   const code = pgCode(error);
   if (code === "23505") {
-    throw new MasterConflictError(`a ${kind} with this id already exists in this school`);
+    throw new MasterConflictError(
+      `a ${kind} with the same id (or the same unique code) already exists in this school`,
+    );
   }
   if (code === "23503") {
     if (context === "remove") {
@@ -462,6 +464,7 @@ export function createMasterStore(db: Db): MasterStore {
                 schoolId: input.schoolId,
                 id: input.id,
                 kind: input.kind,
+                code: input.code,
                 name: input.name,
                 revision: 1,
                 updatedBy: actor.userId,
@@ -498,7 +501,7 @@ export function createMasterStore(db: Db): MasterStore {
               id: input.id,
               expectedRevision: input.revision,
               actor,
-              set: { kind: input.kind, name: input.name } as never,
+              set: { kind: input.kind, code: input.code, name: input.name } as never,
             });
             // Periods are subordinate rows: replace the whole set
             // under the pattern's new revision.
@@ -624,6 +627,7 @@ function toDayPatternRecord(
   return {
     schoolId: pattern.schoolId,
     id: pattern.id,
+    code: pattern.code,
     name: pattern.name,
     kind: pattern.kind as DayPatternRecord["kind"],
     periods: periods

@@ -213,6 +213,7 @@ describe("dayPattern and changeEvent", () => {
     const pattern = dayPatternSchema.safeParse({
       schoolId: "school-1",
       id: "pattern-1",
+      code: "A",
       name: "通常日課",
       kind: "normal",
       periods: [
@@ -227,6 +228,7 @@ describe("dayPattern and changeEvent", () => {
     const pattern = dayPatternSchema.safeParse({
       schoolId: "school-1",
       id: "pattern-1",
+      code: "A",
       name: "通常日課",
       kind: "normal",
       periods: [

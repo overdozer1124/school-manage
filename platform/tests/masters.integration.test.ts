@@ -31,6 +31,7 @@ const STAFF_1 = {
 
 const PATTERN_1 = {
   id: "pattern-1",
+  code: "A",
   name: "通常日課",
   kind: "normal",
   periods: [
@@ -437,6 +438,41 @@ describe.skipIf(!url)("shared masters", () => {
     expect(linked[0]?.teacherId).toBe("staff-b1");
   });
 
+  it("lets two schools use the same master id without colliding", async () => {
+    const body = {
+      id: "staff-shared",
+      name: "同ID先生",
+      shortName: "同",
+      sortOrder: 7,
+      active: true,
+      personId: null,
+    };
+    expect(
+      (await api("POST", "/platform/api/v1/masters/staff", { cookie: editorA(), body })).status,
+    ).toBe(201);
+    expect(
+      (await api("POST", "/platform/api/v1/masters/staff", { cookie: memberB(), body })).status,
+    ).toBe(201);
+    const forA = await api("GET", "/platform/api/v1/masters/staff/staff-shared", {
+      cookie: editorA(),
+    });
+    const forB = await api("GET", "/platform/api/v1/masters/staff/staff-shared", {
+      cookie: memberB(),
+    });
+    expect(forA.json.id).toBe("staff-shared");
+    expect(forB.json.id).toBe("staff-shared");
+    expect(forA.json.updatedBy).toBe("person-editor");
+    expect(forB.json.updatedBy).toBe("person-b");
+  });
+
+  it("refuses a second day pattern with the same school code", async () => {
+    const dupe = await api("POST", "/platform/api/v1/masters/day-patterns", {
+      cookie: editorA(),
+      body: { ...PATTERN_1, id: "pattern-dup-code" },
+    });
+    expect(dupe.status).toBe(409);
+  });
+
   it("rejects invalid input with 400", async () => {
     expect(
       (
@@ -444,6 +480,7 @@ describe.skipIf(!url)("shared masters", () => {
           cookie: editorA(),
           body: {
             id: "pattern-bad",
+            code: "BAD",
             name: "壊れた日課",
             kind: "normal",
             periods: [

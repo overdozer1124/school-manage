@@ -1,5 +1,5 @@
 {
-  "id": "beb8af27-53c4-401a-8924-a83d764045ee",
+  "id": "67d94c84-cada-4195-89b6-8c084fecfa7d",
   "prevId": "7d49eaf9-30ab-4c41-b863-39f1f8c6555b",
   "version": "7",
   "dialect": "postgresql",
@@ -73,7 +73,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "grade_id": {
@@ -152,17 +152,16 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "classes_school_id_unique": {
-          "name": "classes_school_id_unique",
-          "nullsNotDistinct": false,
+      "compositePrimaryKeys": {
+        "classes_school_id_id_pk": {
+          "name": "classes_school_id_id_pk",
           "columns": [
             "school_id",
             "id"
           ]
         }
       },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -180,7 +179,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "day_pattern_id": {
@@ -245,16 +244,16 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "day_pattern_periods_school_id_unique": {
-          "name": "day_pattern_periods_school_id_unique",
-          "nullsNotDistinct": false,
+      "compositePrimaryKeys": {
+        "day_pattern_periods_school_id_id_pk": {
+          "name": "day_pattern_periods_school_id_id_pk",
           "columns": [
             "school_id",
             "id"
           ]
-        },
+        }
+      },
+      "uniqueConstraints": {
         "day_pattern_periods_pattern_period_unique": {
           "name": "day_pattern_periods_pattern_period_unique",
           "nullsNotDistinct": false,
@@ -282,11 +281,17 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "kind": {
           "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
           "type": "text",
           "primaryKey": false,
           "notNull": true
@@ -340,19 +345,32 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "day_patterns_school_id_unique": {
-          "name": "day_patterns_school_id_unique",
-          "nullsNotDistinct": false,
+      "compositePrimaryKeys": {
+        "day_patterns_school_id_id_pk": {
+          "name": "day_patterns_school_id_id_pk",
           "columns": [
             "school_id",
             "id"
           ]
         }
       },
+      "uniqueConstraints": {
+        "day_patterns_school_code_unique": {
+          "name": "day_patterns_school_code_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "school_id",
+            "code"
+          ]
+        }
+      },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "day_patterns_kind_check": {
+          "name": "day_patterns_kind_check",
+          "value": "\"day_patterns\".\"kind\" in ('normal', 'shortened', 'exam', 'special')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.grades": {
@@ -368,7 +386,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "name": {
@@ -432,17 +450,16 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "grades_school_id_unique": {
-          "name": "grades_school_id_unique",
-          "nullsNotDistinct": false,
+      "compositePrimaryKeys": {
+        "grades_school_id_id_pk": {
+          "name": "grades_school_id_id_pk",
           "columns": [
             "school_id",
             "id"
           ]
         }
       },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1122,7 +1139,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "name": {
@@ -1180,17 +1197,16 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "special_needs_classes_school_id_unique": {
-          "name": "special_needs_classes_school_id_unique",
-          "nullsNotDistinct": false,
+      "compositePrimaryKeys": {
+        "special_needs_classes_school_id_id_pk": {
+          "name": "special_needs_classes_school_id_id_pk",
           "columns": [
             "school_id",
             "id"
           ]
         }
       },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -1208,7 +1224,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "name": {
@@ -1298,17 +1314,16 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "staff_members_school_id_unique": {
-          "name": "staff_members_school_id_unique",
-          "nullsNotDistinct": false,
+      "compositePrimaryKeys": {
+        "staff_members_school_id_id_pk": {
+          "name": "staff_members_school_id_id_pk",
           "columns": [
             "school_id",
             "id"
           ]
         }
       },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

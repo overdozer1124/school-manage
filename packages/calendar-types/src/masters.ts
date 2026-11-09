@@ -67,6 +67,8 @@ export type DayPatternPeriod = z.infer<typeof dayPatternPeriodSchema>;
 
 const dayPatternFields = {
   ...masterBase,
+  /** The school's own short code for the pattern (A, B, 普, A7…). */
+  code: nonEmptyString,
   name: nonEmptyString,
   kind: dayScheduleKindSchema,
   periods: z.array(dayPatternPeriodSchema).min(1),

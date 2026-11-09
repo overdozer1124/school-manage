@@ -8,6 +8,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -89,7 +90,7 @@ export const staffMembers = pgTable(
     schoolId: text("school_id")
       .notNull()
       .references(() => schools.schoolId),
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     name: text("name").notNull(),
     shortName: text("short_name").notNull(),
     sortOrder: integer("sort_order").notNull(),
@@ -97,7 +98,10 @@ export const staffMembers = pgTable(
     personId: text("person_id").references(() => persons.id),
     ...masterMeta,
   },
-  (t) => [unique("staff_members_school_id_unique").on(t.schoolId, t.id)],
+  // The primary key is (school_id, id), as in the timetable: an id is
+  // unique within its school only, so two schools may use the same id
+  // without colliding — or revealing each other's ids (Issue #22).
+  (t) => [primaryKey({ columns: [t.schoolId, t.id] })],
 );
 
 export const grades = pgTable(
@@ -106,14 +110,14 @@ export const grades = pgTable(
     schoolId: text("school_id")
       .notNull()
       .references(() => schools.schoolId),
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     name: text("name").notNull(),
     sortOrder: integer("sort_order").notNull(),
     /** The school's grouping of grades （前期課程など）, if any. */
     stage: text("stage"),
     ...masterMeta,
   },
-  (t) => [unique("grades_school_id_unique").on(t.schoolId, t.id)],
+  (t) => [primaryKey({ columns: [t.schoolId, t.id] })],
 );
 
 export const classes = pgTable(
@@ -122,14 +126,14 @@ export const classes = pgTable(
     schoolId: text("school_id")
       .notNull()
       .references(() => schools.schoolId),
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     gradeId: text("grade_id").notNull(),
     name: text("name").notNull(),
     sortOrder: integer("sort_order").notNull(),
     ...masterMeta,
   },
   (t) => [
-    unique("classes_school_id_unique").on(t.schoolId, t.id),
+    primaryKey({ columns: [t.schoolId, t.id] }),
     foreignKey({
       columns: [t.schoolId, t.gradeId],
       foreignColumns: [grades.schoolId, grades.id],
@@ -144,12 +148,12 @@ export const specialNeedsClasses = pgTable(
     schoolId: text("school_id")
       .notNull()
       .references(() => schools.schoolId),
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     name: text("name").notNull(),
     sortOrder: integer("sort_order").notNull(),
     ...masterMeta,
   },
-  (t) => [unique("special_needs_classes_school_id_unique").on(t.schoolId, t.id)],
+  (t) => [primaryKey({ columns: [t.schoolId, t.id] })],
 );
 
 export const dayPatterns = pgTable(
@@ -158,13 +162,22 @@ export const dayPatterns = pgTable(
     schoolId: text("school_id")
       .notNull()
       .references(() => schools.schoolId),
-    id: text("id").primaryKey(),
-    /** The pattern kind code （通常／短縮／考査／特別， calendar-types dayScheduleKind). */
+    id: text("id").notNull(),
+    /**
+     * The fixed meaning of the pattern (calendar-types
+     * dayScheduleKind); the check keeps direct writes honest too.
+     */
     kind: text("kind").notNull(),
+    /** The school's own short code for the pattern (A, B, 普, A7…). */
+    code: text("code").notNull(),
     name: text("name").notNull(),
     ...masterMeta,
   },
-  (t) => [unique("day_patterns_school_id_unique").on(t.schoolId, t.id)],
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("day_patterns_school_code_unique").on(t.schoolId, t.code),
+    check("day_patterns_kind_check", sql`${t.kind} in ('normal', 'shortened', 'exam', 'special')`),
+  ],
 );
 
 /**
@@ -180,7 +193,7 @@ export const dayPatternPeriods = pgTable(
     schoolId: text("school_id")
       .notNull()
       .references(() => schools.schoolId),
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     dayPatternId: text("day_pattern_id").notNull(),
     period: integer("period").notNull(),
     label: text("label").notNull(),
@@ -188,7 +201,7 @@ export const dayPatternPeriods = pgTable(
     endsAt: text("ends_at").notNull(),
   },
   (t) => [
-    unique("day_pattern_periods_school_id_unique").on(t.schoolId, t.id),
+    primaryKey({ columns: [t.schoolId, t.id] }),
     unique("day_pattern_periods_pattern_period_unique").on(t.schoolId, t.dayPatternId, t.period),
     foreignKey({
       columns: [t.schoolId, t.dayPatternId],
