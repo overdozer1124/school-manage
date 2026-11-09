@@ -9,11 +9,13 @@ import {
   type Role,
 } from "../src/index.js";
 
-const permissions: PermissionTable = {
+// `as const` keeps the keys as literal types: a permission is a key of
+// this table, and any other name is a compile error (Issue #26).
+const permissions = {
   "view.read": ["Admin", "Editor", "Viewer"],
   "event.write": ["Admin", "Editor"],
   "school.admin": ["Admin"],
-};
+} as const satisfies PermissionTable;
 
 function authWith(role: Role): AuthContext {
   return {
@@ -45,9 +47,11 @@ describe("secureAction", () => {
     expect(handler.mock.calls.length).toBe(0);
   });
 
-  it("refuses a permission missing from the table", async () => {
+  it("still refuses at runtime when a missing name is forced past the types", async () => {
     const action = secureAction({
-      permission: "unknown.permission",
+      // The type system keeps this name out (see the type tests
+      // below); the cast simulates a caller that bypasses it.
+      permission: "unknown.permission" as "view.read",
       permissions,
       handler: () => Promise.resolve("ok"),
     });
@@ -77,6 +81,17 @@ describe("action types (checked by tsc)", () => {
     });
     expectTypeOf(actions.getRange.kind).toEqualTypeOf<"secure">();
     expectTypeOf(actions.getPublicRange.kind).toEqualTypeOf<"public">();
+  });
+
+  it("rejects a permission name that is not a key of the table", () => {
+    const declare = () =>
+      secureAction({
+        // @ts-expect-error "unknown.permission" is not in the table
+        permission: "unknown.permission",
+        permissions,
+        handler: () => Promise.resolve("ok"),
+      });
+    expect(typeof declare).toBe("function");
   });
 
   it("rejects declarations that skip the guard", () => {

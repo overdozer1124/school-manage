@@ -31,3 +31,5 @@ curl http://localhost:3001/healthz   # {"status":"ok"}
 ホスト側の 5432 番ポートが既に使われている場合は、`.env` の `POSTGRES_PORT` で変更し、接続文字列のポートも合わせてください。
 
 DB の結合テスト（`platform/tests/db.integration.test.ts`）は、`PLATFORM_DATABASE_URL` が設定されているときだけ実行されます。vitest はリポジトリ直下の `.env` を自動で読み込むので、上の手順どおり `.env` を置けばローカルでも実行されます（CI では未設定だと失敗します）。CI では Postgres をサービスとして起動し、同じ初期化スクリプト（`docker/postgres/init.sh`）で DB と利用者を作ってから、型チェック・lint・テストを回します。
+
+スキーマを作り直す結合テストは、開発用 DB ではなくテスト用 DB（`platform_test` / `schedule_test`）を使います。`SCHEDULE_TEST_DATABASE_URL` が未設定のとき、行事予定の結合テストは開発用 DB を守るため実行されません。既存の docker ボリュームでは `init.sh` が再実行されないため、`schedule_test` が無い場合は手で作ってください（例：`docker compose exec postgres psql -U postgres -c "CREATE DATABASE schedule_test OWNER schedule_app"`）。

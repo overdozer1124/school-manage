@@ -38,4 +38,28 @@ export default tseslint.config(
     files: ["platform/src/db/**/*.ts"],
     rules: { "no-restricted-imports": "off" },
   },
+  {
+    // The same tenancy guard for the schedule server (Issue #26):
+    // outside schedule/src/db, code must go through tenantDb and must
+    // not touch the raw client or the postgres driver directly.
+    files: ["schedule/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["postgres", "drizzle-orm/postgres-js", "**/db/client", "**/db/client.js"],
+              message:
+                "Raw database access is limited to schedule/src/db; use tenantDb (src/db/tenant.ts).",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["schedule/src/db/**/*.ts"],
+    rules: { "no-restricted-imports": "off" },
+  },
 );
