@@ -51,6 +51,16 @@ export function createDefinitionActions(db: Db) {
       await assertOwned(tdb, targetGroups, [input.targetGroupId]);
       if (input.parentTargetId) {
         await assertOwned(tdb, targets, [input.parentTargetId]);
+        // A parent must sit on the same axis as its child: a target
+        // of another group is owned by the school too, so the
+        // ownership check alone would let it through (PR #56
+        // review, recommendation 3).
+        const parent = await tdb.findById(targets, input.parentTargetId);
+        if (parent && parent.targetGroupId !== input.targetGroupId) {
+          throw new Error(
+            `parent target belongs to a different target group: ${input.parentTargetId}`,
+          );
+        }
       }
       return store.upsertTarget(db, auth.schoolId, input);
     }),

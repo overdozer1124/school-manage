@@ -249,6 +249,27 @@ describe.skipIf(!url)("schedule definitions", () => {
     expect(busGroup?.targets.map((t) => t.name)).toEqual(["①便", "②便", "③便", "④便"]);
     const lunch = set.itemDefinitions.find((i) => i.key === "lunch");
     expect(lunch?.options.find((o) => o.code === "yes")?.countsAs).toEqual({ lunch_day: true });
+
+    // DESIGN 5.2 scenario 2 also names the grade-axis form: a bus
+    // item split by grade (targetPlatformAxis "grade", valueType
+    // "time") is reachable by a definition addition alone, so the
+    // dismissal + bus pair spans 6 grades x 2 items = 12 columns
+    // without any schema or code change. (The route-axis form above
+    // stays as the preset ships it, per DESIGN 5.1.)
+    await actions.upsertItemDefinition.run(auth(school, "Admin"), {
+      id: "item-bus-by-grade",
+      key: "bus_by_grade",
+      name: "バス（学年別）",
+      valueType: "time",
+      targetPlatformAxis: "grade",
+      granularity: "day",
+      defaultVisibility: "guardian",
+    });
+    const after = await actions.getDefinitions.run(auth(school, "Admin"), null);
+    const busByGrade = after.itemDefinitions.find((i) => i.key === "bus_by_grade");
+    expect(busByGrade?.targetPlatformAxis).toBe("grade");
+    expect(busByGrade?.valueType).toBe("time");
+    expect(busByGrade?.targetGroupId).toBeNull();
   });
 
   it("scenario 5: clubs are absent in elementary and two-form in junior high", async () => {
@@ -312,6 +333,123 @@ describe.skipIf(!url)("schedule definitions", () => {
     expect(summary.skippedItemKeys).toContain("lunch");
     const set = await actions.getDefinitions.run(admin, null);
     expect(set.itemDefinitions.find((i) => i.key === "lunch")?.name).toBe("給食（変更済み）");
+  });
+
+  it("applies a preset when the school already has the same axis key under a different id", async () => {
+    // PR #56 review, mandatory 1: the club axis was created from
+    // the management screen first, with the school's own id. The
+    // preset must reuse that axis instead of failing on the
+    // foreign key to the preset id.
+    const school = "school-h";
+    const admin = auth(school, "Admin");
+    await actions.upsertTargetGroup.run(admin, {
+      id: "my-club",
+      key: "club",
+      name: "部活動（学校独自）",
+      sort: 1,
+    });
+    const summary = await actions.applyPreset.run(admin, { preset: "junior_high" });
+    expect(summary.skippedTargetGroupKeys).toContain("club");
+    const set = await actions.getDefinitions.run(admin, null);
+    expect(set.targetGroups.filter((g) => g.key === "club")).toHaveLength(1);
+    expect(set.targetGroups.find((g) => g.key === "club")?.id).toBe("my-club");
+    const clubActivity = set.itemDefinitions.find((i) => i.key === "club_activity");
+    expect(clubActivity?.targetGroupId).toBe("my-club");
+  });
+
+  it("reuses the school's bus axis and routes when a bus preset is applied", async () => {
+    // The same key-resolution for an axis that has targets: the
+    // route the school already registered (by its own id, matched
+    // by code) is left untouched and reported as skipped, the
+    // missing routes are added under the school's axis id.
+    const school = "school-i";
+    const admin = auth(school, "Admin");
+    await actions.upsertTargetGroup.run(admin, {
+      id: "my-bus",
+      key: "bus_route",
+      name: "バス便（学校独自）",
+      sort: 1,
+    });
+    await actions.upsertTarget.run(admin, {
+      id: "my-bus-1",
+      targetGroupId: "my-bus",
+      code: "1",
+      name: "①便（独自）",
+      sort: 1,
+    });
+    const summary = await actions.applyPreset.run(admin, { preset: "elementary_bus" });
+    expect(summary.skippedTargetGroupKeys).toContain("bus_route");
+    expect(summary.skippedTargetIds).toContain("tgt-bus-1");
+    const set = await actions.getDefinitions.run(admin, null);
+    const busGroup = set.targetGroups.find((g) => g.key === "bus_route");
+    expect(busGroup?.id).toBe("my-bus");
+    expect(busGroup?.targets.map((t) => t.id).sort()).toEqual([
+      "my-bus-1",
+      "tgt-bus-2",
+      "tgt-bus-3",
+      "tgt-bus-4",
+    ]);
+    expect(busGroup?.targets.every((t) => t.targetGroupId === "my-bus")).toBe(true);
+    expect(busGroup?.targets.find((t) => t.code === "1")?.name).toBe("①便（独自）");
+    const bus = set.itemDefinitions.find((i) => i.key === "bus");
+    expect(bus?.targetGroupId).toBe("my-bus");
+  });
+
+  it("names the option, not the item key, when an option id is already used", async () => {
+    // PR #56 review, recommendation 2: an option id colliding with
+    // another item's option is a 23505 too, but blaming the item
+    // key misleads the screen; the message follows the constraint.
+    const school = "school-j";
+    const admin = auth(school, "Admin");
+    await actions.upsertItemDefinition.run(admin, {
+      id: "item-first",
+      key: "first",
+      name: "第一",
+      valueType: "symbol",
+      granularity: "day",
+      defaultVisibility: "staff_only",
+      options: [{ id: "opt-shared", code: "on", label: "○" }],
+    });
+    await expect(
+      actions.upsertItemDefinition.run(admin, {
+        id: "item-second",
+        key: "second",
+        name: "第二",
+        valueType: "symbol",
+        granularity: "day",
+        defaultVisibility: "staff_only",
+        options: [{ id: "opt-shared", code: "on", label: "○" }],
+      }),
+    ).rejects.toThrow("item option id already exists");
+    // The failed write left nothing behind.
+    const set = await actions.getDefinitions.run(admin, null);
+    expect(set.itemDefinitions.map((i) => i.key)).toEqual(["first"]);
+  });
+
+  it("rejects a target whose parent sits on a different axis", async () => {
+    // PR #56 review, recommendation 3: ownership alone is not
+    // enough — the parent must belong to the same target group.
+    const school = "school-k";
+    const admin = auth(school, "Admin");
+    await actions.upsertTargetGroup.run(admin, { id: "g-one", key: "one", name: "軸1" });
+    await actions.upsertTargetGroup.run(admin, { id: "g-two", key: "two", name: "軸2" });
+    await actions.upsertTarget.run(admin, { id: "t-parent", targetGroupId: "g-one", name: "親" });
+    await expect(
+      actions.upsertTarget.run(admin, {
+        id: "t-child",
+        targetGroupId: "g-two",
+        parentTargetId: "t-parent",
+        name: "子",
+      }),
+    ).rejects.toThrow("different target group");
+    // Same-axis parenting still works.
+    const child = await actions.upsertTarget.run(admin, {
+      id: "t-child",
+      targetGroupId: "g-one",
+      parentTargetId: "t-parent",
+      name: "子",
+    });
+    expect(child.parentTargetId).toBe("t-parent");
   });
 
   it("saves settings and keeps them through a preset application", async () => {

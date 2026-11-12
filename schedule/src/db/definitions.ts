@@ -42,6 +42,23 @@ function pgErrorCode(error: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * The name of the constraint a Postgres error blames, when the
+ * driver reports one (postgres.js exposes it as `constraint_name`,
+ * node-postgres as `constraint`). Two unique violations share the
+ * 23505 code, so the constraint name is what tells them apart.
+ */
+function pgErrorConstraint(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current != null; depth += 1) {
+    const fields = current as { constraint_name?: unknown; constraint?: unknown };
+    if (typeof fields.constraint_name === "string") return fields.constraint_name;
+    if (typeof fields.constraint === "string") return fields.constraint;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
 export interface TargetGroupWithTargets extends TargetGroupRow {
   targets: TargetRow[];
 }
@@ -255,6 +272,16 @@ export async function upsertItemDefinition(
     });
   } catch (error) {
     if (pgErrorCode(error) === "23505") {
+      // Tell the caller which uniqueness rule fired: the item's own
+      // key, an option id already used by another item of this
+      // school, or a duplicate option code within this item.
+      const constraint = pgErrorConstraint(error) ?? "";
+      if (constraint.startsWith("item_options_school_id_id_pk")) {
+        throw new Error("an item option id already exists in this school (used by another item)");
+      }
+      if (constraint.startsWith("item_options")) {
+        throw new Error(`item option code already exists for this item definition: ${input.key}`);
+      }
       throw new Error(`item definition key already exists in this school: ${input.key}`);
     }
     throw error;
@@ -328,13 +355,34 @@ export interface ApplyPresetSummary {
   insertedItemDefinitions: number;
   /** Keys of preset items that already existed and were left untouched. */
   skippedItemKeys: string[];
+  /**
+   * Keys of preset target groups the school already had under its
+   * own id; the preset's targets and items were re-pointed at the
+   * school's group instead of the preset id.
+   */
+  skippedTargetGroupKeys: string[];
+  /**
+   * Ids of preset targets that already existed (same id, or same
+   * code within the resolved group) and were left untouched.
+   */
+  skippedTargetIds: string[];
 }
 
 /**
  * Applies a preset (DESIGN schedule 5.1): inserts the groups,
- * targets, items and options the school does not have yet, matched
- * by id and by key, and never overwrites an existing definition.
- * Records the application on school_settings.
+ * targets, items and options the school does not have yet, and
+ * never overwrites an existing definition. Records the application
+ * on school_settings.
+ *
+ * Existing rows are matched by key, not only by id: a school may
+ * already have an axis with the preset's key under its own id (a
+ * club axis created from the management screen, say). The preset's
+ * targets and items then point at the school's existing group id —
+ * inserting the preset id alongside would either duplicate the key
+ * or leave the references pointing at a row that was never inserted
+ * (PR #56 review, mandatory 1). Targets are matched the same way,
+ * by id or by code within the resolved group, and a preset target's
+ * parent reference is re-pointed at the resolved target id.
  */
 export async function applyPreset(
   db: Db,
@@ -347,35 +395,82 @@ export async function applyPreset(
     let insertedTargets = 0;
     let insertedItemDefinitions = 0;
     const skippedItemKeys: string[] = [];
+    const skippedTargetGroupKeys: string[] = [];
+    const skippedTargetIds: string[] = [];
 
+    const existingGroups = await tx
+      .select()
+      .from(targetGroups)
+      .where(eq(targetGroups.schoolId, schoolId));
+    const existingTargets = await tx.select().from(targets).where(eq(targets.schoolId, schoolId));
+    const groupIdByKey = new Map(existingGroups.map((g) => [g.key, g.id]));
+    const groupIds = new Set(existingGroups.map((g) => g.id));
+
+    // Resolve every preset group to the id its targets and items
+    // must reference: the school's own row when the key already
+    // exists, otherwise the preset row inserted here.
+    const resolvedGroupId = new Map<string, string>();
+    for (const { group } of preset.targetGroups) {
+      const byKey = groupIdByKey.get(group.key);
+      if (byKey !== undefined) {
+        resolvedGroupId.set(group.id, byKey);
+        if (byKey !== group.id) skippedTargetGroupKeys.push(group.key);
+        continue;
+      }
+      if (groupIds.has(group.id)) {
+        // A row with the preset id but another key: references to
+        // the preset id still land on a real row, so keep it.
+        resolvedGroupId.set(group.id, group.id);
+        skippedTargetGroupKeys.push(group.key);
+        continue;
+      }
+      await tx.insert(targetGroups).values({
+        schoolId,
+        id: group.id,
+        key: group.key,
+        name: group.name,
+        sort: group.sort ?? 0,
+      });
+      insertedTargetGroups += 1;
+      groupIdByKey.set(group.key, group.id);
+      groupIds.add(group.id);
+      resolvedGroupId.set(group.id, group.id);
+    }
+
+    // Targets, matched within their resolved group by id or code.
+    const resolvedTargetId = new Map<string, string>();
     for (const { group, targets: presetTargets } of preset.targetGroups) {
-      const inserted = await tx
-        .insert(targetGroups)
-        .values({
-          schoolId,
-          id: group.id,
-          key: group.key,
-          name: group.name,
-          sort: group.sort ?? 0,
-        })
-        .onConflictDoNothing()
-        .returning();
-      insertedTargetGroups += inserted.length;
+      const groupId = resolvedGroupId.get(group.id) as string;
       for (const target of presetTargets) {
+        const existing =
+          existingTargets.find((t) => t.targetGroupId === groupId && t.id === target.id) ??
+          (target.code != null
+            ? existingTargets.find((t) => t.targetGroupId === groupId && t.code === target.code)
+            : undefined) ??
+          existingTargets.find((t) => t.id === target.id);
+        if (existing) {
+          resolvedTargetId.set(target.id, existing.id);
+          skippedTargetIds.push(target.id);
+          continue;
+        }
         const insertedTarget = await tx
           .insert(targets)
           .values({
             schoolId,
             id: target.id,
-            targetGroupId: target.targetGroupId,
+            targetGroupId: groupId,
             code: target.code ?? null,
             name: target.name,
             sort: target.sort ?? 0,
-            parentTargetId: target.parentTargetId ?? null,
+            parentTargetId: target.parentTargetId
+              ? (resolvedTargetId.get(target.parentTargetId) ?? target.parentTargetId)
+              : null,
           })
-          .onConflictDoNothing()
           .returning();
-        insertedTargets += insertedTarget.length;
+        const row = insertedTarget[0] as TargetRow;
+        existingTargets.push(row);
+        resolvedTargetId.set(target.id, row.id);
+        insertedTargets += 1;
       }
     }
 
@@ -388,7 +483,9 @@ export async function applyPreset(
           key: item.key,
           name: item.name,
           valueType: item.valueType,
-          targetGroupId: item.targetGroupId ?? null,
+          targetGroupId: item.targetGroupId
+            ? (resolvedGroupId.get(item.targetGroupId) ?? item.targetGroupId)
+            : null,
           targetPlatformAxis: item.targetPlatformAxis ?? null,
           granularity: item.granularity,
           defaultVisibility: item.defaultVisibility,
@@ -437,6 +534,8 @@ export async function applyPreset(
       insertedTargets,
       insertedItemDefinitions,
       skippedItemKeys,
+      skippedTargetGroupKeys,
+      skippedTargetIds,
     };
   });
 }
