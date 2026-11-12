@@ -1,6 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "./client.js";
 import {
+  dailyValues,
   itemDefinitions,
   itemOptions,
   locations,
@@ -208,6 +209,80 @@ export async function upsertItemDefinition(
 ): Promise<ItemDefinitionWithOptions> {
   try {
     return await db.transaction(async (tx) => {
+      // Guards for items that already carry daily values (PR #58
+      // review, recommendations 1 and 2). They run inside the
+      // transaction, before any row is touched, so a refused update
+      // leaves the definition and its options exactly as they were.
+      const existingRows = await tx
+        .select()
+        .from(itemDefinitions)
+        .where(and(eq(itemDefinitions.schoolId, schoolId), eq(itemDefinitions.id, input.id)));
+      const existing = existingRows[0];
+      if (existing) {
+        const valueRows = await tx
+          .select({ valueOptionId: dailyValues.valueOptionId })
+          .from(dailyValues)
+          .where(
+            and(eq(dailyValues.schoolId, schoolId), eq(dailyValues.itemDefinitionId, input.id)),
+          );
+        if (valueRows.length > 0) {
+          // Recommendation 2: changing the value type or the axis
+          // would strand the existing rows under the old type's
+          // columns or the old target keys, so refuse while any
+          // daily value exists for this item.
+          const changedFields: string[] = [];
+          if (existing.valueType !== input.valueType) {
+            changedFields.push(`valueType (${existing.valueType} -> ${input.valueType})`);
+          }
+          if ((existing.targetGroupId ?? null) !== (input.targetGroupId ?? null)) {
+            changedFields.push(
+              `targetGroupId (${existing.targetGroupId ?? "none"} -> ${input.targetGroupId ?? "none"})`,
+            );
+          }
+          if ((existing.targetPlatformAxis ?? null) !== (input.targetPlatformAxis ?? null)) {
+            changedFields.push(
+              `targetPlatformAxis (${existing.targetPlatformAxis ?? "none"} -> ${input.targetPlatformAxis ?? "none"})`,
+            );
+          }
+          if (changedFields.length > 0) {
+            throw new Error(
+              `item definition has daily values and cannot change ${changedFields.join(", ")}: ${input.id}`,
+            );
+          }
+          // Recommendation 1: value_option_id has no foreign key
+          // (see Issue #28), so replacing the option list could
+          // silently drop an option a daily value still points at.
+          // Refuse when an in-use option id disappears from the
+          // new list, naming the option (id and current code).
+          if (input.options) {
+            const newOptionIds = new Set(input.options.map((o) => o.id));
+            const usedOptionIds = [
+              ...new Set(
+                valueRows.map((r) => r.valueOptionId).filter((id): id is string => id !== null),
+              ),
+            ].filter((id) => !newOptionIds.has(id));
+            if (usedOptionIds.length > 0) {
+              const currentOptions = await tx
+                .select()
+                .from(itemOptions)
+                .where(
+                  and(
+                    eq(itemOptions.schoolId, schoolId),
+                    eq(itemOptions.itemDefinitionId, input.id),
+                  ),
+                );
+              const codeById = new Map(currentOptions.map((o) => [o.id, o.code]));
+              const named = usedOptionIds.map((id) => {
+                const code = codeById.get(id);
+                return code ? `${id} (code "${code}")` : id;
+              });
+              throw new Error(
+                `item option is in use by daily values and cannot be removed: ${named.join(", ")}`,
+              );
+            }
+          }
+        }
+      }
       const rows = await tx
         .insert(itemDefinitions)
         .values({

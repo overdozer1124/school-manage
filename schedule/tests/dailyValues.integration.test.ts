@@ -33,6 +33,7 @@ const DATE = "2027-04-10";
 describe.skipIf(!url)("schedule daily values", () => {
   let queryClient: ReturnType<typeof postgres>;
   let actions: Actions;
+  let dbForDefs: Db;
 
   beforeAll(async () => {
     const admin = postgres(url as string, { max: 1 });
@@ -43,6 +44,7 @@ describe.skipIf(!url)("schedule daily values", () => {
 
     const created = createDb(url);
     const db: Db = created.db;
+    dbForDefs = db;
     queryClient = created.queryClient;
     await runMigrations(db);
     actions = createDailyValueActions(db);
@@ -285,6 +287,139 @@ describe.skipIf(!url)("schedule daily values", () => {
         value: "13:00",
       }),
     ).rejects.toThrow("not the item's target group");
+  });
+
+  it("requires a target for items that vary by target (set and delete)", async () => {
+    // PR #58 review, mandatory 1: an axis-bearing item must not
+    // accept a targetless row (DESIGN 4.8.2: values are per
+    // target). Both the platform-axis item (dismissal) and the
+    // app-axis item (bus) refuse, for setting and for deleting.
+    const editor = auth(A, "Editor");
+    await expect(
+      actions.setDailyValue.run(editor, {
+        date: "2027-04-16",
+        itemDefinitionId: "item-dismissal",
+        value: "14:30",
+      }),
+    ).rejects.toThrow("target is required");
+    await expect(
+      actions.setDailyValue.run(editor, {
+        date: "2027-04-16",
+        itemDefinitionId: "item-bus",
+        value: "13:00",
+      }),
+    ).rejects.toThrow("target is required");
+    await expect(
+      actions.deleteDailyValue.run(editor, {
+        date: "2027-04-16",
+        itemDefinitionId: "item-dismissal",
+      }),
+    ).rejects.toThrow("target is required");
+    await expect(
+      actions.deleteDailyValue.run(editor, {
+        date: "2027-04-16",
+        itemDefinitionId: "item-bus",
+      }),
+    ).rejects.toThrow("target is required");
+    // No targetless row was written as a side effect.
+    const read = await actions.getDailyValues.run(editor, {
+      from: "2027-04-16",
+      to: "2027-04-16",
+    });
+    expect(read).toHaveLength(0);
+    // Deleting with the target named still works.
+    await actions.setDailyValue.run(editor, {
+      date: "2027-04-16",
+      itemDefinitionId: "item-dismissal",
+      target: { axis: "grade", id: "grade-1" },
+      value: "14:30",
+    });
+    await actions.deleteDailyValue.run(editor, {
+      date: "2027-04-16",
+      itemDefinitionId: "item-dismissal",
+      target: { axis: "grade", id: "grade-1" },
+    });
+    const after = await actions.getDailyValues.run(editor, {
+      from: "2027-04-16",
+      to: "2027-04-16",
+    });
+    expect(after).toHaveLength(0);
+  });
+
+  it("refuses definition updates that would strand daily values", async () => {
+    // PR #58 review, recommendations 1 and 2: while an item has
+    // daily values, its definition update may not drop an in-use
+    // option, nor change the value type or the axis.
+    const admin = auth(A, "Admin");
+    const editor = auth(A, "Editor");
+    const defs = createDefinitionActions(dbForDefs);
+    await defs.upsertItemDefinition.run(admin, {
+      id: "item-rec",
+      key: "rec_item",
+      name: "推奨テスト項目",
+      valueType: "symbol",
+      granularity: "day",
+      defaultVisibility: "staff_only",
+      options: [
+        { id: "opt-rec-a", code: "a", label: "A" },
+        { id: "opt-rec-b", code: "b", label: "B" },
+      ],
+    });
+    await actions.setDailyValue.run(editor, {
+      date: "2027-04-17",
+      itemDefinitionId: "item-rec",
+      value: "a",
+    });
+    const base = {
+      id: "item-rec",
+      key: "rec_item",
+      name: "推奨テスト項目",
+      valueType: "symbol" as const,
+      granularity: "day" as const,
+      defaultVisibility: "staff_only" as const,
+    };
+    // Recommendation 1: dropping the in-use option opt-rec-a is
+    // refused, and the message names the option.
+    await expect(
+      defs.upsertItemDefinition.run(admin, {
+        ...base,
+        options: [{ id: "opt-rec-b", code: "b", label: "B" }],
+      }),
+    ).rejects.toThrow("opt-rec-a");
+    await expect(
+      defs.upsertItemDefinition.run(admin, {
+        ...base,
+        options: [{ id: "opt-rec-b", code: "b", label: "B" }],
+      }),
+    ).rejects.toThrow("in use by daily values");
+    // Recommendation 2: changing the value type is refused.
+    await expect(
+      defs.upsertItemDefinition.run(admin, { ...base, valueType: "text" }),
+    ).rejects.toThrow("has daily values and cannot change valueType");
+    // Recommendation 2: adding an axis is refused too.
+    await expect(
+      defs.upsertItemDefinition.run(admin, { ...base, targetPlatformAxis: "grade" }),
+    ).rejects.toThrow("has daily values and cannot change targetPlatformAxis");
+    // An update that keeps the type, the axis and the in-use
+    // option (renaming, adding an unused option) still succeeds,
+    // and the stored value still resolves to its option.
+    const updated = await defs.upsertItemDefinition.run(admin, {
+      ...base,
+      name: "推奨テスト項目（改名）",
+      options: [
+        { id: "opt-rec-a", code: "a", label: "A" },
+        { id: "opt-rec-b", code: "b", label: "B" },
+        { id: "opt-rec-c", code: "c", label: "C" },
+      ],
+    });
+    expect(updated.name).toBe("推奨テスト項目（改名）");
+    expect(updated.options.map((o) => o.id)).toEqual(["opt-rec-a", "opt-rec-b", "opt-rec-c"]);
+    const read = await actions.getDailyValues.run(editor, {
+      from: "2027-04-17",
+      to: "2027-04-17",
+      itemDefinitionId: "item-rec",
+    });
+    expect(read.map((r) => r.valueOptionId)).toEqual(["opt-rec-a"]);
   });
 
   it("sets one value for many targets at once (all grades)", async () => {

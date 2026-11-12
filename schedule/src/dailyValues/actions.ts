@@ -40,8 +40,16 @@ export function createDailyValueActions(db: Db) {
    * over at most one axis (Issue #27): an app target must belong to
    * the item's own target group, a shared-master target must name
    * the item's platform axis, and an item with no axis takes no
-   * target. The target itself is optional (a value may cover the
-   * whole school even on an item that can be split).
+   * target.
+   *
+   * A target is required whenever the item has an axis (PR #58
+   * review, mandatory 1): daily values are always held per target
+   * (DESIGN schedule 4.8.2), so a targetless row next to per-target
+   * rows would leave a cell with two answers. "The same value for
+   * every target" goes through setDailyValuesForTargets, which
+   * writes one row per target. An item with no axis is the only
+   * case that takes no target. Both setDailyValue and
+   * deleteDailyValue resolve through here, so both enforce this.
    */
   async function resolveTarget(
     auth: { schoolId: string },
@@ -49,6 +57,9 @@ export function createDailyValueActions(db: Db) {
     target: TargetRef | null | undefined,
   ): Promise<ResolvedTarget> {
     if (!target) {
+      if (item.targetGroupId || item.targetPlatformAxis) {
+        throw new Error(`target is required for an item that varies by target: ${item.id}`);
+      }
       return { targetId: null, targetRef: null, targetKey: "" };
     }
     if (target.axis === "app") {
@@ -86,6 +97,13 @@ export function createDailyValueActions(db: Db) {
         `item varies over the platform axis "${item.targetPlatformAxis}", not "${target.axis}": ${item.id}`,
       );
     }
+    // NOTE (PR #58 review, recommendation 3): the existence of a
+    // shared-master (platform-axis) target is NOT checked here.
+    // Platform ids (grades, classes, ...) live in the platform's
+    // masters and cannot be a foreign key from this database, so
+    // any id string is accepted for now. Verifying it against the
+    // platform masters API (#22) is left to a later issue (#33 or
+    // the platform-linkage work).
     return { targetId: null, targetRef: target, targetKey: targetKeyOf(target) };
   }
 
