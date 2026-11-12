@@ -21,6 +21,7 @@ describe("schedule permission table", () => {
       "duty.write": ["Admin", "Editor", "Viewer"],
       publish: ["Admin", "Editor"],
       "view.layout": ["Admin", "Editor"],
+      "master.write": ["Admin", "Editor"],
       "definition.write": ["Admin"],
       "school.admin": ["Admin"],
     });
@@ -29,7 +30,6 @@ describe("schedule permission table", () => {
   it("does not hold the platform-side write permissions (implementation 1)", () => {
     const keys = Object.keys(schedulePermissions);
     expect(keys).not.toContain("event.write");
-    expect(keys).not.toContain("master.write");
     expect(keys).not.toContain("import.events");
   });
 });
