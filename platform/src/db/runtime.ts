@@ -1,6 +1,7 @@
 import { createAuthStore, type AuthStore } from "./authStore.js";
 import { createChangeStore, type ChangeStore } from "./changes.js";
 import { createDb } from "./client.js";
+import { createEventStore, type EventStore } from "./events.js";
 import { createMasterStore, type MasterStore } from "./masters.js";
 
 /**
@@ -22,4 +23,9 @@ export function createChangeStoreFromEnv(): ChangeStore {
 export function createMasterStoreFromEnv(): MasterStore {
   const { db } = createDb();
   return createMasterStore(db);
+}
+
+export function createEventStoreFromEnv(): EventStore {
+  const { db } = createDb();
+  return createEventStore(db);
 }

@@ -40,6 +40,10 @@ export type ImpactKind = z.infer<typeof impactKindSchema>;
 export const visibilitySchema = code(["staff_only", "guardian", "student", "public"]);
 export type Visibility = z.infer<typeof visibilitySchema>;
 
+/** 日付の確度：日確定／期間／月のみ確定／時期未定 (schedule DESIGN 4.5). */
+export const datePrecisionSchema = code(["day", "range", "month", "undecided"]);
+export type DatePrecision = z.infer<typeof datePrecisionSchema>;
+
 /** 確定度：仮／確定 (DESIGN-AUTH-TENANCY D-6). */
 export const certaintySchema = code(["tentative", "confirmed"]);
 export type Certainty = z.infer<typeof certaintySchema>;

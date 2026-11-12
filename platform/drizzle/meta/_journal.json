@@ -36,6 +36,13 @@
       "when": 1794222619299,
       "tag": "0004_safe_inhumans",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1794456464120,
+      "tag": "0005_platform_events",
+      "breakpoints": true
     }
   ]
 }

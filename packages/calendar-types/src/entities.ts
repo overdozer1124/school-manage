@@ -2,12 +2,14 @@ import { z } from "zod";
 import {
   absenceKindSchema,
   certaintySchema,
+  datePrecisionSchema,
   dayTypeSchema,
   eventKindSchema,
   nonEmptyString,
   productSchema,
   visibilitySchema,
   weekdaySchema,
+  type DatePrecision,
 } from "./codes.js";
 import { calendarTimeSchema, dateStringSchema } from "./time.js";
 import { targetRefSchema } from "./targets.js";
@@ -90,6 +92,105 @@ export const calendarEventSchema = entityMetaSchema
     message: "endDate must not be before date",
   });
 export type CalendarEvent = z.infer<typeof calendarEventSchema>;
+
+/**
+ * One assignee of an event (schedule DESIGN 4.5, event_assignees): a
+ * staff member of the shared master, or a free-text name for someone
+ * who is not registered (an external helper, an unregistered
+ * spelling). role is the school's wording for the part they play
+ * （担当／引率など）, or null when no role is recorded.
+ */
+export const eventAssigneeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("staff"),
+    staffId: nonEmptyString,
+    role: nonEmptyString.nullable(),
+  }),
+  z.object({
+    kind: z.literal("free_text"),
+    name: nonEmptyString,
+    role: nonEmptyString.nullable(),
+  }),
+]);
+export type EventAssignee = z.infer<typeof eventAssigneeSchema>;
+
+/** The fields an event carries besides identity and meta. The time is
+ *  a CalendarTime stored exactly as entered (DESIGN-INTEGRATION
+ *  8-1-2). The location master lives in the schedule app, so the
+ *  platform holds a location id as a bare string plus free text
+ *  (Issue #24). */
+const eventFields = {
+  title: nonEmptyString,
+  /** The fixed kind code, and the school's own word for it, if any. */
+  kind: eventKindSchema,
+  kindLabel: nonEmptyString.nullable(),
+  datePrecision: datePrecisionSchema,
+  startsOn: dateStringSchema.nullable(),
+  endsOn: dateStringSchema.nullable(),
+  time: calendarTimeSchema.nullable(),
+  locationId: nonEmptyString.nullable(),
+  locationText: nonEmptyString.nullable(),
+  description: z.string().nullable(),
+  certainty: certaintySchema,
+  visibility: visibilitySchema,
+  targets: z.array(targetRefSchema),
+  impacts: z.array(eventImpactSchema),
+  assignees: z.array(eventAssigneeSchema),
+};
+
+interface EventDateFields {
+  datePrecision: DatePrecision;
+  startsOn: string | null;
+  endsOn: string | null;
+}
+
+function checkEventDates(v: EventDateFields, ctx: z.RefinementCtx): void {
+  const fail = (message: string, path: string) =>
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: [path] });
+  switch (v.datePrecision) {
+    case "day":
+      if (v.startsOn === null) fail("a day-precision event needs startsOn", "startsOn");
+      else if (v.endsOn !== null && v.endsOn !== v.startsOn)
+        fail("a day-precision event ends on its start date", "endsOn");
+      break;
+    case "range":
+      if (v.startsOn === null) fail("a range event needs startsOn", "startsOn");
+      else if (v.endsOn === null) fail("a range event needs endsOn", "endsOn");
+      else if (v.endsOn < v.startsOn) fail("endsOn must not be before startsOn", "endsOn");
+      break;
+    case "month":
+      if (v.startsOn === null) fail("a month-precision event needs startsOn", "startsOn");
+      else if (
+        v.endsOn !== null &&
+        (v.endsOn < v.startsOn || v.endsOn.slice(0, 7) !== v.startsOn.slice(0, 7))
+      )
+        fail("a month-precision event ends within its month", "endsOn");
+      break;
+    case "undecided":
+      if (v.startsOn !== null) fail("an undecided event has no startsOn", "startsOn");
+      if (v.endsOn !== null) fail("an undecided event has no endsOn", "endsOn");
+      break;
+  }
+}
+
+/**
+ * An event as the platform stores and returns it (Issue #24): the
+ * record the events API speaks in, with the shared entity meta, the
+ * creator stamp (createdBy — DESIGN-INTEGRATION 3.1 records who made
+ * it as well as who last changed it) and the subordinate targets,
+ * impacts and assignees inlined.
+ */
+export const calendarEventRecordSchema = entityMetaSchema
+  .extend({ createdBy: nonEmptyString, ...eventFields })
+  .superRefine(checkEventDates);
+export type CalendarEventRecord = z.infer<typeof calendarEventRecordSchema>;
+
+/** What a create or update sends: the record without its stamps. The
+ *  revision travels alongside on an update, as with the masters. */
+export const calendarEventInputSchema = z
+  .object({ schoolId: nonEmptyString, id: nonEmptyString, ...eventFields })
+  .superRefine(checkEventDates);
+export type CalendarEventInput = z.infer<typeof calendarEventInputSchema>;
 
 const absenceBase = {
   /** Shared-master staff id. */
