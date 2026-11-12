@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, type SQL } from "drizzle-orm";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import {
   eventInRange,
@@ -139,8 +139,10 @@ export interface EventStore {
   /**
    * The school's events that belong in [from, to] and that the
    * audience may see, redacted for the audience. Month-precision
-   * events match their month and undecided events match a full
-   * school-year range (calendar-types eventInRange).
+   * events match their month and undecided events match the full
+   * school-year range of their own year (calendar-types
+   * eventInRange; the range is also applied in SQL, see
+   * rangeCondition).
    */
   listRange(
     schoolId: string,
@@ -343,11 +345,35 @@ function toRecord(row: EventRow, children: Children): CalendarEventRecord {
   };
 }
 
+/**
+ * The SQL form of calendar-types' eventInRange, so a range read does
+ * not load every event the school has ever had (review recommendation
+ * on PR #57). Day / range events overlap by their stored dates; a
+ * month event overlaps by its whole month; an undecided event matches
+ * only when the range covers its whole school year (its startsOn is
+ * April 1 of that year). listRange still applies eventInRange in JS
+ * afterwards, so the two definitions cannot drift apart observably.
+ */
+function rangeCondition(range: { from: string; to: string }): SQL {
+  return sql`(
+    (${events.datePrecision} in ('day', 'range')
+      and ${events.startsOn} <= ${range.to}::date
+      and coalesce(${events.endsOn}, ${events.startsOn}) >= ${range.from}::date)
+    or (${events.datePrecision} = 'month'
+      and date_trunc('month', ${events.startsOn})::date <= ${range.to}::date
+      and (date_trunc('month', ${events.startsOn}) + interval '1 month - 1 day')::date >= ${range.from}::date)
+    or (${events.datePrecision} = 'undecided'
+      and ${range.from}::date <= ${events.startsOn}
+      and (${events.startsOn} + interval '1 year - 1 day')::date <= ${range.to}::date)
+  )`;
+}
+
 export function createEventStore(db: Db): EventStore {
   async function loadRecords(
     source: Db | Transaction,
     schoolId: string,
     onlyId?: string,
+    range?: { from: string; to: string },
   ): Promise<CalendarEventRecord[]> {
     const eventRows = (await (source as unknown as LooseSource)
       .select()
@@ -355,7 +381,9 @@ export function createEventStore(db: Db): EventStore {
       .where(
         onlyId
           ? and(eq(events.schoolId, schoolId), eq(events.id, onlyId))
-          : eq(events.schoolId, schoolId),
+          : range
+            ? and(eq(events.schoolId, schoolId), rangeCondition(range))
+            : eq(events.schoolId, schoolId),
       )) as unknown as EventRow[];
     if (eventRows.length === 0) return [];
     const ids = eventRows.map((r) => r.id);
@@ -436,7 +464,7 @@ export function createEventStore(db: Db): EventStore {
 
   return {
     async listRange(schoolId, range, audience) {
-      const records = await loadRecords(db, schoolId);
+      const records = await loadRecords(db, schoolId, undefined, range);
       return filterVisible(
         records.filter((record) => eventInRange(record, range.from, range.to)),
         audience,

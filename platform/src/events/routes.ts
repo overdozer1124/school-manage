@@ -154,6 +154,23 @@ function handleError(res: Response, error: unknown): void {
   res.status(500).json({ error: "サーバーエラーが発生しました" });
 }
 
+/**
+ * The response body for one read. The record is validated with the
+ * shared schema first; for a non-staff audience the creator / updater
+ * person ids are then removed from the body (they are staff ids, and
+ * the outward response must not carry them — review recommendation on
+ * PR #57; assignees and staff-axis targets are already redacted by
+ * the store's forAudience).
+ */
+function readResponse(item: unknown, audience: Audience): Record<string, unknown> {
+  const parsed = calendarEventRecordSchema.parse(item) as unknown as Record<string, unknown>;
+  if (audience === "staff") return parsed;
+  const body = { ...parsed };
+  delete body.createdBy;
+  delete body.updatedBy;
+  return body;
+}
+
 export function createEventsRouter(deps: EventsRouterDeps): Router {
   const router = Router();
   const base = "/calendar/events";
@@ -164,7 +181,7 @@ export function createEventsRouter(deps: EventsRouterDeps): Router {
       const range = parseRange(req);
       const audience = parseAudience(req);
       const items = await deps.eventStore.listRange(claims.schoolId, range, audience);
-      res.json({ items: items.map((item) => calendarEventRecordSchema.parse(item)) });
+      res.json({ items: items.map((item) => readResponse(item, audience)) });
     } catch (error) {
       handleError(res, error);
     }
@@ -176,7 +193,7 @@ export function createEventsRouter(deps: EventsRouterDeps): Router {
       const audience = parseAudience(req);
       const item = await deps.eventStore.get(claims.schoolId, req.params.id as string, audience);
       if (!item) throw new EventNotFoundError(req.params.id as string);
-      res.json(calendarEventRecordSchema.parse(item));
+      res.json(readResponse(item, audience));
     } catch (error) {
       handleError(res, error);
     }

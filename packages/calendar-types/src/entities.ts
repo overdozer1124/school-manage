@@ -167,7 +167,15 @@ function checkEventDates(v: EventDateFields, ctx: z.RefinementCtx): void {
         fail("a month-precision event ends within its month", "endsOn");
       break;
     case "undecided":
-      if (v.startsOn !== null) fail("an undecided event has no startsOn", "startsOn");
+      // An undecided event still belongs to one school year: startsOn
+      // carries April 1 of that year and only the year has meaning
+      // (the same treatment "month" gives its year and month). Without
+      // it, a school-year query could not tell which year the event
+      // is undecided for, and it would surface in every year.
+      if (v.startsOn === null)
+        fail("an undecided event needs startsOn (April 1 of its school year)", "startsOn");
+      else if (v.startsOn.slice(5) !== "04-01")
+        fail("an undecided event's startsOn is April 1 of its school year", "startsOn");
       if (v.endsOn !== null) fail("an undecided event has no endsOn", "endsOn");
       break;
   }

@@ -411,6 +411,10 @@ describe.skipIf(!url)("calendar events", () => {
       body: dayEvent("ev-open", {
         title: "公開行事",
         visibility: "guardian",
+        targets: [
+          { axis: "grade", id: "grade-7" },
+          { axis: "staff", id: "staff-1" },
+        ],
         assignees: [
           { kind: "staff", staffId: "staff-1", role: "担当" },
           { kind: "free_text", name: "外部講師", role: null },
@@ -434,6 +438,11 @@ describe.skipIf(!url)("calendar events", () => {
     expect(guardianIds).not.toContain("ev-staff-only");
     const open = (forGuardian.json.items ?? []).find((i) => i.id === "ev-open");
     expect(open?.assignees).toEqual([]);
+    // Staff ids do not reach a non-staff audience: no staff-axis
+    // targets, and no creator / updater person ids.
+    expect(open?.targets).toEqual([{ axis: "grade", id: "grade-7" }]);
+    expect(open).not.toHaveProperty("createdBy");
+    expect(open).not.toHaveProperty("updatedBy");
 
     expect(
       (await api("GET", `${BASE}/ev-staff-only?audience=guardian`, { cookie: viewerA() })).status,
@@ -443,11 +452,21 @@ describe.skipIf(!url)("calendar events", () => {
     });
     expect(openForGuardian.status).toBe(200);
     expect(openForGuardian.json.assignees).toEqual([]);
+    expect(openForGuardian.json.targets).toEqual([{ axis: "grade", id: "grade-7" }]);
+    expect(openForGuardian.json).not.toHaveProperty("createdBy");
+    expect(openForGuardian.json).not.toHaveProperty("updatedBy");
 
     // The default (staff) audience still sees everything, names included.
     const forStaff = await api("GET", `${BASE}?${NOVEMBER}`, { cookie: viewerA() });
     const staffOnly = (forStaff.json.items ?? []).find((i) => i.id === "ev-staff-only");
     expect(staffOnly?.assignees).toEqual([{ kind: "staff", staffId: "staff-2", role: "担当" }]);
+    const openForStaff = (forStaff.json.items ?? []).find((i) => i.id === "ev-open");
+    expect(openForStaff?.targets).toEqual([
+      { axis: "grade", id: "grade-7" },
+      { axis: "staff", id: "staff-1" },
+    ]);
+    expect(openForStaff?.createdBy).toBe("person-editor");
+    expect(openForStaff?.updatedBy).toBe("person-editor");
 
     // A student audience does not see a guardian-visibility event,
     // and an unknown audience is a 400.
@@ -469,14 +488,49 @@ describe.skipIf(!url)("calendar events", () => {
         startsOn: "2026-11-15",
       }),
     });
-    await api("POST", BASE, {
+    // An undecided event names its school year by April 1 of that year.
+    const undecided2026 = await api("POST", BASE, {
       cookie: editorA(),
       body: dayEvent("ev-undecided", {
         title: "時期未定",
         datePrecision: "undecided",
-        startsOn: null,
+        startsOn: "2026-04-01",
       }),
     });
+    expect(undecided2026.status).toBe(201);
+    const undecided2027 = await api("POST", BASE, {
+      cookie: editorA(),
+      body: dayEvent("ev-undecided-2027", {
+        title: "時期未定（翌年度）",
+        datePrecision: "undecided",
+        startsOn: "2027-04-01",
+      }),
+    });
+    expect(undecided2027.status).toBe(201);
+    // An undecided event without a school year, or with a startsOn that
+    // is not April 1, is refused.
+    expect(
+      (
+        await api("POST", BASE, {
+          cookie: editorA(),
+          body: dayEvent("ev-undecided-bad", {
+            datePrecision: "undecided",
+            startsOn: null,
+          }),
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await api("POST", BASE, {
+          cookie: editorA(),
+          body: dayEvent("ev-undecided-bad-2", {
+            datePrecision: "undecided",
+            startsOn: "2026-11-01",
+          }),
+        })
+      ).status,
+    ).toBe(400);
 
     const lateNovember = await api("GET", `${BASE}?from=2026-11-20&to=2026-11-25`, {
       cookie: viewerA(),
@@ -490,10 +544,19 @@ describe.skipIf(!url)("calendar events", () => {
     expect(
       (await api("GET", `${BASE}?${NOVEMBER}`, { cookie: viewerA() })).json.items?.map((i) => i.id),
     ).not.toContain("ev-undecided");
+    // Each school-year query returns only its own year's undecided event.
     const year = await api("GET", `${BASE}?from=2026-04-01&to=2027-03-31`, {
       cookie: viewerA(),
     });
-    expect((year.json.items ?? []).map((i) => i.id)).toContain("ev-undecided");
+    const yearIds = (year.json.items ?? []).map((i) => i.id);
+    expect(yearIds).toContain("ev-undecided");
+    expect(yearIds).not.toContain("ev-undecided-2027");
+    const nextYear = await api("GET", `${BASE}?from=2027-04-01&to=2028-03-31`, {
+      cookie: viewerA(),
+    });
+    const nextYearIds = (nextYear.json.items ?? []).map((i) => i.id);
+    expect(nextYearIds).toContain("ev-undecided-2027");
+    expect(nextYearIds).not.toContain("ev-undecided");
   });
 
   it("refuses targets and assignees that belong to another school, or do not exist", async () => {
