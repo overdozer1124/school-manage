@@ -1,4 +1,5 @@
 import express from "express";
+import { createAbsencesRouter, type AbsencesRouterDeps } from "./absences/routes.js";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createCalendarRouter, type CalendarRouterDeps } from "./calendar/routes.js";
 import { createChangesRouter, type ChangesRouterDeps } from "./changes/routes.js";
@@ -19,6 +20,7 @@ export interface AppDeps {
   masters?: MastersRouterDeps;
   events?: EventsRouterDeps;
   calendar?: CalendarRouterDeps;
+  absences?: AbsencesRouterDeps;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -54,6 +56,10 @@ export function createApp(deps: AppDeps = {}) {
 
   if (deps.calendar) {
     app.use("/platform/api/v1", createCalendarRouter(deps.calendar));
+  }
+
+  if (deps.absences) {
+    app.use("/platform/api/v1", createAbsencesRouter(deps.absences));
   }
 
   return app;

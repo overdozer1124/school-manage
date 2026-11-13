@@ -82,3 +82,21 @@ export const subdivisionSchema = <C extends z.ZodTypeAny>(codeSchema: C) =>
 
 export const absenceSubdivisionSchema = subdivisionSchema(absenceKindSchema);
 export type AbsenceSubdivision = z.infer<typeof absenceSubdivisionSchema>;
+
+/**
+ * The initial subdivisions of "leave" every school starts from
+ * (schedule DESIGN 6.5, Araki's list of 2026-11-06). A school applies
+ * them to its own subdivision definitions and may then rename, add
+ * or remove entries; the keys are the stable part other data refers
+ * to, so they are fixed here once.
+ */
+export const defaultLeaveSubdivisions: readonly AbsenceSubdivision[] = [
+  { code: "leave", key: "annual", label: "年休" },
+  { code: "leave", key: "sick", label: "病休" },
+  { code: "leave", key: "special", label: "特休" },
+  { code: "leave", key: "summer_special", label: "夏特" },
+  { code: "leave", key: "nursing", label: "看護" },
+  { code: "leave", key: "duty_exempt", label: "職専免" },
+  { code: "leave", key: "compensatory", label: "振休" },
+  { code: "leave", key: "other", label: "その他" },
+];
