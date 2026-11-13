@@ -22,13 +22,13 @@ export type Audience = z.infer<typeof audienceSchema>;
  * by everyone. An audience sees an event when the event's reach is at
  * least the audience's floor.
  */
-const VISIBILITY_REACH: Record<Visibility, number> = {
+export const VISIBILITY_REACH: Record<Visibility, number> = {
   staff_only: 0,
   guardian: 1,
   student: 2,
   public: 3,
 };
-const AUDIENCE_FLOOR: Record<Audience, number> = {
+export const AUDIENCE_FLOOR: Record<Audience, number> = {
   staff: 0,
   guardian: 1,
   student: 2,
