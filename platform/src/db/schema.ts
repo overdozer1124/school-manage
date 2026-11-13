@@ -6,6 +6,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -211,6 +212,154 @@ export const dayPatternPeriods = pgTable(
   ],
 );
 
+/**
+ * The school calendar's events (Issue #24, DESIGN-INTEGRATION 2.2,
+ * schedule DESIGN 4.5). The event body lives here in the platform;
+ * per-kind extra fields stay in the schedule database (実装2). Like
+ * the masters, an event carries the shared entity meta plus
+ * created_by (3.1: who made it, and from which product). The fixed
+ * codes (kind, certainty, visibility, date precision) are text
+ * columns with checks, as with the day patterns; the calendar-types
+ * schemas are the wire-level validation.
+ *
+ * The time is a CalendarTime stored in jsonb exactly as entered
+ * (8-1-2). The location master lives in the schedule app, so
+ * location_id is a bare string with no foreign key; the free-text
+ * location is kept alongside it (schedule DESIGN 4.5).
+ */
+export const events = pgTable(
+  "events",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").notNull(),
+    title: text("title").notNull(),
+    /** The fixed kind code (calendar-types eventKindSchema). */
+    kind: text("kind").notNull(),
+    /** The school's own word for the kind, if it has one. */
+    kindLabel: text("kind_label"),
+    datePrecision: text("date_precision").notNull(),
+    startsOn: date("starts_on"),
+    endsOn: date("ends_on"),
+    /** A CalendarTime as entered, or null when no time is recorded. */
+    time: jsonb("time"),
+    locationId: text("location_id"),
+    locationText: text("location_text"),
+    description: text("description"),
+    certainty: text("certainty").notNull(),
+    visibility: text("visibility").notNull(),
+    revision: integer("revision").notNull(),
+    createdBy: text("created_by").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    updatedVia: updatedViaEnum("updated_via").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    check("events_kind_check", sql`${t.kind} in ('event', 'meeting', 'exam', 'deadline', 'other')`),
+    check(
+      "events_date_precision_check",
+      sql`${t.datePrecision} in ('day', 'range', 'month', 'undecided')`,
+    ),
+    check("events_certainty_check", sql`${t.certainty} in ('tentative', 'confirmed')`),
+    check(
+      "events_visibility_check",
+      sql`${t.visibility} in ('staff_only', 'guardian', 'student', 'public')`,
+    ),
+    check(
+      "events_period_order",
+      sql`${t.endsOn} is null or ${t.startsOn} is null or ${t.endsOn} >= ${t.startsOn}`,
+    ),
+  ],
+);
+
+/**
+ * The subordinate rows of an event: impacts, targets and assignees.
+ * Like a day pattern's periods they carry no revision of their own —
+ * the event's revision covers them, and a write replaces the whole
+ * set. Each row keeps its position so the stored order round-trips.
+ * Impacts and targets are kept as the calendar-types values in jsonb
+ * (an EventImpact / a TargetRef), validated at the API boundary.
+ */
+const eventChild = {
+  schoolId: text("school_id")
+    .notNull()
+    .references(() => schools.schoolId),
+  id: text("id").notNull(),
+  eventId: text("event_id").notNull(),
+  position: integer("position").notNull(),
+};
+
+export const eventImpacts = pgTable(
+  "event_impacts",
+  {
+    ...eventChild,
+    impact: jsonb("impact").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("event_impacts_event_position_unique").on(t.schoolId, t.eventId, t.position),
+    foreignKey({
+      columns: [t.schoolId, t.eventId],
+      foreignColumns: [events.schoolId, events.id],
+      name: "event_impacts_event_fk",
+    }),
+  ],
+);
+
+export const eventTargets = pgTable(
+  "event_targets",
+  {
+    ...eventChild,
+    target: jsonb("target").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("event_targets_event_position_unique").on(t.schoolId, t.eventId, t.position),
+    foreignKey({
+      columns: [t.schoolId, t.eventId],
+      foreignColumns: [events.schoolId, events.id],
+      name: "event_targets_event_fk",
+    }),
+  ],
+);
+
+/**
+ * An assignee is a staff member of the same school or a free-text
+ * name — exactly one of the two (schedule DESIGN 4.5). The composite
+ * foreign key on (school_id, staff_id) makes the database itself
+ * refuse another school's staff member; a null staff_id (a free-text
+ * assignee) skips the check, as foreign keys do.
+ */
+export const eventAssignees = pgTable(
+  "event_assignees",
+  {
+    ...eventChild,
+    staffId: text("staff_id"),
+    freeTextName: text("free_text_name"),
+    role: text("role"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("event_assignees_event_position_unique").on(t.schoolId, t.eventId, t.position),
+    check(
+      "event_assignees_one_name_check",
+      sql`(${t.staffId} is null) <> (${t.freeTextName} is null)`,
+    ),
+    foreignKey({
+      columns: [t.schoolId, t.eventId],
+      foreignColumns: [events.schoolId, events.id],
+      name: "event_assignees_event_fk",
+    }),
+    foreignKey({
+      columns: [t.schoolId, t.staffId],
+      foreignColumns: [staffMembers.schoolId, staffMembers.id],
+      name: "event_assignees_staff_fk",
+    }),
+  ],
+);
+
 export const memberships = pgTable(
   "memberships",
   {
@@ -408,3 +557,7 @@ export type ClassRow = typeof classes.$inferSelect;
 export type SpecialNeedsClassRow = typeof specialNeedsClasses.$inferSelect;
 export type DayPatternRow = typeof dayPatterns.$inferSelect;
 export type DayPatternPeriodRow = typeof dayPatternPeriods.$inferSelect;
+export type EventRow = typeof events.$inferSelect;
+export type EventImpactRow = typeof eventImpacts.$inferSelect;
+export type EventTargetRow = typeof eventTargets.$inferSelect;
+export type EventAssigneeRow = typeof eventAssignees.$inferSelect;

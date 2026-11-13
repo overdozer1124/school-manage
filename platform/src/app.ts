@@ -1,6 +1,7 @@
 import express from "express";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
 import { createChangesRouter, type ChangesRouterDeps } from "./changes/routes.js";
+import { createEventsRouter, type EventsRouterDeps } from "./events/routes.js";
 import { createMastersRouter, type MastersRouterDeps } from "./masters/routes.js";
 
 /**
@@ -15,6 +16,7 @@ export interface AppDeps {
   auth?: AuthRouterDeps;
   changes?: ChangesRouterDeps;
   masters?: MastersRouterDeps;
+  events?: EventsRouterDeps;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -42,6 +44,10 @@ export function createApp(deps: AppDeps = {}) {
 
   if (deps.masters) {
     app.use("/platform/api/v1", createMastersRouter(deps.masters));
+  }
+
+  if (deps.events) {
+    app.use("/platform/api/v1", createEventsRouter(deps.events));
   }
 
   return app;
