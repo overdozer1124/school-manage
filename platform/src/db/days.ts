@@ -191,6 +191,11 @@ function mapDayWriteError(error: unknown, context: "write" | "remove"): never {
 function mapHolidayWriteError(error: unknown, context: "write" | "remove"): never {
   const code = pgCode(error);
   if (code === "23505") {
+    if (pgConstraint(error) === "holidays_school_date_kind_unique") {
+      throw new CalendarEntryConflictError(
+        "a holiday of the same kind is already recorded for that date",
+      );
+    }
     throw new CalendarEntryConflictError(
       "a holiday with the same id already exists in this school",
     );

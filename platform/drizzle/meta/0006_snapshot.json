@@ -1166,7 +1166,17 @@
           ]
         }
       },
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "holidays_school_date_kind_unique": {
+          "name": "holidays_school_date_kind_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "school_id",
+            "date",
+            "kind"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "holidays_kind_check": {
