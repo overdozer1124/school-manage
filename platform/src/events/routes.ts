@@ -9,9 +9,7 @@ import {
 } from "@school-manage/calendar-types";
 import type { AuthConfig } from "../auth/config.js";
 import { AuthError } from "../auth/errors.js";
-import { isMembershipCandidate, todayString } from "../auth/membership.js";
-import { readSessionToken } from "../auth/routes.js";
-import { isSelectionClaims, verifyAuthToken, type SessionClaims } from "../auth/tokens.js";
+import { requireMember, requireWriter } from "../auth/guards.js";
 import type { AuthStore } from "../db/authStore.js";
 import { RevisionConflictError } from "../db/changes.js";
 import {
@@ -20,8 +18,6 @@ import {
   EventReferenceError,
   type EventStore,
 } from "../db/events.js";
-import type { Membership, Product } from "../db/schema.js";
-
 /**
  * The school calendar events API (Issue #24, DESIGN-INTEGRATION 2.2 /
  * 6): /platform/api/v1/calendar/events. Reads need a current
@@ -39,40 +35,6 @@ export interface EventsRouterDeps {
   config: AuthConfig;
   authStore: AuthStore;
   eventStore: EventStore;
-}
-
-interface AuthedMember {
-  claims: SessionClaims;
-  membership: Membership;
-}
-
-function requireSession(deps: EventsRouterDeps, req: Request): SessionClaims {
-  const token = readSessionToken(req);
-  const claims = token ? verifyAuthToken(deps.config, token) : null;
-  if (!claims || isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
-  return claims;
-}
-
-async function requireMember(deps: EventsRouterDeps, req: Request): Promise<AuthedMember> {
-  const claims = requireSession(deps, req);
-  const memberships = await deps.authStore.listMemberships(claims.personId);
-  const today = todayString();
-  const membership = memberships.find(
-    (m) => m.schoolId === claims.schoolId && isMembershipCandidate(m, today),
-  );
-  if (!membership) throw new AuthError(403, "権限がありません");
-  return { claims, membership };
-}
-
-/** Editor or more in either product may write the school calendar （連携5). */
-async function requireWriter(deps: EventsRouterDeps, req: Request): Promise<AuthedMember> {
-  const authed = await requireMember(deps, req);
-  const products: Product[] = ["schedule", "timetable"];
-  for (const product of products) {
-    const role = await deps.authStore.findProductRole(authed.membership.id, product);
-    if (role && (role.role === "Admin" || role.role === "Editor")) return authed;
-  }
-  throw new AuthError(403, "権限がありません");
 }
 
 function bodyObject(req: Request): Record<string, unknown> {

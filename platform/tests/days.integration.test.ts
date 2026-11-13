@@ -576,4 +576,47 @@ describe.skipIf(!url)("calendar days and holidays", () => {
       (await api("POST", HOLIDAYS, { cookie: editorA(), body: holidayInput("hol-1123") })).status,
     ).toBe(409);
   });
+
+  it("refuses a second holiday of the same kind on one date, on create and on update", async () => {
+    const first = await api("POST", HOLIDAYS, {
+      cookie: editorA(),
+      body: holidayInput("hol-dup-1", { date: "2026-11-15" }),
+    });
+    expect(first.status).toBe(201);
+
+    // The same date with the same kind is a duplicate, even under a
+    // different id and name (e.g. importing the yearly list twice).
+    const dupKind = await api("POST", HOLIDAYS, {
+      cookie: editorA(),
+      body: holidayInput("hol-dup-2", { date: "2026-11-15", name: "文化の日（再取込）" }),
+    });
+    expect(dupKind.status).toBe(409);
+    expect((await api("GET", `${HOLIDAYS}/hol-dup-2`, { cookie: editorA() })).status).toBe(404);
+
+    // A different kind on the same date is still allowed.
+    const otherKind = await api("POST", HOLIDAYS, {
+      cookie: editorA(),
+      body: holidayInput("hol-dup-3", {
+        date: "2026-11-15",
+        name: "学校休業日",
+        kind: "school_closed_day",
+      }),
+    });
+    expect(otherKind.status).toBe(201);
+
+    // Updating that row into the already-taken (date, kind) pair is
+    // refused too, and the row is left unchanged.
+    const dupUpdate = await api("PUT", `${HOLIDAYS}/hol-dup-3`, {
+      cookie: editorA(),
+      body: holidayInput("hol-dup-3", {
+        date: "2026-11-15",
+        name: "文化の日",
+        kind: "national_holiday",
+        revision: 1,
+      }),
+    });
+    expect(dupUpdate.status).toBe(409);
+    const after = await api("GET", `${HOLIDAYS}/hol-dup-3`, { cookie: editorA() });
+    expect(after.json).toMatchObject({ kind: "school_closed_day", revision: 1 });
+  });
 });

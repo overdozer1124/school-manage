@@ -1,0 +1,1 @@
+ALTER TABLE "holidays" ADD CONSTRAINT "holidays_school_date_kind_unique" UNIQUE("school_id","date","kind");

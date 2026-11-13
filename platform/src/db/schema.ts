@@ -327,7 +327,9 @@ export const dayRecords = pgTable(
  * The holiday / closed-day list (Issue #23, schedule DESIGN 4.1
  * `holidays`), kept apart from the day records so the official list
  * can be maintained on its own. A date may carry more than one row
- * (different kinds), so the date is not unique here.
+ * (different kinds), so the date alone is not unique; the same kind
+ * may not be recorded twice for one date, though, so importing the
+ * yearly list twice cannot duplicate a row.
  */
 export const holidays = pgTable(
   "holidays",
@@ -344,6 +346,7 @@ export const holidays = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("holidays_school_date_kind_unique").on(t.schoolId, t.date, t.kind),
     check(
       "holidays_kind_check",
       sql`${t.kind} in ('national_holiday', 'substitute_holiday', 'school_closed_day', 'office_closed_day')`,

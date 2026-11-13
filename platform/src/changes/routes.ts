@@ -1,9 +1,8 @@
-import { Router, type Request, type Response } from "express";
+import { Router, type Response } from "express";
 import type { AuthConfig } from "../auth/config.js";
 import { AuthError } from "../auth/errors.js";
+import { requireSession } from "../auth/guards.js";
 import { isMembershipCandidate, todayString } from "../auth/membership.js";
-import { readSessionToken } from "../auth/routes.js";
-import { isSelectionClaims, verifyAuthToken, type SessionClaims } from "../auth/tokens.js";
 import type { AuthStore } from "../db/authStore.js";
 import type { ChangeStore } from "../db/changes.js";
 
@@ -23,13 +22,6 @@ export interface ChangesRouterDeps {
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
-
-function requireSession(deps: ChangesRouterDeps, req: Request): SessionClaims {
-  const token = readSessionToken(req);
-  const claims = token ? verifyAuthToken(deps.config, token) : null;
-  if (!claims || isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
-  return claims;
-}
 
 function parseAfter(value: unknown): number {
   if (value === undefined) return 0;
