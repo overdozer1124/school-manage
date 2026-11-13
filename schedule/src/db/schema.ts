@@ -279,3 +279,106 @@ export const dailyValues = pgTable(
 );
 
 export type DailyValueRow = typeof dailyValues.$inferSelect;
+
+/**
+ * A view definition: how a slice of the schedule is shown, without
+ * holding any data itself (DESIGN schedule 4.8). layout is one of
+ * the 4.8.1 catalog keys, including the Phase 2 layouts — a
+ * definition may name a layout a screen cannot render yet, and the
+ * screen deals with that. layout_params and print_settings are
+ * layout / print specific JSON kept as-is here (print_settings is
+ * consumed by the printing issue). audience is the view's public
+ * reach; the effective rank of a read through it is
+ * max(0, audience rank) (DESIGN-AUTH-TENANCY 4.5, implemented as a
+ * pure function in @school-manage/calendar-types).
+ */
+export const viewDefinitions = pgTable(
+  "view_definitions",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    name: text("name").notNull(),
+    layout: text("layout").notNull(),
+    layoutParams: jsonb("layout_params_json").$type<Record<string, unknown>>(),
+    audience: text("audience").notNull(),
+    periodScope: text("period_scope").notNull(),
+    printSettings: jsonb("print_settings").$type<Record<string, unknown>>(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("view_definitions_school_name_unique").on(t.schoolId, t.name),
+    check(
+      "view_definitions_layout_check",
+      sql`${t.layout} in ('month_rows', 'week_rows', 'year_columns', 'calendar_grid', 'week_timeline', 'transposed')`,
+    ),
+    check(
+      "view_definitions_audience_check",
+      sql`${t.audience} in ('staff', 'guardian', 'student', 'public')`,
+    ),
+    check(
+      "view_definitions_period_scope_check",
+      sql`${t.periodScope} in ('week', 'two_weeks', 'month', 'year')`,
+    ),
+  ],
+);
+
+export type ViewDefinitionRow = typeof viewDefinitions.$inferSelect;
+
+/**
+ * One column of a view (DESIGN schedule 4.8). What it draws is
+ * source_kind: an event category, a daily item, a duty, or an
+ * attribute of the day itself. A daily_item column references its
+ * item definition (composite FK; deleting an item a view still
+ * uses is refused, so a view cannot silently lose a column). A duty
+ * column names its duty definition by id only: duty definitions
+ * are a later issue, so there is no table to key into yet (the
+ * same treatment as daily_values.value_option_id, Issue #28).
+ * target_group_id expands the column per target of that axis;
+ * null shows the column once. group_same_values switches the
+ * 4.8.2 same-value grouping for this column (default on).
+ */
+export const viewColumns = pgTable(
+  "view_columns",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    viewDefinitionId: text("view_definition_id").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    itemDefinitionId: text("item_definition_id"),
+    dutyDefinitionId: text("duty_definition_id"),
+    targetGroupId: text("target_group_id"),
+    groupSameValues: boolean("group_same_values").default(true).notNull(),
+    widthHint: integer("width_hint"),
+    sort: integer("sort").default(0).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    foreignKey({
+      name: "view_columns_view_fk",
+      columns: [t.schoolId, t.viewDefinitionId],
+      foreignColumns: [viewDefinitions.schoolId, viewDefinitions.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "view_columns_item_fk",
+      columns: [t.schoolId, t.itemDefinitionId],
+      foreignColumns: [itemDefinitions.schoolId, itemDefinitions.id],
+    }),
+    foreignKey({
+      name: "view_columns_target_group_fk",
+      columns: [t.schoolId, t.targetGroupId],
+      foreignColumns: [targetGroups.schoolId, targetGroups.id],
+    }),
+    check(
+      "view_columns_source_kind_check",
+      sql`${t.sourceKind} in ('event_category', 'daily_item', 'duty', 'day_attribute')`,
+    ),
+    check(
+      "view_columns_source_ref_check",
+      sql`(${t.sourceKind} = 'daily_item' and ${t.itemDefinitionId} is not null and ${t.dutyDefinitionId} is null)
+        or (${t.sourceKind} = 'duty' and ${t.dutyDefinitionId} is not null and ${t.itemDefinitionId} is null)
+        or (${t.sourceKind} in ('event_category', 'day_attribute') and ${t.itemDefinitionId} is null and ${t.dutyDefinitionId} is null)`,
+    ),
+  ],
+);
+
+export type ViewColumnRow = typeof viewColumns.$inferSelect;
