@@ -382,11 +382,16 @@ export function createAbsenceStore(db: Db): AbsenceStore {
             // The confirmation stamps follow the stored certainty:
             // tentative clears them, staying confirmed keeps the
             // original confirmer, becoming confirmed stamps the actor.
+            // The record carries the kept stamp as an ISO string, so
+            // it goes back into a Date for the timestamp column.
             const stamps =
               certainty === "tentative"
                 ? { confirmedBy: null, confirmedAt: null }
                 : existing.certainty === "confirmed"
-                  ? { confirmedBy: existing.confirmedBy, confirmedAt: existing.confirmedAt }
+                  ? {
+                      confirmedBy: existing.confirmedBy,
+                      confirmedAt: existing.confirmedAt ? new Date(existing.confirmedAt) : null,
+                    }
                   : { confirmedBy: actor.userId, confirmedAt: new Date() };
             try {
               const updated = (await updateRevisioned(tx, absences as unknown as RevisionedTable, {

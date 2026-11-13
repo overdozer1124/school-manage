@@ -391,6 +391,42 @@ describe.skipIf(!url)("staff absences", () => {
     expect(edited.json.revision).toBe(3);
   });
 
+  it("lets an Editor edit a confirmed absence and keep it confirmed, stamps untouched", async () => {
+    const created = await api("POST", ABSENCES, {
+      cookie: editorA(),
+      body: absenceInput("abs-editor-1", {
+        kind: "business_trip",
+        certainty: "confirmed",
+        purpose: "会議",
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(created.json.certainty).toBe("confirmed");
+    expect(created.json.confirmedBy).toBe("person-editor");
+    expect(typeof created.json.confirmedAt).toBe("string");
+    expect(created.json.revision).toBe(1);
+
+    const edited = await api("PUT", `${ABSENCES}/abs-editor-1`, {
+      cookie: editorA(),
+      body: absenceInput("abs-editor-1", {
+        kind: "business_trip",
+        certainty: "confirmed",
+        purpose: "会議（日程変更）",
+        revision: 1,
+      }),
+    });
+    expect(edited.status).toBe(200);
+    expect(edited.json.certainty).toBe("confirmed");
+    expect(edited.json.confirmedBy).toBe("person-editor");
+    expect(edited.json.confirmedAt).toBe(created.json.confirmedAt);
+    expect(edited.json.revision).toBe(2);
+
+    const after = await api("GET", `${ABSENCES}/abs-editor-1`, { cookie: editorA() });
+    expect(after.json.certainty).toBe("confirmed");
+    expect(after.json.confirmedBy).toBe("person-editor");
+    expect(after.json.confirmedAt).toBe(created.json.confirmedAt);
+  });
+
   it("refuses a Viewer editing another's absence, or handing their own to someone else", async () => {
     const others = await api("PUT", `${ABSENCES}/abs-own-1`, {
       cookie: teacher2A(),
