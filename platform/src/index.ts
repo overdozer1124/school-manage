@@ -1,6 +1,8 @@
 import { createApp } from "./app.js";
 import { loadAuthConfig } from "./auth/config.js";
 import {
+  createAbsenceStoreFromEnv,
+  createAbsenceSubdivisionStoreFromEnv,
   createAuthStoreFromEnv,
   createChangeStoreFromEnv,
   createDayStoreFromEnv,
@@ -19,6 +21,8 @@ const masterStore = createMasterStoreFromEnv();
 const eventStore = createEventStoreFromEnv();
 const dayStore = createDayStoreFromEnv();
 const holidayStore = createHolidayStoreFromEnv();
+const absenceStore = createAbsenceStoreFromEnv();
+const subdivisionStore = createAbsenceSubdivisionStoreFromEnv();
 
 const port = Number(process.env.PLATFORM_PORT ?? 3001);
 
@@ -28,6 +32,7 @@ createApp({
   masters: { config: authConfig, authStore: store, masterStore },
   events: { config: authConfig, authStore: store, eventStore },
   calendar: { config: authConfig, authStore: store, dayStore, holidayStore },
+  absences: { config: authConfig, authStore: store, absenceStore, subdivisionStore },
 }).listen(port, () => {
   console.log(`platform listening on port ${port}`);
 });

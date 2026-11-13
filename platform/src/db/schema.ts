@@ -355,6 +355,106 @@ export const holidays = pgTable(
 );
 
 /**
+ * A school's own subdivision definitions under the fixed absence
+ * kinds (Issue #25, DESIGN-INTEGRATION 8-1-1): under "leave" a school
+ * keeps 年休／病休／… with stable keys; under "business_trip" it may
+ * keep its own wordings too. The (school_id, code, key) triple is
+ * unique, and an absence names its subdivision through a composite
+ * foreign key on exactly that triple, so an absence can never point
+ * at another school's subdivision — or at a subdivision of a
+ * different kind.
+ */
+export const absenceSubdivisions = pgTable(
+  "absence_subdivisions",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").notNull(),
+    /** The fixed absence kind this sits under (calendar-types absenceKindSchema). */
+    code: text("code").notNull(),
+    /** The stable key absences refer to, unique per school and kind. */
+    key: text("key").notNull(),
+    /** The school's own word for the subdivision. */
+    label: text("label").notNull(),
+    ...masterMeta,
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("absence_subdivisions_school_code_key_unique").on(t.schoolId, t.code, t.key),
+    check(
+      "absence_subdivisions_code_check",
+      sql`${t.code} in ('business_trip', 'training', 'leave', 'other')`,
+    ),
+  ],
+);
+
+/**
+ * A staff absence (Issue #25, DESIGN-INTEGRATION 2.3): a staff member
+ * of the shared master is away over a date range, with the time kept
+ * exactly as entered (a CalendarTime in jsonb, 8-1-2). The kind is a
+ * fixed code; the school-specific subdivision is named by key and
+ * guarded by the composite foreign key above. The subdivision is
+ * private data (DESIGN-AUTH-TENANCY 4.5) — the table holds it, and
+ * the API decides who may see it.
+ *
+ * Certainty follows D-6: a general teacher's save is always
+ * tentative, and an Editor's confirmation stamps confirmed_by /
+ * confirmed_at; editing a confirmed absence as its owner returns it
+ * to tentative and clears the stamps (the store enforces this).
+ */
+export const absences = pgTable(
+  "absences",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").notNull(),
+    staffId: text("staff_id").notNull(),
+    fromDate: date("from_date").notNull(),
+    toDate: date("to_date").notNull(),
+    /** A CalendarTime as entered (calendar-types calendarTimeSchema). */
+    time: jsonb("time").notNull(),
+    /** The fixed kind code (calendar-types absenceKindSchema). */
+    kind: text("kind").notNull(),
+    subdivisionKey: text("subdivision_key"),
+    purpose: text("purpose"),
+    note: text("note"),
+    /** 確定度：仮／確定 (calendar-types certaintySchema). */
+    certainty: text("certainty").notNull(),
+    createdBy: text("created_by").notNull(),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    ...masterMeta,
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    check("absences_kind_check", sql`${t.kind} in ('business_trip', 'training', 'leave', 'other')`),
+    check("absences_certainty_check", sql`${t.certainty} in ('tentative', 'confirmed')`),
+    check("absences_period_order", sql`${t.toDate} >= ${t.fromDate}`),
+    check(
+      "absences_confirmation_stamps",
+      sql`(${t.certainty} = 'tentative' and ${t.confirmedBy} is null and ${t.confirmedAt} is null)
+        or (${t.certainty} = 'confirmed' and ${t.confirmedBy} is not null and ${t.confirmedAt} is not null)`,
+    ),
+    foreignKey({
+      columns: [t.schoolId, t.staffId],
+      foreignColumns: [staffMembers.schoolId, staffMembers.id],
+      name: "absences_staff_fk",
+    }),
+    foreignKey({
+      columns: [t.schoolId, t.kind, t.subdivisionKey],
+      foreignColumns: [
+        absenceSubdivisions.schoolId,
+        absenceSubdivisions.code,
+        absenceSubdivisions.key,
+      ],
+      name: "absences_subdivision_fk",
+    }),
+  ],
+);
+
+/**
  * The subordinate rows of an event: impacts, targets and assignees.
  * Like a day pattern's periods they carry no revision of their own —
  * the event's revision covers them, and a write replaces the whole
@@ -591,6 +691,7 @@ export const changeKindEnum = pgEnum("change_entity_kind", [
   "holiday",
   "event",
   "absence",
+  "absence_subdivision",
   "staff",
   "grade",
   "class",
@@ -640,6 +741,8 @@ export type DayPatternRow = typeof dayPatterns.$inferSelect;
 export type DayPatternPeriodRow = typeof dayPatternPeriods.$inferSelect;
 export type DayRecordRow = typeof dayRecords.$inferSelect;
 export type HolidayRow = typeof holidays.$inferSelect;
+export type AbsenceRow = typeof absences.$inferSelect;
+export type AbsenceSubdivisionRow = typeof absenceSubdivisions.$inferSelect;
 export type EventRow = typeof events.$inferSelect;
 export type EventImpactRow = typeof eventImpacts.$inferSelect;
 export type EventTargetRow = typeof eventTargets.$inferSelect;

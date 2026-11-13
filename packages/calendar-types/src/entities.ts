@@ -255,21 +255,114 @@ const absenceBase = {
   time: calendarTimeSchema,
   kind: absenceKindSchema,
   certainty: certaintySchema,
+  /** What the trip / training is for （用務）, or null. */
+  purpose: nonEmptyString.nullable(),
+  /** A free-text memo, or null. */
+  note: z.string().nullable(),
 };
 
-/** A staff absence (2.3). subdivisionKey is the key of a school-specific
- *  subdivision under kind (for example "annual" under "leave"). */
+/** The creator and confirmation stamps an absence carries besides
+ *  the entity meta (DESIGN-AUTH-TENANCY 4.6 / 4.7): who registered
+ *  it, and — once an Editor has confirmed it — who confirmed it and
+ *  when. Both confirmation fields are null while it is tentative. */
+const absenceStamps = {
+  createdBy: nonEmptyString,
+  confirmedBy: nonEmptyString.nullable(),
+  confirmedAt: z
+    .string()
+    .refine((s) => !Number.isNaN(Date.parse(s)), { message: "expected an ISO 8601 timestamp" })
+    .nullable(),
+};
+
+/** A staff absence (2.3), as the platform stores and returns it to a
+ *  reader who may see the subdivision (Issue #25). subdivisionKey is
+ *  the key of a school-specific subdivision under kind (for example
+ *  "annual" under "leave"). */
 export const absenceSchema = entityMetaSchema
-  .extend({ ...absenceBase, subdivisionKey: nonEmptyString.nullable() })
+  .extend({ ...absenceBase, ...absenceStamps, subdivisionKey: nonEmptyString.nullable() })
   .refine((v) => v.toDate >= v.fromDate, { message: "toDate must not be before fromDate" });
 export type Absence = z.infer<typeof absenceSchema>;
 
+/** What a create or update of an absence sends: the record without
+ *  its stamps. The certainty in here is the sender's wish — the
+ *  server decides what is stored (a non-Editor's save is always
+ *  tentative, DESIGN-AUTH-TENANCY 4.6). */
+export const absenceInputSchema = z
+  .object({
+    schoolId: nonEmptyString,
+    id: nonEmptyString,
+    ...absenceBase,
+    subdivisionKey: nonEmptyString.nullable(),
+  })
+  .refine((v) => v.toDate >= v.fromDate, { message: "toDate must not be before fromDate" });
+export type AbsenceInput = z.infer<typeof absenceInputSchema>;
+
 /**
- * The shape handed to the timetable: the leave subdivision is private
- * (DESIGN-AUTH-TENANCY D-5), so this schema has no subdivisionKey at all
- * and parsing an Absence with it drops the field.
+ * The shape handed to a reader who may not see the subdivision: the
+ * leave subdivision is private (DESIGN-AUTH-TENANCY D-5), so this
+ * schema has no subdivisionKey at all and parsing an Absence with it
+ * drops the field. The absence itself — who is away, when, and that
+ * it is leave — stays visible to staff, who need it for duty
+ * conflict checks.
  */
 export const absencePublicSchema = entityMetaSchema
-  .extend(absenceBase)
+  .extend({ ...absenceBase, ...absenceStamps })
   .refine((v) => v.toDate >= v.fromDate, { message: "toDate must not be before fromDate" });
 export type AbsencePublic = z.infer<typeof absencePublicSchema>;
+
+/**
+ * One of a school's own subdivision definitions under a fixed absence
+ * kind (8-1-1), as the platform stores and returns it: the record
+ * form of absenceSubdivisionSchema, with the shared entity meta.
+ */
+export const absenceSubdivisionRecordSchema = entityMetaSchema.extend({
+  code: absenceKindSchema,
+  key: nonEmptyString,
+  label: nonEmptyString,
+});
+export type AbsenceSubdivisionRecord = z.infer<typeof absenceSubdivisionRecordSchema>;
+
+/** What a create or update of a subdivision definition sends. */
+export const absenceSubdivisionInputSchema = z.object({
+  schoolId: nonEmptyString,
+  id: nonEmptyString,
+  code: absenceKindSchema,
+  key: nonEmptyString,
+  label: nonEmptyString,
+});
+export type AbsenceSubdivisionInput = z.infer<typeof absenceSubdivisionInputSchema>;
+
+/** The slice of a viewer the absence judgments need. */
+export interface AbsenceViewer {
+  /** The staff id the viewer's membership is linked to
+   *  (memberships.teacher_id, DESIGN-INTEGRATION 10), or null when
+   *  the membership names no staff member. */
+  teacherId: string | null | undefined;
+  /** Admin in either product of the absence's school. */
+  isAdmin: boolean;
+}
+
+/**
+ * "Mine" is judged by the membership's teacher_id against the
+ * absence's staff id (DESIGN-INTEGRATION 10) — never by the person
+ * id, which belongs to a different table.
+ */
+export function isOwnAbsence(
+  absence: { staffId: string },
+  teacherId: string | null | undefined,
+): boolean {
+  return teacherId != null && absence.staffId === teacherId;
+}
+
+/**
+ * Who may see an absence's subdivision (the leave classification):
+ * an Admin of the school (either product) and the person the absence
+ * is about (DESIGN-AUTH-TENANCY 4.5). Everyone else gets the public
+ * shape, in which the field does not exist.
+ */
+export function canViewAbsenceSubdivision(
+  absence: { staffId: string },
+  viewer: AbsenceViewer,
+): boolean {
+  return viewer.isAdmin || isOwnAbsence(absence, viewer.teacherId);
+}

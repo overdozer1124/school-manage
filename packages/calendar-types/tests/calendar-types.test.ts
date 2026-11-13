@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   absencePublicSchema,
   absenceSchema,
+  absenceSubdivisionSchema,
+  canViewAbsenceSubdivision,
+  defaultLeaveSubdivisions,
+  isOwnAbsence,
   calendarDayInputSchema,
   calendarDaySchema,
   calendarEventSchema,
@@ -158,6 +162,11 @@ describe("calendarTime validation", () => {
       kind: "leave",
       subdivisionKey: "annual",
       certainty: "confirmed",
+      purpose: null,
+      note: null,
+      createdBy: "person-1",
+      confirmedBy: "person-2",
+      confirmedAt: "2026-11-01T09:00:00.000Z",
     });
     expect(absence.success).toBe(false);
   });
@@ -230,19 +239,63 @@ describe("effectiveWeekday", () => {
 });
 
 describe("absence privacy shape", () => {
+  const absence = {
+    ...meta,
+    staffId: "staff-1",
+    fromDate: "2026-11-10",
+    toDate: "2026-11-10",
+    time: { kind: "all_day" },
+    kind: "leave",
+    subdivisionKey: "annual",
+    certainty: "confirmed",
+    purpose: null,
+    note: null,
+    createdBy: "person-1",
+    confirmedBy: "person-2",
+    confirmedAt: "2026-11-01T09:00:00.000Z",
+  } as const;
+
   it("drops the leave subdivision when parsed for the timetable", () => {
-    const parsed = absencePublicSchema.parse({
-      ...meta,
-      staffId: "staff-1",
-      fromDate: "2026-11-10",
-      toDate: "2026-11-10",
-      time: { kind: "all_day" },
-      kind: "leave",
-      subdivisionKey: "annual",
-      certainty: "confirmed",
-    });
+    const parsed = absencePublicSchema.parse(absence);
     expect("subdivisionKey" in parsed).toBe(false);
     expect(parsed.kind).toBe("leave");
+  });
+
+  it("judges an absence as one's own by the membership's teacher_id", () => {
+    expect(isOwnAbsence(absence, "staff-1")).toBe(true);
+    expect(isOwnAbsence(absence, "staff-2")).toBe(false);
+    expect(isOwnAbsence(absence, null)).toBe(false);
+    expect(isOwnAbsence(absence, undefined)).toBe(false);
+  });
+
+  it("shows the subdivision to an Admin and to the person themselves only", () => {
+    expect(canViewAbsenceSubdivision(absence, { teacherId: "staff-2", isAdmin: true })).toBe(true);
+    expect(canViewAbsenceSubdivision(absence, { teacherId: "staff-1", isAdmin: false })).toBe(true);
+    expect(canViewAbsenceSubdivision(absence, { teacherId: "staff-2", isAdmin: false })).toBe(
+      false,
+    );
+    expect(canViewAbsenceSubdivision(absence, { teacherId: null, isAdmin: false })).toBe(false);
+  });
+});
+
+describe("default leave subdivisions", () => {
+  it("carries the eight initial items of schedule DESIGN 6.5, all under leave", () => {
+    expect(defaultLeaveSubdivisions).toHaveLength(8);
+    expect(defaultLeaveSubdivisions.map((s) => s.label)).toEqual([
+      "年休",
+      "病休",
+      "特休",
+      "夏特",
+      "看護",
+      "職専免",
+      "振休",
+      "その他",
+    ]);
+    for (const s of defaultLeaveSubdivisions) {
+      expect(s.code).toBe("leave");
+      expect(absenceSubdivisionSchema.safeParse(s).success).toBe(true);
+    }
+    expect(new Set(defaultLeaveSubdivisions.map((s) => s.key)).size).toBe(8);
   });
 });
 

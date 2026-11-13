@@ -7,6 +7,7 @@ export const changeEntityKindSchema = z.enum([
   "holiday",
   "event",
   "absence",
+  "absence_subdivision",
   "staff",
   "grade",
   "class",

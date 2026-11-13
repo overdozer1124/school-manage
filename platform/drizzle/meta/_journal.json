@@ -57,6 +57,13 @@
       "when": 1794550411858,
       "tag": "0007_holiday_kind_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794553263772,
+      "tag": "0008_absences",
+      "breakpoints": true
     }
   ]
 }

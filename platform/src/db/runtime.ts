@@ -1,3 +1,9 @@
+import {
+  createAbsenceStore,
+  createAbsenceSubdivisionStore,
+  type AbsenceStore,
+  type AbsenceSubdivisionStore,
+} from "./absences.js";
 import { createAuthStore, type AuthStore } from "./authStore.js";
 import { createChangeStore, type ChangeStore } from "./changes.js";
 import { createDb } from "./client.js";
@@ -39,4 +45,14 @@ export function createDayStoreFromEnv(): DayStore {
 export function createHolidayStoreFromEnv(): HolidayStore {
   const { db } = createDb();
   return createHolidayStore(db);
+}
+
+export function createAbsenceStoreFromEnv(): AbsenceStore {
+  const { db } = createDb();
+  return createAbsenceStore(db);
+}
+
+export function createAbsenceSubdivisionStoreFromEnv(): AbsenceSubdivisionStore {
+  const { db } = createDb();
+  return createAbsenceSubdivisionStore(db);
 }
