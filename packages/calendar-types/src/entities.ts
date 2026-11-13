@@ -5,6 +5,7 @@ import {
   datePrecisionSchema,
   dayTypeSchema,
   eventKindSchema,
+  holidayKindSchema,
   nonEmptyString,
   productSchema,
   visibilitySchema,
@@ -25,15 +26,61 @@ export const entityMetaSchema = z.object({
 });
 export type EntityMeta = z.infer<typeof entityMetaSchema>;
 
-/** A day of the school calendar (2.1). dayScheduleId points at a day
- *  pattern of the shared master; null means the school's default pattern. */
-export const calendarDaySchema = entityMetaSchema.extend({
+/** The fields a calendar day carries besides identity and meta. */
+const dayFields = {
   date: dateStringSchema,
   dayType: dayTypeSchema,
+  /** The school's own word for the day type (8-1-1: a fixed meaning
+   *  code plus the school's wording), or null when it has none. */
+  dayTypeLabel: nonEmptyString.nullable(),
+  /** A day pattern of the shared master; null means the school's
+   *  default pattern. */
   dayScheduleId: nonEmptyString.nullable(),
   weekdaySwap: weekdaySchema.nullable(),
-});
+  note: z.string().nullable(),
+};
+
+/** A day of the school calendar (2.1), as the platform stores and
+ *  returns it (Issue #23). Only days a school has recorded exist in
+ *  this shape: a date with no row has the default day (a class day on
+ *  a weekday, a closed day on a weekend), which the readers derive
+ *  from the weekday — the API returns recorded days only. */
+export const calendarDaySchema = entityMetaSchema.extend(dayFields);
 export type CalendarDay = z.infer<typeof calendarDaySchema>;
+
+/** What a create or update of a day sends: the day without its stamps. */
+export const calendarDayInputSchema = z.object({
+  schoolId: nonEmptyString,
+  id: nonEmptyString,
+  ...dayFields,
+});
+export type CalendarDayInput = z.infer<typeof calendarDayInputSchema>;
+
+/** The fields a holiday carries besides identity and meta. */
+const holidayFields = {
+  date: dateStringSchema,
+  name: nonEmptyString,
+  kind: holidayKindSchema,
+};
+
+/**
+ * A holiday or other non-teaching day kept as its own list (schedule
+ * DESIGN 4.1 `holidays`, Issue #23): the material for weekend /
+ * holiday colouring and class-day judgement, separate from the day
+ * records so a school can keep the official holiday list on its own.
+ * A date may carry more than one holiday row (a national holiday that
+ * is also a school closed day, say), so the date is not unique here.
+ */
+export const holidaySchema = entityMetaSchema.extend(holidayFields);
+export type Holiday = z.infer<typeof holidaySchema>;
+
+/** What a create or update of a holiday sends. */
+export const holidayInputSchema = z.object({
+  schoolId: nonEmptyString,
+  id: nonEmptyString,
+  ...holidayFields,
+});
+export type HolidayInput = z.infer<typeof holidayInputSchema>;
 
 // No .refine here: zod 3's discriminatedUnion rejects refined options,
 // so the range check lives in the superRefine on eventImpactSchema below.

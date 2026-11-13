@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   absencePublicSchema,
   absenceSchema,
+  calendarDayInputSchema,
   calendarDaySchema,
   calendarEventSchema,
   calendarTimeSchema,
   calendarTimeToPeriods,
+  changeEntityKindSchema,
   changeEventSchema,
   dateStringSchema,
   dayPatternSchema,
@@ -13,6 +15,8 @@ import {
   staffMemberRecordSchema,
   staffMemberSchema,
   effectiveWeekday,
+  holidayInputSchema,
+  holidaySchema,
   timeStringSchema,
   type PeriodTime,
 } from "../src/index.js";
@@ -46,8 +50,10 @@ describe("fixed codes", () => {
       ...meta,
       date: "2026-11-09",
       dayType: "unknown_code",
+      dayTypeLabel: null,
       dayScheduleId: null,
       weekdaySwap: null,
+      note: null,
     });
     expect(day.success).toBe(false);
   });
@@ -57,10 +63,65 @@ describe("fixed codes", () => {
       ...meta,
       date: "2026-11-09",
       dayType: "class_day",
+      dayTypeLabel: null,
       dayScheduleId: null,
       weekdaySwap: "wed",
+      note: "月曜時間割で実施",
     });
     expect(day.weekdaySwap).toBe("wed");
+  });
+
+  it("accepts a day input and rejects an empty school wording", () => {
+    const input = calendarDayInputSchema.parse({
+      schoolId: "school-1",
+      id: "day-1",
+      date: "2026-11-09",
+      dayType: "event_day",
+      dayTypeLabel: "文化祭",
+      dayScheduleId: "sched-special",
+      weekdaySwap: null,
+      note: null,
+    });
+    expect(input.dayTypeLabel).toBe("文化祭");
+    expect(calendarDayInputSchema.safeParse({ ...input, dayTypeLabel: "" }).success).toBe(false);
+  });
+
+  it("accepts the four holiday kinds and rejects unknown ones", () => {
+    for (const kind of [
+      "national_holiday",
+      "substitute_holiday",
+      "school_closed_day",
+      "office_closed_day",
+    ]) {
+      const holiday = holidaySchema.parse({
+        ...meta,
+        date: "2026-11-03",
+        name: "文化の日",
+        kind,
+      });
+      expect(holiday.kind).toBe(kind);
+    }
+    expect(
+      holidaySchema.safeParse({
+        ...meta,
+        date: "2026-11-03",
+        name: "文化の日",
+        kind: "unknown_kind",
+      }).success,
+    ).toBe(false);
+    expect(
+      holidayInputSchema.safeParse({
+        schoolId: "school-1",
+        id: "holiday-1",
+        date: "2026-11-03",
+        name: "",
+        kind: "national_holiday",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("treats holiday as a change entity kind", () => {
+    expect(changeEntityKindSchema.safeParse("holiday").success).toBe(true);
   });
 });
 

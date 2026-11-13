@@ -3,7 +3,9 @@ import { loadAuthConfig } from "./auth/config.js";
 import {
   createAuthStoreFromEnv,
   createChangeStoreFromEnv,
+  createDayStoreFromEnv,
   createEventStoreFromEnv,
+  createHolidayStoreFromEnv,
   createMasterStoreFromEnv,
 } from "./db/runtime.js";
 
@@ -15,6 +17,8 @@ const store = createAuthStoreFromEnv();
 const changeStore = createChangeStoreFromEnv();
 const masterStore = createMasterStoreFromEnv();
 const eventStore = createEventStoreFromEnv();
+const dayStore = createDayStoreFromEnv();
+const holidayStore = createHolidayStoreFromEnv();
 
 const port = Number(process.env.PLATFORM_PORT ?? 3001);
 
@@ -23,6 +27,7 @@ createApp({
   changes: { config: authConfig, authStore: store, changeStore },
   masters: { config: authConfig, authStore: store, masterStore },
   events: { config: authConfig, authStore: store, eventStore },
+  calendar: { config: authConfig, authStore: store, dayStore, holidayStore },
 }).listen(port, () => {
   console.log(`platform listening on port ${port}`);
 });

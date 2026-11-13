@@ -4,6 +4,7 @@ import { nonEmptyString, productSchema } from "./codes.js";
 /** Entity kinds a change event can be about. */
 export const changeEntityKindSchema = z.enum([
   "day",
+  "holiday",
   "event",
   "absence",
   "staff",

@@ -275,6 +275,83 @@ export const events = pgTable(
 );
 
 /**
+ * One recorded day of the school calendar (Issue #23,
+ * DESIGN-INTEGRATION 2.1, schedule DESIGN 4.1 `day_records`): what
+ * kind of day a date is, the day pattern it runs on, and a weekday
+ * swap when another weekday's timetable applies. A date has at most
+ * one day record per school. Dates with no record are not stored:
+ * they are the default day (a class day on a weekday, a closed day
+ * on a weekend), which readers derive from the weekday. The pattern
+ * reference is a composite foreign key to the shared day patterns,
+ * so a day can never point at another school's pattern. The fixed
+ * codes are text columns with checks, as with the day patterns; the
+ * calendar-types schemas are the wire-level validation.
+ */
+export const dayRecords = pgTable(
+  "day_records",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").notNull(),
+    date: date("date").notNull(),
+    /** The fixed day type code (calendar-types dayTypeSchema). */
+    dayType: text("day_type").notNull(),
+    /** The school's own word for the day type, if it has one. */
+    dayTypeLabel: text("day_type_label"),
+    dayScheduleId: text("day_schedule_id"),
+    weekdaySwap: text("weekday_swap"),
+    note: text("note"),
+    ...masterMeta,
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("day_records_school_date_unique").on(t.schoolId, t.date),
+    check(
+      "day_records_day_type_check",
+      sql`${t.dayType} in ('class_day', 'closed_day', 'long_vacation', 'attendance_day', 'event_day')`,
+    ),
+    check(
+      "day_records_weekday_swap_check",
+      sql`${t.weekdaySwap} is null or ${t.weekdaySwap} in ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')`,
+    ),
+    foreignKey({
+      columns: [t.schoolId, t.dayScheduleId],
+      foreignColumns: [dayPatterns.schoolId, dayPatterns.id],
+      name: "day_records_day_pattern_fk",
+    }),
+  ],
+);
+
+/**
+ * The holiday / closed-day list (Issue #23, schedule DESIGN 4.1
+ * `holidays`), kept apart from the day records so the official list
+ * can be maintained on its own. A date may carry more than one row
+ * (different kinds), so the date is not unique here.
+ */
+export const holidays = pgTable(
+  "holidays",
+  {
+    schoolId: text("school_id")
+      .notNull()
+      .references(() => schools.schoolId),
+    id: text("id").notNull(),
+    date: date("date").notNull(),
+    name: text("name").notNull(),
+    /** The fixed kind code (calendar-types holidayKindSchema). */
+    kind: text("kind").notNull(),
+    ...masterMeta,
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    check(
+      "holidays_kind_check",
+      sql`${t.kind} in ('national_holiday', 'substitute_holiday', 'school_closed_day', 'office_closed_day')`,
+    ),
+  ],
+);
+
+/**
  * The subordinate rows of an event: impacts, targets and assignees.
  * Like a day pattern's periods they carry no revision of their own —
  * the event's revision covers them, and a write replaces the whole
@@ -508,6 +585,7 @@ export const auditLog = pgTable("audit_log", {
 /** Entity kinds a change event can be about (calendar-types events.ts). */
 export const changeKindEnum = pgEnum("change_entity_kind", [
   "day",
+  "holiday",
   "event",
   "absence",
   "staff",
@@ -557,6 +635,8 @@ export type ClassRow = typeof classes.$inferSelect;
 export type SpecialNeedsClassRow = typeof specialNeedsClasses.$inferSelect;
 export type DayPatternRow = typeof dayPatterns.$inferSelect;
 export type DayPatternPeriodRow = typeof dayPatternPeriods.$inferSelect;
+export type DayRecordRow = typeof dayRecords.$inferSelect;
+export type HolidayRow = typeof holidays.$inferSelect;
 export type EventRow = typeof events.$inferSelect;
 export type EventImpactRow = typeof eventImpacts.$inferSelect;
 export type EventTargetRow = typeof eventTargets.$inferSelect;
