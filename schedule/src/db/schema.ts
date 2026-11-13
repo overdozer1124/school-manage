@@ -2,6 +2,8 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  date,
+  doublePrecision,
   foreignKey,
   integer,
   jsonb,
@@ -11,6 +13,7 @@ import {
   timestamp,
   unique,
 } from "drizzle-orm/pg-core";
+import type { TargetRef } from "@school-manage/calendar-types";
 
 /**
  * Schedule's own schema. The school master itself lives in the
@@ -199,3 +202,80 @@ export const locations = pgTable(
 );
 
 export type LocationRow = typeof locations.$inferSelect;
+
+/**
+ * A daily value: the content of one cell of the schedule table,
+ * "date x item x target" (DESIGN schedule 4.6, 3). Events are not
+ * stored here; this is for the day's state that is not an event
+ * (lunch yes/no, dismissal times, bus times).
+ *
+ * The target is optional. A target on an app-specific axis is a row
+ * of `targets`, referenced by target_id (composite FK). A target on
+ * a shared-master axis (grade, class, ...) cannot be a foreign key
+ * into the platform, so it is kept as a TargetRef in target_ref
+ * (DESIGN-INTEGRATION 8-1-3). At most one of the two is set; both
+ * null means the value is not split by target. target_key is the
+ * canonical text form of the target ("" for none, "app:<id>" for an
+ * app target, "<axis>:<id>" for a shared-master one) and exists so
+ * the cell uniqueness below can be a plain unique constraint even
+ * though the target columns are nullable.
+ *
+ * The value is stored in typed columns, in the EventValue form
+ * (DESIGN schedule 4.5): exactly one group is used, chosen by the
+ * item definition's value_type and checked when the value is set.
+ * value_option_id deliberately has no foreign key: definition
+ * writes replace an item's options wholesale (Issue #27), and a key
+ * would make that fail once values exist; the option's existence is
+ * enforced at write time instead.
+ */
+export const dailyValues = pgTable(
+  "daily_values",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    date: date("date").notNull(),
+    itemDefinitionId: text("item_definition_id").notNull(),
+    targetId: text("target_id"),
+    targetRef: jsonb("target_ref").$type<TargetRef>(),
+    targetKey: text("target_key").default("").notNull(),
+    slot: text("slot").default("all_day").notNull(),
+    valueText: text("value_text"),
+    valueTime: text("value_time"),
+    valueTimeEnd: text("value_time_end"),
+    valueNumber: doublePrecision("value_number"),
+    valueBoolean: boolean("value_boolean"),
+    valueOptionId: text("value_option_id"),
+    valuePersonId: text("value_person_id"),
+    valueJson: jsonb("value_json"),
+    createdBy: text("created_by").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("daily_values_cell_unique").on(
+      t.schoolId,
+      t.date,
+      t.itemDefinitionId,
+      t.targetKey,
+      t.slot,
+    ),
+    foreignKey({
+      name: "daily_values_item_fk",
+      columns: [t.schoolId, t.itemDefinitionId],
+      foreignColumns: [itemDefinitions.schoolId, itemDefinitions.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "daily_values_target_fk",
+      columns: [t.schoolId, t.targetId],
+      foreignColumns: [targets.schoolId, targets.id],
+    }),
+    check("daily_values_target_check", sql`${t.targetId} is null or ${t.targetRef} is null`),
+    check(
+      "daily_values_slot_check",
+      sql`${t.slot} in ('all_day', 'am', 'pm') or ${t.slot} ~ '^[0-9]+$'`,
+    ),
+  ],
+);
+
+export type DailyValueRow = typeof dailyValues.$inferSelect;
