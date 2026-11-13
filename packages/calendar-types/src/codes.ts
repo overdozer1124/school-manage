@@ -24,6 +24,15 @@ export type DayType = z.infer<typeof dayTypeSchema>;
 export const dayScheduleKindSchema = code(["normal", "shortened", "exam", "special"]);
 export type DayScheduleKind = z.infer<typeof dayScheduleKindSchema>;
 
+/** 祝日・休業日の種類：祝日／振替／学校休業日／閉庁日 (schedule DESIGN 4.1). */
+export const holidayKindSchema = code([
+  "national_holiday",
+  "substitute_holiday",
+  "school_closed_day",
+  "office_closed_day",
+]);
+export type HolidayKind = z.infer<typeof holidayKindSchema>;
+
 /** 不在の種類 (matches school-timetable lesson_cover_cases.absence_type). */
 export const absenceKindSchema = code(["business_trip", "training", "leave", "other"]);
 export type AbsenceKind = z.infer<typeof absenceKindSchema>;

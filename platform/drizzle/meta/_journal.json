@@ -43,6 +43,13 @@
       "when": 1794456464120,
       "tag": "0005_platform_events",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794545196943,
+      "tag": "0006_platform_calendar_days",
+      "breakpoints": true
     }
   ]
 }
