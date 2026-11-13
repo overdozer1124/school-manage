@@ -29,7 +29,6 @@ CREATE TABLE "holidays" (
 	"updated_via" "updated_via" NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "holidays_school_id_id_pk" PRIMARY KEY("school_id","id"),
-	CONSTRAINT "holidays_school_date_kind_unique" UNIQUE("school_id","date","kind"),
 	CONSTRAINT "holidays_kind_check" CHECK ("holidays"."kind" in ('national_holiday', 'substitute_holiday', 'school_closed_day', 'office_closed_day'))
 );
 --> statement-breakpoint
