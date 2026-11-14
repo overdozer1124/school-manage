@@ -55,6 +55,10 @@ import type { Membership, Product } from "../db/schema.js";
  * (the Issue #25 follow-up): for everyone else a leave answers with
  * the restricted shape, which has neither the subdivision nor the
  * texts. Other kinds keep their texts in the public shape.
+ *
+ * The write-check endpoint answers the write judgment for one
+ * existing absence — the same rule a PUT runs — without writing
+ * anything, for the schedule server's values-only saves (Issue #29).
  */
 export interface AbsencesRouterDeps {
   config: AuthConfig;
@@ -204,6 +208,18 @@ function assertSelfService(input: AbsenceInput, authed: AuthedMember, flags: Rol
 }
 
 /**
+ * Whether this caller may write this existing absence: a writer may
+ * write anyone's; anyone else only their own. This is the record
+ * half of the PUT rule, shared with the write-check endpoint below
+ * so the judgment the schedule server asks for (before it saves a
+ * record's additional items alone, Issue #29) can never drift from
+ * the judgment a real save runs.
+ */
+function canWriteAbsence(existing: Absence, authed: AuthedMember, flags: RoleFlags): boolean {
+  return flags.isWriter || isOwnAbsence(existing, authed.membership.teacherId);
+}
+
+/**
  * The stored values a full-replace update keeps for the fields its
  * caller may not see. The input schema requires every field, but a
  * caller who was never shown a field — the subdivision for anyone
@@ -348,6 +364,27 @@ export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
     }
   });
 
+  // The write judgment for one existing absence, asked by the
+  // schedule server before it saves that absence's additional items
+  // alone (setEventValues, Issue #29): the same canWriteAbsence the
+  // PUT runs — a writer anyone's, anyone else only their own.
+  // Nothing is written and no record body is returned.
+  router.get(`${absences}/:id/write-check`, async (req, res) => {
+    try {
+      const authed = await requireMember(deps, req);
+      const id = req.params.id as string;
+      const item = await deps.absenceStore.get(authed.claims.schoolId, id);
+      if (!item) throw new AbsenceNotFoundError("absence", id);
+      const flags = await roleFlags(deps.authStore, authed.membership.id);
+      if (!canWriteAbsence(item, authed, flags)) {
+        throw new AuthError(403, "権限がありません");
+      }
+      res.json({ writable: true });
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
   router.post(absences, async (req, res) => {
     try {
       const authed = await requireMember(deps, req);
@@ -402,7 +439,7 @@ export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
         // A non-writer may only edit their own absence, and may not
         // hand it to someone else in the edit either.
         if (
-          !isOwnAbsence(existing, authed.membership.teacherId) ||
+          !canWriteAbsence(existing, authed, flags) ||
           !isOwnAbsence(input, authed.membership.teacherId)
         ) {
           throw new AuthError(403, "権限がありません");

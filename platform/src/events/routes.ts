@@ -30,6 +30,13 @@ import {
  * audience filter, so an event the audience may not see is never in
  * the response, and assignee names reach staff only
  * (DESIGN-AUTH-TENANCY 4.5).
+ *
+ * The write-check endpoint answers the write judgment — the same
+ * requireWriter guard a PUT runs — without writing anything. The
+ * schedule server asks it before saving a record's additional items
+ * on their own (Issue #29): who may set a record's values is who may
+ * save the record, and that verdict （連携5 included) is this
+ * server's to give, never the caller's own role table.
  */
 export interface EventsRouterDeps {
   config: AuthConfig;
@@ -156,6 +163,26 @@ export function createEventsRouter(deps: EventsRouterDeps): Router {
       const item = await deps.eventStore.get(claims.schoolId, req.params.id as string, audience);
       if (!item) throw new EventNotFoundError(req.params.id as string);
       res.json(readResponse(item, audience));
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  // The write judgment for one existing event, asked by the
+  // schedule server before it saves that event's additional items
+  // alone (setEventValues, Issue #29). An event write has no
+  // per-record rule — the writer guard is the whole judgment, the
+  // same one the PUT below runs — so the check is that guard plus
+  // existence. The staff audience sees every visibility, so the
+  // store read doubles as a within-school existence check. Nothing
+  // is written and no record body is returned.
+  router.get(`${base}/:id/write-check`, async (req, res) => {
+    try {
+      const { claims } = await requireWriter(deps, req);
+      const id = req.params.id as string;
+      const item = await deps.eventStore.get(claims.schoolId, id, "staff");
+      if (!item) throw new EventNotFoundError(id);
+      res.json({ writable: true });
     } catch (error) {
       handleError(res, error);
     }

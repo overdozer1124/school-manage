@@ -674,4 +674,48 @@ describe.skipIf(!url)("calendar events", () => {
       ).status,
     ).toBe(400);
   });
+
+  it("answers the write-check with the write guard's own verdict, and writes nothing", async () => {
+    const created = await api("POST", BASE, { cookie: editorA(), body: dayEvent("ev-check") });
+    expect(created.status).toBe(201);
+    // A writer may write it — from either product （連携5).
+    expect((await api("GET", `${BASE}/ev-check/write-check`, { cookie: editorA() })).status).toBe(
+      200,
+    );
+    expect(
+      (await api("GET", `${BASE}/ev-check/write-check`, { cookie: timetableEditorA() })).status,
+    ).toBe(200);
+    // A Viewer may not.
+    expect((await api("GET", `${BASE}/ev-check/write-check`, { cookie: viewerA() })).status).toBe(
+      403,
+    );
+    // A missing event is a 404 even for a writer, another school's
+    // writer gets the 404 too, and no session is a 401.
+    expect((await api("GET", `${BASE}/ev-missing/write-check`, { cookie: editorA() })).status).toBe(
+      404,
+    );
+    expect((await api("GET", `${BASE}/ev-check/write-check`, { cookie: memberB() })).status).toBe(
+      404,
+    );
+    expect((await api("GET", `${BASE}/ev-check/write-check`)).status).toBe(401);
+    // The check wrote nothing: the record is still at revision 1.
+    const read = await api("GET", `${BASE}/ev-check`, { cookie: editorA() });
+    expect(read.json.revision).toBe(1);
+  });
+
+  it("accepts an update sent in the read shape, as a move sends it", async () => {
+    await api("POST", BASE, { cookie: editorA(), body: dayEvent("ev-move-shape") });
+    const read = await api("GET", `${BASE}/ev-move-shape`, { cookie: editorA() });
+    expect(read.status).toBe(200);
+    // The read body carries the stamps (createdBy, createdAt, ...);
+    // the schedule relay's move spreads it whole and replaces only
+    // the dates. The input schema ignores the read-only fields.
+    const moved = await api("PUT", `${BASE}/ev-move-shape`, {
+      cookie: editorA(),
+      body: { ...read.json, startsOn: "2026-11-12", endsOn: "2026-11-12" },
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.json.startsOn).toBe("2026-11-12");
+    expect(moved.json.revision).toBe(2);
+  });
 });
