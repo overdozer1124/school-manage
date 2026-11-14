@@ -65,6 +65,9 @@ const fakePlatform: DutyPlatformSource = {
     }
     return days;
   },
+  async listAbsences() {
+    return [];
+  },
   async listTerms(schoolId) {
     if (schoolId !== A) return [];
     return [

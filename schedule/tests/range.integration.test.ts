@@ -180,6 +180,9 @@ const dutySource: DutyPlatformSource = {
   async listCalendarDays() {
     return [];
   },
+  async listAbsences() {
+    return [];
+  },
   async listTerms() {
     return [];
   },

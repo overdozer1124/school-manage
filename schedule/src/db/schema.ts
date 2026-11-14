@@ -45,6 +45,13 @@ export const schoolSettings = pgTable(
     presetKey: text("preset_key"),
     presetAppliedAt: timestamp("preset_applied_at", { withTimezone: true }),
     inputOpener: text("input_opener").default("popover").notNull(),
+    /**
+     * The absence kinds that count for duty-conflict detection
+     * (DESIGN schedule 4.7.2: 検出対象の予定種別は学校が設定できる;
+     * Issue #31). Null — the row's default state — counts every
+     * kind; a list counts only those kinds.
+     */
+    dutyConflictAbsenceKinds: jsonb("duty_conflict_absence_kinds").$type<string[]>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [
@@ -413,6 +420,98 @@ export const dutyAssignments = pgTable(
 );
 
 export type DutyAssignmentRow = typeof dutyAssignments.$inferSelect;
+
+/**
+ * A duty change: a swap, a substitution or a reassignment, kept as
+ * a first-class, recorded operation rather than a silent edit of
+ * the assignment (DESIGN schedule 4.7 / 4.7.1, Issue #31). The row
+ * is created as a proposal (status proposed — a Viewer may propose
+ * a change to their own assignment, DESIGN-AUTH-TENANCY 4.4) and an
+ * Editor or Admin applies or declines it; applying rewrites the
+ * assignment(s) in the same transaction and marks their origin
+ * "swap". from / to are the holders before and after: for a swap,
+ * assignment B's holder and assignment A's; for a substitution or
+ * reassignment, the named replacement. Audit columns follow
+ * DESIGN-AUTH-TENANCY 4.7 (requested_by / approved_by; approved_by
+ * records whoever decided, on a decline as well as on an apply).
+ * The definition carries a composite foreign key (deleting a
+ * definition cascades its history away, as the prototype did),
+ * but the two assignments deliberately carry none: a change is a
+ * history record, and it must outlive the assignments it names —
+ * applying a change whose assignment has gone fails cleanly and
+ * leaves the proposal standing, instead of the history vanishing
+ * with the assignment (the same no-FK treatment as event_values'
+ * subject_id, Issue #29).
+ */
+export const dutyChanges = pgTable(
+  "duty_changes",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    dutyDefinitionId: text("duty_definition_id").notNull(),
+    kind: text("kind").notNull(),
+    assignmentAId: text("assignment_a_id").notNull(),
+    assignmentBId: text("assignment_b_id"),
+    fromPersonId: text("from_person_id"),
+    toPersonId: text("to_person_id"),
+    reason: text("reason").default("").notNull(),
+    requestedBy: text("requested_by").notNull(),
+    approvedBy: text("approved_by"),
+    status: text("status").default("proposed").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    foreignKey({
+      name: "duty_changes_definition_fk",
+      columns: [t.schoolId, t.dutyDefinitionId],
+      foreignColumns: [dutyDefinitions.schoolId, dutyDefinitions.id],
+    }).onDelete("cascade"),
+
+    check("duty_changes_kind_check", sql`${t.kind} in ('swap', 'substitute', 'reassign')`),
+    check("duty_changes_status_check", sql`${t.status} in ('proposed', 'applied', 'declined')`),
+  ],
+);
+
+export type DutyChangeRow = typeof dutyChanges.$inferSelect;
+
+/**
+ * The one part of a duty conflict that IS stored (DESIGN schedule
+ * 4.7.2, Issue #31): the record that a person looked at an
+ * assignment × absence conflict and decided to leave it as it is,
+ * with a reason. The conflict itself is derived on every read, so
+ * when the absence disappears the conflict disappears with it —
+ * this row stays, as the record of the decision (waived_by,
+ * DESIGN-AUTH-TENANCY 4.7). The absence lives in the platform, so
+ * absence_id is a plain platform id with no foreign key; the
+ * assignment is this database's, and carries one. Recording the
+ * same pair again updates the reason instead of duplicating.
+ */
+export const dutyConflictWaivers = pgTable(
+  "duty_conflict_waivers",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    assignmentId: text("assignment_id").notNull(),
+    absenceId: text("absence_id").notNull(),
+    waivedBy: text("waived_by").notNull(),
+    reason: text("reason").default("").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("duty_conflict_waivers_pair_unique").on(t.schoolId, t.assignmentId, t.absenceId),
+    foreignKey({
+      name: "duty_conflict_waivers_assignment_fk",
+      columns: [t.schoolId, t.assignmentId],
+      foreignColumns: [dutyAssignments.schoolId, dutyAssignments.id],
+    }).onDelete("cascade"),
+  ],
+);
+
+export type DutyConflictWaiverRow = typeof dutyConflictWaivers.$inferSelect;
 
 /**
  * A view definition: how a slice of the schedule is shown, without

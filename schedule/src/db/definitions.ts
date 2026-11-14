@@ -411,13 +411,24 @@ export async function saveSettings(
   db: Db,
   schoolId: string,
   inputOpener: "popover" | "modal",
+  dutyConflictAbsenceKinds?: string[] | null,
 ): Promise<SchoolSettingsRow> {
+  // The conflict-kinds setting (Issue #31) is only written when
+  // the caller names it: saveSettings also serves callers that
+  // know nothing about it, and an omitted field must not reset a
+  // school's choice back to "every kind counts".
+  const set: Partial<SchoolSettingsRow> = { inputOpener, updatedAt: new Date() };
+  const values: Partial<SchoolSettingsRow> & { schoolId: string } = { schoolId, inputOpener };
+  if (dutyConflictAbsenceKinds !== undefined) {
+    set.dutyConflictAbsenceKinds = dutyConflictAbsenceKinds;
+    values.dutyConflictAbsenceKinds = dutyConflictAbsenceKinds;
+  }
   const rows = await db
     .insert(schoolSettings)
-    .values({ schoolId, inputOpener })
+    .values(values)
     .onConflictDoUpdate({
       target: schoolSettings.schoolId,
-      set: { inputOpener, updatedAt: new Date() },
+      set,
     })
     .returning();
   return rows[0] as SchoolSettingsRow;
