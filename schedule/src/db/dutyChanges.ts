@@ -113,10 +113,17 @@ async function loadProposedChange(
   schoolId: string,
   id: string,
 ): Promise<DutyChangeRow> {
+  // FOR UPDATE: two editors deciding the same proposal at once
+  // must not both pass the status check — the second transaction
+  // waits on this row, then re-reads the committed status and is
+  // refused below. Without the lock, a concurrent pair of applies
+  // could both act (a swap applied twice restores the original
+  // holders while the record says "applied").
   const rows = await db
     .select()
     .from(dutyChanges)
-    .where(and(eq(dutyChanges.schoolId, schoolId), eq(dutyChanges.id, id)));
+    .where(and(eq(dutyChanges.schoolId, schoolId), eq(dutyChanges.id, id)))
+    .for("update");
   const change = rows[0] as DutyChangeRow | undefined;
   if (!change) {
     throw new Error(`duty change not found: ${id}`);
@@ -135,9 +142,11 @@ async function loadProposedChange(
  * holders as they stand at apply time (and the change row's
  * from / to are refreshed to what was actually exchanged); a
  * substitute or reassignment installs the person named in the
- * proposal. Touched assignments get origin "swap", so later
- * automatic generation never overwrites them (DESIGN schedule
- * 4.7).
+ * proposal, and the change row's from is likewise refreshed to
+ * the holder who actually stood aside at apply time (the
+ * proposal's from goes stale if the holder changed meanwhile).
+ * Touched assignments get origin "swap", so later automatic
+ * generation never overwrites them (DESIGN schedule 4.7).
  */
 export async function applyChange(
   db: Db,
@@ -173,6 +182,7 @@ export async function applyChange(
         .set({ personId: a.personId, origin: "swap", updatedBy: actor, updatedAt: now })
         .where(and(eq(dutyAssignments.schoolId, schoolId), eq(dutyAssignments.id, b.id)));
     } else {
+      fromPersonId = a.personId;
       await tx
         .update(dutyAssignments)
         .set({ personId: change.toPersonId, origin: "swap", updatedBy: actor, updatedAt: now })
@@ -187,8 +197,20 @@ export async function applyChange(
         fromPersonId,
         toPersonId,
       })
-      .where(and(eq(dutyChanges.schoolId, schoolId), eq(dutyChanges.id, id)))
+      // Belt to the row lock's braces: the decision lands only
+      // while the change is still proposed, or the whole apply
+      // rolls back as already-decided.
+      .where(
+        and(
+          eq(dutyChanges.schoolId, schoolId),
+          eq(dutyChanges.id, id),
+          eq(dutyChanges.status, "proposed"),
+        ),
+      )
       .returning();
+    if (rows.length !== 1) {
+      throw new Error(`duty change is not proposed: ${id}`);
+    }
     return rows[0] as DutyChangeRow;
   });
 }
@@ -209,8 +231,17 @@ export async function declineChange(
     const rows = await tx
       .update(dutyChanges)
       .set({ status: "declined", approvedBy: actor })
-      .where(and(eq(dutyChanges.schoolId, schoolId), eq(dutyChanges.id, id)))
+      .where(
+        and(
+          eq(dutyChanges.schoolId, schoolId),
+          eq(dutyChanges.id, id),
+          eq(dutyChanges.status, "proposed"),
+        ),
+      )
       .returning();
+    if (rows.length !== 1) {
+      throw new Error(`duty change is not proposed: ${id}`);
+    }
     return rows[0] as DutyChangeRow;
   });
 }

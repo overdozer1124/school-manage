@@ -531,4 +531,134 @@ describe.skipIf(!url)("schedule duty changes and conflicts", () => {
     expect(await duties.getDutyChanges.run(adminB, {})).toEqual([]);
     absencesBySchool[B] = [];
   });
+
+  it("two editors applying the same swap at once land it only once", async () => {
+    await duties.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-day",
+      date: "2026-06-08",
+      slot: "all_day",
+      personId: "teacher-a1",
+    });
+    await duties.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-day",
+      date: "2026-06-09",
+      slot: "all_day",
+      personId: "teacher-a2",
+    });
+    const dayA = (await assignmentsOn("2026-06-08")).find((r) => r.dutyDefinitionId === "duty-day");
+    const dayB = (await assignmentsOn("2026-06-09")).find((r) => r.dutyDefinitionId === "duty-day");
+    const proposed = await duties.proposeDutyChange.run(editorA, {
+      kind: "swap",
+      assignmentAId: dayA?.id,
+      assignmentBId: dayB?.id,
+    });
+
+    // Two decisions race on separate connections: exactly one
+    // applies, the other is refused as already decided — and the
+    // holders end swapped once, not swapped back to the start.
+    const second = createDb(url as string);
+    try {
+      const duties2 = createDutyActions(second.db, fakePlatform);
+      const results = await Promise.allSettled([
+        duties.applyDutyChange.run(editorA, { id: proposed.id }),
+        duties2.applyDutyChange.run(editorA, { id: proposed.id }),
+      ]);
+      const settled = results.filter((r) => r.status === "fulfilled");
+      const refused = results.filter((r) => r.status === "rejected");
+      expect(settled).toHaveLength(1);
+      expect(refused).toHaveLength(1);
+      const reason = (refused[0] as PromiseRejectedResult).reason;
+      expect(reason instanceof Error ? reason.message : String(reason)).toContain("not proposed");
+    } finally {
+      await second.queryClient.end();
+    }
+
+    expect(
+      (await assignmentsOn("2026-06-08")).find((r) => r.dutyDefinitionId === "duty-day")?.personId,
+    ).toBe("teacher-a2");
+    expect(
+      (await assignmentsOn("2026-06-09")).find((r) => r.dutyDefinitionId === "duty-day")?.personId,
+    ).toBe("teacher-a1");
+    const change = (await duties.getDutyChanges.run(adminA, {})).find((c) => c.id === proposed.id);
+    expect(change?.status).toBe("applied");
+  });
+
+  it("a decided change refuses a second decision, either way", async () => {
+    // Set the June 8 pm holder explicitly so this test stands alone.
+    await duties.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-ampm",
+      date: "2026-06-08",
+      slot: "pm",
+      personId: "teacher-a3",
+    });
+    const pmRow = (await assignmentsOn("2026-06-08")).find(
+      (r) => r.dutyDefinitionId === "duty-ampm" && r.slot === "pm",
+    );
+    expect(pmRow?.personId).toBe("teacher-a3");
+
+    const applied = await duties.proposeDutyChange.run(editorA, {
+      kind: "substitute",
+      assignmentAId: pmRow?.id,
+      toPersonId: "teacher-a4",
+    });
+    await duties.applyDutyChange.run(editorA, { id: applied.id });
+    // A second apply and a late decline are both refused, and the
+    // one landed decision is what stands.
+    await expect(duties.applyDutyChange.run(editorA, { id: applied.id })).rejects.toThrow(
+      "not proposed",
+    );
+    await expect(duties.declineDutyChange.run(editorA, { id: applied.id })).rejects.toThrow(
+      "not proposed",
+    );
+    expect((await assignmentsOn("2026-06-08")).find((r) => r.id === pmRow?.id)?.personId).toBe(
+      "teacher-a4",
+    );
+
+    const declined = await duties.proposeDutyChange.run(editorA, {
+      kind: "substitute",
+      assignmentAId: pmRow?.id,
+      toPersonId: "teacher-a1",
+    });
+    await duties.declineDutyChange.run(editorA, { id: declined.id });
+    await expect(duties.applyDutyChange.run(editorA, { id: declined.id })).rejects.toThrow(
+      "not proposed",
+    );
+    expect((await assignmentsOn("2026-06-08")).find((r) => r.id === pmRow?.id)?.personId).toBe(
+      "teacher-a4",
+    );
+  });
+
+  it("a substitute records the holder who actually stood aside at apply time", async () => {
+    await duties.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-ampm",
+      date: "2026-06-10",
+      slot: "pm",
+      personId: "teacher-a3",
+    });
+    const pm = (await assignmentsOn("2026-06-10")).find(
+      (r) => r.dutyDefinitionId === "duty-ampm" && r.slot === "pm",
+    );
+    const proposed = await duties.proposeDutyChange.run(editorA, {
+      kind: "substitute",
+      assignmentAId: pm?.id,
+      toPersonId: "teacher-a4",
+    });
+    // The proposal names the holder of the moment.
+    expect(proposed.fromPersonId).toBe("teacher-a3");
+    // The holder changes before the decision lands.
+    await duties.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-ampm",
+      date: "2026-06-10",
+      slot: "pm",
+      personId: "teacher-a1",
+    });
+    const applied = await duties.applyDutyChange.run(editorA, { id: proposed.id });
+    // The record says who actually stood aside, not who held the
+    // duty when the change was proposed.
+    expect(applied.fromPersonId).toBe("teacher-a1");
+    expect(applied.toPersonId).toBe("teacher-a4");
+    expect((await assignmentsOn("2026-06-10")).find((r) => r.id === pm?.id)?.personId).toBe(
+      "teacher-a4",
+    );
+  });
 });
