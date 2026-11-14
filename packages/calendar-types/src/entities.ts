@@ -10,6 +10,7 @@ import {
   productSchema,
   visibilitySchema,
   weekdaySchema,
+  type AbsenceKind,
   type DatePrecision,
 } from "./codes.js";
 import { calendarTimeSchema, dateStringSchema } from "./time.js";
@@ -255,6 +256,11 @@ const absenceBase = {
   time: calendarTimeSchema,
   kind: absenceKindSchema,
   certainty: certaintySchema,
+};
+
+/** The absence's own texts. For a leave absence these are private in
+ *  the same way the subdivision is — see absenceRestrictedSchema. */
+const absenceTexts = {
   /** What the trip / training is for （用務）, or null. */
   purpose: nonEmptyString.nullable(),
   /** A free-text memo, or null. */
@@ -279,7 +285,12 @@ const absenceStamps = {
  *  the key of a school-specific subdivision under kind (for example
  *  "annual" under "leave"). */
 export const absenceSchema = entityMetaSchema
-  .extend({ ...absenceBase, ...absenceStamps, subdivisionKey: nonEmptyString.nullable() })
+  .extend({
+    ...absenceBase,
+    ...absenceTexts,
+    ...absenceStamps,
+    subdivisionKey: nonEmptyString.nullable(),
+  })
   .refine((v) => v.toDate >= v.fromDate, { message: "toDate must not be before fromDate" });
 export type Absence = z.infer<typeof absenceSchema>;
 
@@ -292,6 +303,7 @@ export const absenceInputSchema = z
     schoolId: nonEmptyString,
     id: nonEmptyString,
     ...absenceBase,
+    ...absenceTexts,
     subdivisionKey: nonEmptyString.nullable(),
   })
   .refine((v) => v.toDate >= v.fromDate, { message: "toDate must not be before fromDate" });
@@ -306,9 +318,24 @@ export type AbsenceInput = z.infer<typeof absenceInputSchema>;
  * conflict checks.
  */
 export const absencePublicSchema = entityMetaSchema
-  .extend({ ...absenceBase, ...absenceStamps })
+  .extend({ ...absenceBase, ...absenceTexts, ...absenceStamps })
   .refine((v) => v.toDate >= v.fromDate, { message: "toDate must not be before fromDate" });
 export type AbsencePublic = z.infer<typeof absencePublicSchema>;
+
+/**
+ * The most restricted shape, handed to a reader who may see neither
+ * the subdivision nor the texts of a leave absence: a leave's purpose
+ * and note can name the very circumstances the private subdivision
+ * stands for (通院, say), so for kind "leave" they are private under
+ * the same judgment as the subdivision (DESIGN-AUTH-TENANCY 4.5,
+ * extended by the Issue #25 follow-up). Other kinds keep their texts
+ * in the public shape — a trip's purpose is working information for
+ * the colleagues who cover for the absentee.
+ */
+export const absenceRestrictedSchema = entityMetaSchema
+  .extend({ ...absenceBase, ...absenceStamps })
+  .refine((v) => v.toDate >= v.fromDate, { message: "toDate must not be before fromDate" });
+export type AbsenceRestricted = z.infer<typeof absenceRestrictedSchema>;
 
 /**
  * One of a school's own subdivision definitions under a fixed absence
@@ -365,4 +392,19 @@ export function canViewAbsenceSubdivision(
   viewer: AbsenceViewer,
 ): boolean {
   return viewer.isAdmin || isOwnAbsence(absence, viewer.teacherId);
+}
+
+/**
+ * Who may see an absence's purpose and note. For any kind but leave
+ * the texts are ordinary staff information — colleagues covering for
+ * the absentee work from them — so every member may see them. For
+ * leave, the texts are private under the same judgment as the
+ * subdivision (canViewAbsenceSubdivision): an Admin of the school
+ * and the person the absence is about, no one else.
+ */
+export function canViewAbsenceTexts(
+  absence: { staffId: string; kind: AbsenceKind },
+  viewer: AbsenceViewer,
+): boolean {
+  return absence.kind !== "leave" || canViewAbsenceSubdivision(absence, viewer);
 }

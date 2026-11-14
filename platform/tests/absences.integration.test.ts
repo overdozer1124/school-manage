@@ -14,8 +14,9 @@ import { memberships, persons, productRoles, schools, staffMembers } from "../sr
 // Staff absences tests (Issue #25): the self-service rule (a member
 // registers and edits only their own absences, always as tentative),
 // confirmation by an Editor, the privacy of the leave subdivision
-// (Admin and the person only), and two-school isolation. Runs only
-// when PLATFORM_DATABASE_URL is set (vitest.config).
+// and of a leave's purpose and note (Admin and the person only), and
+// two-school isolation. Runs only when PLATFORM_DATABASE_URL is set
+// (vitest.config).
 const url = process.env.PLATFORM_DATABASE_URL;
 
 const A = "school-a";
@@ -483,6 +484,141 @@ describe.skipIf(!url)("staff absences", () => {
     expect("subdivisionKey" in (item as EntryJson)).toBe(false);
   });
 
+  it("hides a leave absence's purpose and note from other staff, in reads and in write answers", async () => {
+    // The Editor registers a leave for staff-1: the Editor is neither
+    // an Admin nor the person, so even the create answer is shaped
+    // without the private fields.
+    const created = await api("POST", ABSENCES, {
+      cookie: editorA(),
+      body: absenceInput("abs-leave-texts", {
+        staffId: "staff-1",
+        fromDate: "2026-11-17",
+        toDate: "2026-11-17",
+        subdivisionKey: "sick",
+        purpose: "通院",
+        note: "家族の付き添い",
+        certainty: "confirmed",
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect("subdivisionKey" in created.json).toBe(false);
+    expect("purpose" in created.json).toBe(false);
+    expect("note" in created.json).toBe(false);
+
+    const asOther = await api("GET", `${ABSENCES}/abs-leave-texts`, { cookie: teacher2A() });
+    expect(asOther.status).toBe(200);
+    expect("subdivisionKey" in asOther.json).toBe(false);
+    expect("purpose" in asOther.json).toBe(false);
+    expect("note" in asOther.json).toBe(false);
+    expect(asOther.json).toMatchObject({ staffId: "staff-1", kind: "leave" });
+
+    const asAdmin = await api("GET", `${ABSENCES}/abs-leave-texts`, { cookie: adminA() });
+    expect(asAdmin.json.subdivisionKey).toBe("sick");
+    expect(asAdmin.json.purpose).toBe("通院");
+    expect(asAdmin.json.note).toBe("家族の付き添い");
+
+    const asSelf = await api("GET", `${ABSENCES}/abs-leave-texts`, { cookie: teacher1A() });
+    expect(asSelf.json.subdivisionKey).toBe("sick");
+    expect(asSelf.json.purpose).toBe("通院");
+    expect(asSelf.json.note).toBe("家族の付き添い");
+
+    const listAsOther = await api("GET", `${ABSENCES}?${NOVEMBER}`, { cookie: teacher2A() });
+    const item = listAsOther.json.items?.find((i) => i.id === "abs-leave-texts");
+    expect(item).toBeDefined();
+    expect("subdivisionKey" in (item as EntryJson)).toBe(false);
+    expect("purpose" in (item as EntryJson)).toBe(false);
+    expect("note" in (item as EntryJson)).toBe(false);
+
+    // An update answer is shaped the same way for a caller who is
+    // not the person the absence is about.
+    const updated = await api("PUT", `${ABSENCES}/abs-leave-texts`, {
+      cookie: editorA(),
+      body: absenceInput("abs-leave-texts", {
+        staffId: "staff-1",
+        fromDate: "2026-11-17",
+        toDate: "2026-11-17",
+        subdivisionKey: "sick",
+        purpose: "通院",
+        note: "家族の付き添い（日程変更）",
+        certainty: "confirmed",
+        revision: 1,
+      }),
+    });
+    expect(updated.status).toBe(200);
+    expect(updated.json.revision).toBe(2);
+    expect("subdivisionKey" in updated.json).toBe(false);
+    expect("purpose" in updated.json).toBe(false);
+    expect("note" in updated.json).toBe(false);
+
+    // The stored texts themselves are untouched by the shaping.
+    const afterAsSelf = await api("GET", `${ABSENCES}/abs-leave-texts`, { cookie: teacher1A() });
+    expect(afterAsSelf.json.note).toBe("家族の付き添い（日程変更）");
+  });
+
+  it("hides a leave absence's texts in the pending list and in the confirm answer", async () => {
+    const created = await api("POST", ABSENCES, {
+      cookie: teacher1A(),
+      body: absenceInput("abs-leave-pending", {
+        staffId: "staff-1",
+        fromDate: "2026-11-18",
+        toDate: "2026-11-18",
+        subdivisionKey: "annual",
+        purpose: "私用",
+        note: "家族の用事",
+      }),
+    });
+    expect(created.status).toBe(201);
+    // The owner registering their own leave sees the texts.
+    expect(created.json.purpose).toBe("私用");
+    expect(created.json.note).toBe("家族の用事");
+
+    const pending = await api("GET", `${ABSENCES}/pending`, { cookie: editorA() });
+    const item = pending.json.items?.find((i) => i.id === "abs-leave-pending");
+    expect(item).toBeDefined();
+    expect("subdivisionKey" in (item as EntryJson)).toBe(false);
+    expect("purpose" in (item as EntryJson)).toBe(false);
+    expect("note" in (item as EntryJson)).toBe(false);
+
+    const confirmed = await api("POST", `${ABSENCES}/abs-leave-pending/confirm`, {
+      cookie: editorA(),
+      body: { revision: 1 },
+    });
+    expect(confirmed.status).toBe(200);
+    expect(confirmed.json.certainty).toBe("confirmed");
+    expect("subdivisionKey" in confirmed.json).toBe(false);
+    expect("purpose" in confirmed.json).toBe(false);
+    expect("note" in confirmed.json).toBe(false);
+  });
+
+  it("keeps a business trip's purpose and note visible to other staff", async () => {
+    const created = await api("POST", ABSENCES, {
+      cookie: editorA(),
+      body: absenceInput("abs-trip-texts", {
+        staffId: "staff-1",
+        fromDate: "2026-11-19",
+        toDate: "2026-11-19",
+        kind: "business_trip",
+        subdivisionKey: null,
+        purpose: "県大会の引率",
+        note: "バス手配済み",
+        certainty: "confirmed",
+      }),
+    });
+    expect(created.status).toBe(201);
+
+    const asOther = await api("GET", `${ABSENCES}/abs-trip-texts`, { cookie: teacher2A() });
+    expect(asOther.status).toBe(200);
+    expect(asOther.json.purpose).toBe("県大会の引率");
+    expect(asOther.json.note).toBe("バス手配済み");
+    // The subdivision field is still absent from the public shape.
+    expect("subdivisionKey" in asOther.json).toBe(false);
+
+    const listAsOther = await api("GET", `${ABSENCES}?${NOVEMBER}`, { cookie: teacher2A() });
+    const item = listAsOther.json.items?.find((i) => i.id === "abs-trip-texts");
+    expect(item?.purpose).toBe("県大会の引率");
+    expect(item?.note).toBe("バス手配済み");
+  });
+
   it("hands no absence to a non-member, and requires a session at all", async () => {
     const outsider = await api("GET", `${ABSENCES}?${NOVEMBER}`, { cookie: outsiderA() });
     expect(outsider.status).toBe(403);
@@ -583,12 +719,13 @@ describe.skipIf(!url)("staff absences", () => {
     expect(deleteNow.status).toBe(204);
   });
 
-  it("answers a stale update with a 409 whose latest hides the subdivision", async () => {
+  it("answers a stale update with a 409 whose latest hides the subdivision and the leave texts", async () => {
     const created = await api("POST", ABSENCES, {
       cookie: editorA(),
       body: absenceInput("abs-conflict", {
         subdivisionKey: "annual",
         purpose: "私用",
+        note: "家族の事情",
         fromDate: "2026-11-24",
         toDate: "2026-11-24",
       }),
@@ -622,6 +759,7 @@ describe.skipIf(!url)("staff absences", () => {
     expect(stale.json.latest?.revision).toBe(2);
     expect("subdivisionKey" in (stale.json.latest as Record<string, unknown>)).toBe(false);
     expect("purpose" in (stale.json.latest as Record<string, unknown>)).toBe(false);
+    expect("note" in (stale.json.latest as Record<string, unknown>)).toBe(false);
   });
 
   it("returns only absences overlapping the range", async () => {

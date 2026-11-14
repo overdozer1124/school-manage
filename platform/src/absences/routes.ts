@@ -2,10 +2,12 @@ import { Router, type Request, type Response } from "express";
 import {
   absenceInputSchema,
   absencePublicSchema,
+  absenceRestrictedSchema,
   absenceSchema,
   absenceSubdivisionInputSchema,
   absenceSubdivisionRecordSchema,
   canViewAbsenceSubdivision,
+  canViewAbsenceTexts,
   isOwnAbsence,
   isValidDateString,
   type Absence,
@@ -48,7 +50,11 @@ import type { Membership, Product } from "../db/schema.js";
  * The subdivision (the leave classification) is private (4.5): a
  * read answers with the full record only for an Admin of the school
  * or the person the absence is about, and with the public shape —
- * which has no subdivision field — for everyone else.
+ * which has no subdivision field — for everyone else. A leave
+ * absence's purpose and note are private under the same judgment
+ * (the Issue #25 follow-up): for everyone else a leave answers with
+ * the restricted shape, which has neither the subdivision nor the
+ * texts. Other kinds keep their texts in the public shape.
  */
 export interface AbsencesRouterDeps {
   config: AuthConfig;
@@ -165,11 +171,18 @@ function viewerOf(membership: Membership, flags: RoleFlags): AbsenceViewer {
   return { teacherId: membership.teacherId, isAdmin: flags.isAdmin };
 }
 
-/** The response body for one absence, shaped for its reader (4.5). */
+/**
+ * The response body for one absence, shaped for its reader (4.5).
+ * Every answer that carries an absence — reads, the pending list,
+ * and the answers to a create, an update and a confirm, whose caller
+ * need not be the person the absence is about — goes through here,
+ * so the shaping cannot be bypassed by writing instead of reading.
+ */
 function readResponse(record: Absence, viewer: AbsenceViewer): unknown {
-  return canViewAbsenceSubdivision(record, viewer)
-    ? absenceSchema.parse(record)
-    : absencePublicSchema.parse(record);
+  if (canViewAbsenceSubdivision(record, viewer)) return absenceSchema.parse(record);
+  return canViewAbsenceTexts(record, viewer)
+    ? absencePublicSchema.parse(record)
+    : absenceRestrictedSchema.parse(record);
 }
 
 /**
