@@ -65,6 +65,16 @@ class FakePlatform {
   ];
   holidays: Record_[] = [
     { ...meta, schoolId: A, id: "hol-1", date: DATE, name: "テスト休日", kind: "school_holiday" },
+    // A weekday (Monday) on the holiday list with no recorded day:
+    // the range must report it as a synthesized closed day.
+    {
+      ...meta,
+      schoolId: A,
+      id: "hol-2",
+      date: "2027-10-04",
+      name: "スポーツの日",
+      kind: "national_holiday",
+    },
   ];
   events = new Map<string, Record_>();
   absences = new Map<string, Record_>();
@@ -423,6 +433,48 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
     // The conflict slot is present and empty until Issue #31.
     expect(result.conflicts).toEqual([]);
     expect(result.view.columns).toHaveLength(3);
+  });
+
+  it("fills every day: the record wins, then the holiday list, then the weekday default", async () => {
+    const result = await range.getRange.run(auth(A, "Editor"), {
+      from: "2027-10-01",
+      to: "2027-10-04",
+      viewId: "view-staff",
+      cookie: COOKIE,
+    });
+    // No date is left without a day.
+    expect(result.days).toHaveLength(4);
+    expect(result.days.every((d) => d.day !== null)).toBe(true);
+    const byDate = new Map(result.days.map((d) => [d.date, d]));
+    // An unrecorded weekday (Friday) is a class day by default,
+    // in the platform day's own shape, marked as synthesized.
+    expect(byDate.get("2027-10-01")?.day).toEqual({
+      date: "2027-10-01",
+      dayType: "class_day",
+      dayTypeLabel: null,
+      dayScheduleId: null,
+      weekdaySwap: null,
+      note: null,
+      source: "default",
+    });
+    // The recorded day is a Saturday and also on the holiday
+    // list: the platform's record itself wins over both the
+    // holiday rule and the weekday default.
+    expect(byDate.get("2027-10-02")?.day).toMatchObject({
+      id: "day-1",
+      dayType: "event_day",
+      source: "recorded",
+    });
+    // An unrecorded weekend day (Sunday) is a closed day.
+    expect(byDate.get("2027-10-03")?.day).toMatchObject({
+      dayType: "closed_day",
+      source: "default",
+    });
+    // A weekday on the platform's holiday list with no record is
+    // a closed day, not a class day.
+    const holiday = byDate.get("2027-10-04");
+    expect(holiday?.holidays.map((h) => h.name)).toEqual(["スポーツの日"]);
+    expect(holiday?.day).toMatchObject({ dayType: "closed_day", source: "default" });
   });
 
   it("a guardian view gets no staff-only items, duties, absences or assignee names", async () => {

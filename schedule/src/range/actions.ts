@@ -3,6 +3,7 @@ import {
   audienceColumns,
   audienceItems,
   datesInRange,
+  defaultDayType,
   eventDateSpan,
   viewAudienceRank,
   type Audience,
@@ -57,6 +58,36 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
 }
 
 /**
+ * The day a range reports for one date; every date gets one. The
+ * platform's record wins when one exists — the record itself,
+ * marked `source: "recorded"`. Otherwise the default day is
+ * synthesized here, so the rule lives in this one place instead of
+ * being re-derived by every screen (month table, week table, PDF,
+ * public URL): a date on the platform's holiday list is a closed
+ * day, and any other date takes the weekday default of Issue #23's
+ * convention (calendar-types' defaultDayType: a class day on a
+ * weekday, a closed day on a weekend). A synthesized day carries
+ * the day's own fields only, marked `source: "default"` — there is
+ * no record, so there is no identity, revision or stamp to report.
+ */
+function dayFor(
+  date: string,
+  recorded: Record<string, unknown> | undefined,
+  onHolidayList: boolean,
+): Record<string, unknown> {
+  if (recorded) return { ...recorded, source: "recorded" };
+  return {
+    date,
+    dayType: onHolidayList ? "closed_day" : defaultDayType(date),
+    dayTypeLabel: null,
+    dayScheduleId: null,
+    weekdaySwap: null,
+    note: null,
+    source: "default",
+  };
+}
+
+/**
  * The range actions (Issue #33): getRange, the one call a month or
  * week table is drawn from, and getBootstrap, the definitions and
  * masters a screen starts with. Both are view.read (DESIGN-AUTH-
@@ -73,7 +104,9 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
  * the platform left it out, not because this layer removed it —
  * and this layer then applies the view's own filter (Issue #32's
  * pure functions): the columns and daily items the view's audience
- * may see, duties and absences only for a staff view. A platform
+ * may see, duties and absences only for a staff view. Every date's
+ * day is filled — the platform's record, or the default day
+ * synthesized by dayFor for a date with no record. A platform
  * refusal (401 / 403) is relayed as-is, as in the event relay.
  */
 export function createRangeActions(db: Db, platformClient: PlatformApiClient) {
@@ -170,7 +203,7 @@ export function createRangeActions(db: Db, platformClient: PlatformApiClient) {
 
       const days: RangeDay[] = dates.map((date) => ({
         date,
-        day: dayByDate.get(date) ?? null,
+        day: dayFor(date, dayByDate.get(date), (holidaysByDate.get(date) ?? []).length > 0),
         holidays: holidaysByDate.get(date) ?? [],
         events: [],
         absences: [],

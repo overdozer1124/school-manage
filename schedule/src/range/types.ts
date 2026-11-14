@@ -38,18 +38,24 @@ export const MAX_RANGE_DAYS = 366;
 /**
  * One day of a range, bundled (DESIGN schedule 4.6: the month table
  * is events + daily values + duty assignments joined by date; the
- * join is computed per read and never stored). `day` is the
- * platform's recorded day for the date, or null when the school has
- * recorded none — readers derive the default (a class day on a
- * weekday, a closed day on a weekend) from the weekday, per Issue
- * #23's convention. Platform records (day, holidays, events,
- * absences) travel in the platform's own shape, untouched: the
- * privacy shaping is the platform's and is passed through, never
- * widened or narrowed here (DESIGN-INTEGRATION 10).
+ * join is computed per read and never stored). `day` is always
+ * filled. When the platform has a recorded day for the date it is
+ * that record, marked `source: "recorded"`. When the school has
+ * recorded none, getRange synthesizes the default day (marked
+ * `source: "default"`), so the rule lives in this one read instead
+ * of being re-derived by every screen: a date on the platform's
+ * holiday list is a closed day, and any other date takes Issue
+ * #23's weekday default (a class day on a weekday, a closed day on
+ * a weekend). A synthesized day carries the day's own fields only —
+ * there is no record, so it has no identity or revision. Platform
+ * records (holidays, events, absences) travel in the platform's own
+ * shape, untouched: the privacy shaping is the platform's and is
+ * passed through, never widened or narrowed here
+ * (DESIGN-INTEGRATION 10).
  */
 export interface RangeDay {
   date: string;
-  day: Record<string, unknown> | null;
+  day: Record<string, unknown>;
   holidays: Record<string, unknown>[];
   events: Record<string, unknown>[];
   absences: Record<string, unknown>[];
