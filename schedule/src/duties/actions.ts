@@ -2,25 +2,15 @@ import { AuthAccessError, defineActions } from "@school-manage/platform-client";
 import {
   addDays,
   datesInRange,
-  deriveDutyConflicts,
-  dutyAppliesOn,
   isDutySlot,
   rankDutyCandidates,
-  resolveDayFacts,
   slotsForGranularity,
-  weekStartOf,
-  type DutyApplicablePeriod,
-  type DutyAssignmentFact,
-  type DutyDayFacts,
-  type DutyExpectedCell,
   type DutyGranularity,
-  type DutyOrigin,
-  type Weekday,
 } from "@school-manage/calendar-types";
 import * as store from "../db/duties.js";
 import * as changeStore from "../db/dutyChanges.js";
-import type { DutyAssignmentRow } from "../db/schema.js";
 import { targetGroups, targets } from "../db/schema.js";
+import { deriveDutyConflictsForRange, factsFor, toAssignmentFact } from "./conflicts.js";
 import { assertOwned, tenantDb } from "../db/tenant.js";
 import { scheduleAction } from "../permissions.js";
 import type { DutyPlatformSource } from "./platformSource.js";
@@ -95,33 +85,6 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
     return definition;
   }
 
-  /** Facts for every date a plan touches: one platform read. */
-  async function factsFor(
-    schoolId: string,
-    definition: store.DutyDefinitionWithRule,
-    range: { from: string; to: string },
-  ): Promise<(date: string) => DutyDayFacts> {
-    if (
-      definition.applicablePeriod === "all_year" ||
-      definition.applicablePeriod === "custom_range"
-    ) {
-      // The calendar cannot change the answer, so no platform
-      // read is needed (or made).
-      return (date) => resolveDayFacts(date, undefined, []);
-    }
-    if (!platform) {
-      throw new Error(
-        `applicable period "${definition.applicablePeriod}" needs the platform calendar, which is not configured`,
-      );
-    }
-    const [days, terms] = await Promise.all([
-      platform.listCalendarDays(schoolId, range),
-      definition.applicablePeriod === "term" ? platform.listTerms(schoolId) : Promise.resolve([]),
-    ]);
-    const recorded = new Map(days.map((d) => [d.date, d.dayType]));
-    return (date) => resolveDayFacts(date, recorded.get(date), terms);
-  }
-
   async function buildPlan(schoolId: string, input: RotationRangeInput) {
     const definition = await loadDefinition(schoolId, input.dutyDefinitionId);
     if (!definition.rotation || definition.rotation.personIds.length === 0) {
@@ -143,7 +106,7 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
       }
     }
     const range = { from: input.from, to: input.to };
-    const factsOf = await factsFor(schoolId, definition, range);
+    const factsOf = await factsFor(platform, schoolId, definition, range);
     return store.buildRotationPlan(db, schoolId, { definition, range, slots, factsOf });
   }
 
@@ -287,64 +250,12 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
 
     getDutyConflicts: scheduleAction("view.read", async ({ auth, request }) => {
       const input = getDutyConflictsInputSchema.parse(request);
-      if (!platform) {
-        throw new Error("conflict derivation needs the platform source, which is not configured");
-      }
-      const range = { from: input.from, to: input.to };
-      const [definitions, assignments, absences, waivers, absenceKinds] = await Promise.all([
-        store.getDutyDefinitions(db, auth.schoolId),
-        // A week assignment opening before the range still covers
-        // its first days, so the read window opens a week early;
-        // derivation expands it and keeps only in-range days.
-        store.getAssignments(db, auth.schoolId, { from: addDays(input.from, -7), to: input.to }),
-        platform.listAbsences(auth.schoolId, range),
-        changeStore.listWaivers(db, auth.schoolId),
-        changeStore.getConflictAbsenceKinds(db, auth.schoolId),
-      ]);
-      const expectedCells: DutyExpectedCell[] = [];
-      for (const definition of definitions) {
-        const factsOf = await factsFor(auth.schoolId, definition, range);
-        const periodLike = {
-          applicablePeriod: definition.applicablePeriod as DutyApplicablePeriod,
-          startsOn: definition.applicableStartsOn,
-          endsOn: definition.applicableEndsOn,
-        };
-        const applies = (date: string): boolean => dutyAppliesOn(periodLike, date, factsOf(date));
-        if (definition.granularity === "day" || definition.granularity === "am_pm") {
-          const slots = slotsForGranularity(definition.granularity as DutyGranularity);
-          for (const date of datesInRange(input.from, input.to)) {
-            if (!applies(date)) continue;
-            for (const slot of slots) {
-              expectedCells.push({ dutyDefinitionId: definition.id, date, slot });
-            }
-          }
-        } else if (definition.granularity === "week") {
-          const weekStart =
-            (definition.rotation?.changeWeekdays?.[0] as Weekday | undefined) ?? "mon";
-          for (
-            let date = weekStartOf(input.from, weekStart);
-            date <= input.to;
-            date = addDays(date, 7)
-          ) {
-            if (applies(date)) {
-              expectedCells.push({ dutyDefinitionId: definition.id, date, slot: "week" });
-            }
-          }
-        }
-        // Period duties name their slots through the day pattern,
-        // which this layer does not read (the same reason a period
-        // rotation takes its slots as input, Issue #30): their
-        // unassigned cells are not derived here.
-      }
-      const conflicts = deriveDutyConflicts({
+      // The derivation itself lives in one place (conflicts.ts,
+      // Issue #69): getRange calls the same function, so the two
+      // reads agree on the same range by construction.
+      const conflicts = await deriveDutyConflictsForRange(db, platform, auth.schoolId, {
         from: input.from,
         to: input.to,
-        assignments: assignments.map(toAssignmentFact),
-        absences,
-        waivers,
-        absenceKinds,
-        expectedCells,
-        dutyNames: Object.fromEntries(definitions.map((d) => [d.id, d.name])),
       });
       return input.dutyDefinitionId
         ? conflicts.filter((c) => c.dutyDefinitionId === input.dutyDefinitionId)
@@ -395,18 +306,4 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
       });
     }),
   });
-}
-
-/** A stored assignment as conflict derivation / candidate ranking
- *  reads it (the origin string the database holds is the shared
- *  enum by check constraint). */
-function toAssignmentFact(row: DutyAssignmentRow): DutyAssignmentFact {
-  return {
-    id: row.id,
-    dutyDefinitionId: row.dutyDefinitionId,
-    date: row.date,
-    slot: row.slot,
-    personId: row.personId,
-    origin: row.origin as DutyOrigin,
-  };
 }

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { dateStringSchema } from "@school-manage/calendar-types";
+import { dateStringSchema, type DutyConflict } from "@school-manage/calendar-types";
 import type { DailyValueRow, DutyAssignmentRow, EventValueRow } from "../db/schema.js";
 import type { ViewDefinitionWithColumns } from "../db/views.js";
 
@@ -94,9 +94,12 @@ export interface RangeResult {
   eventValues: EventValueRow[];
   /**
    * Duty conflicts (assignment × absence overlaps and the rest of
-   * DESIGN schedule 4.7.2). The derivation itself is Issue #31's
-   * work; this is the slot it fills, through this same bundling
-   * step. Until then it is always empty.
+   * DESIGN schedule 4.7.2), derived by the same shared function
+   * getDutyConflicts uses (Issue #31's derivation, wired in by
+   * Issue #69), so a staff view's range carries exactly the
+   * conflicts of its period. Duties belong to staff views only
+   * (DESIGN-AUTH-TENANCY 4.5): a non-staff view's list is always
+   * empty, and no absence read is made for it.
    */
-  conflicts: [];
+  conflicts: DutyConflict[];
 }
