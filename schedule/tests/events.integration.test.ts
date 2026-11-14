@@ -16,6 +16,9 @@ import { createPlatformApiClient, PlatformRelayError } from "../src/platformClie
 const url = process.env.SCHEDULE_DATABASE_URL;
 
 const COOKIE = "platform_session=test-token";
+/** The fake platform refuses this cookie at the write-check: a
+ *  member the platform will not let write (連携5 not met). */
+const VIEWER_COOKIE = "platform_session=viewer-token";
 const EVENTS = "/platform/api/v1/calendar/events";
 const ABSENCES = "/platform/api/v1/calendar/absences";
 
@@ -63,10 +66,16 @@ class FakePlatform {
     });
     const failure = this.failures.find((f) => f.method === method && path.startsWith(f.pathPrefix));
     if (failure) return Promise.resolve(jsonResponse(failure.status, failure.body));
-    return Promise.resolve(this.route(method, path, body));
+    const cookie = new Headers(init?.headers).get("cookie") ?? undefined;
+    return Promise.resolve(this.route(method, path, body, cookie));
   };
 
-  private route(method: string, path: string, body: Record<string, unknown> | null): Response {
+  private route(
+    method: string,
+    path: string,
+    body: Record<string, unknown> | null,
+    cookie?: string,
+  ): Response {
     if (path === `${ABSENCES}/pending` && method === "GET") {
       const items = [...this.absences.values()].filter((a) => a.certainty === "tentative");
       return jsonResponse(200, { items });
@@ -86,6 +95,17 @@ class FakePlatform {
       };
       store.set(confirm[2] as string, confirmed);
       return jsonResponse(200, confirmed);
+    }
+    const writeCheck = /^(.+)\/([^/]+)\/write-check$/.exec(path);
+    if (writeCheck && method === "GET") {
+      const store = writeCheck[1] === ABSENCES ? this.absences : this.events;
+      if (!store.has(writeCheck[2] as string)) {
+        return jsonResponse(404, { error: "見つかりません" });
+      }
+      if (cookie === VIEWER_COOKIE) {
+        return jsonResponse(403, { error: "権限がありません" });
+      }
+      return jsonResponse(200, { writable: true });
     }
     for (const [base, store] of [
       [EVENTS, this.events],
@@ -264,6 +284,7 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     expect(post?.body?.title).toBe("運動会");
 
     const read = await actions.getEventValues.run(auth(A, "Viewer"), {
+      cookie: COOKIE,
       subjectKind: "event",
       subjectId: "ev-1",
     });
@@ -306,6 +327,7 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     expect(fake.events.has("ev-refused")).toBe(false);
     expect(
       await actions.getEventValues.run(auth(A, "Admin"), {
+        cookie: COOKIE,
         subjectKind: "event",
         subjectId: "ev-refused",
       }),
@@ -329,11 +351,16 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     // The body stands on its own in the platform; no values landed.
     expect(fake.events.get("ev-retry")?.title).toBe("運動会");
     expect(
-      await actions.getEventValues.run(editor, { subjectKind: "event", subjectId: "ev-retry" }),
+      await actions.getEventValues.run(editor, {
+        cookie: COOKIE,
+        subjectKind: "event",
+        subjectId: "ev-retry",
+      }),
     ).toEqual([]);
 
     const postsBefore = fake.countCalls("POST", EVENTS);
     const saved = await actions.setEventValues.run(editor, {
+      cookie: COOKIE,
       subjectKind: "event",
       subjectId: "ev-retry",
       values: [{ itemDefinitionId: "item-trip-form-a", value: "onsite" }],
@@ -342,6 +369,10 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     expect(saved[0]?.valueOptionId).toBe("opt-onsite");
     // The retry touched the values only: no second platform save.
     expect(fake.countCalls("POST", EVENTS)).toBe(postsBefore);
+    // But it did ask the platform's write-check first (Issue #29
+    // review): the platform, not this server's role table, decides
+    // who may set a record's values.
+    expect(fake.countCalls("GET", `${EVENTS}/ev-retry/write-check`)).toBe(1);
   });
 
   it("passes a platform 409 on update through with its body, values untouched", async () => {
@@ -366,6 +397,7 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     expect(error).toMatchObject({ status: 409 });
     expect((error as PlatformRelayError).body).toMatchObject({ latest: { revision: 1 } });
     const values = await actions.getEventValues.run(editor, {
+      cookie: COOKIE,
       subjectKind: "event",
       subjectId: "ev-conflict",
     });
@@ -397,14 +429,22 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     // A move does not touch the values.
     expect(
       (
-        await actions.getEventValues.run(editor, { subjectKind: "event", subjectId: "ev-conflict" })
+        await actions.getEventValues.run(editor, {
+          cookie: COOKIE,
+          subjectKind: "event",
+          subjectId: "ev-conflict",
+        })
       ).map((v) => v.valueText),
     ).toEqual(["教育委員会"]);
 
     await actions.deleteEvent.run(editor, { cookie: COOKIE, id: "ev-conflict", revision: 3 });
     expect(fake.events.has("ev-conflict")).toBe(false);
     expect(
-      await actions.getEventValues.run(editor, { subjectKind: "event", subjectId: "ev-conflict" }),
+      await actions.getEventValues.run(editor, {
+        cookie: COOKIE,
+        subjectKind: "event",
+        subjectId: "ev-conflict",
+      }),
     ).toEqual([]);
   });
 
@@ -444,7 +484,11 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     await actions.deleteAbsence.run(editor, { cookie: COOKIE, id: "abs-1", revision: 3 });
     expect(fake.absences.has("abs-1")).toBe(false);
     expect(
-      await actions.getEventValues.run(editor, { subjectKind: "absence", subjectId: "abs-1" }),
+      await actions.getEventValues.run(editor, {
+        cookie: COOKIE,
+        subjectKind: "absence",
+        subjectId: "abs-1",
+      }),
     ).toEqual([]);
   });
 
@@ -452,6 +496,7 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     // School B cannot read school A's values for the same subject id.
     expect(
       await actions.getEventValues.run(auth(B, "Admin"), {
+        cookie: COOKIE,
         subjectKind: "event",
         subjectId: "ev-1",
       }),
@@ -460,6 +505,7 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     // is looked up in the caller's school and is not there.
     await expect(
       actions.setEventValues.run(auth(B, "Editor"), {
+        cookie: COOKIE,
         subjectKind: "event",
         subjectId: "ev-1",
         values: [{ itemDefinitionId: "item-submit-a", value: "x" }],
@@ -467,6 +513,7 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     ).rejects.toThrow(/item definition not found/);
     // School B's own item under the same key works for B.
     const saved = await actions.setEventValues.run(auth(B, "Editor"), {
+      cookie: COOKIE,
       subjectKind: "event",
       subjectId: "ev-1",
       values: [{ itemDefinitionId: "item-submit-b", value: "B校の提出先" }],
@@ -475,6 +522,7 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     expect(
       (
         await actions.getEventValues.run(auth(A, "Admin"), {
+          cookie: COOKIE,
           subjectKind: "event",
           subjectId: "ev-1",
         })
@@ -574,5 +622,126 @@ describe.skipIf(!url)("schedule event relay, values and kind templates", () => {
     });
     expect(other.schoolId).toBe(B);
     expect(await actions.getKindTemplates.run(auth(B, "Admin"), null)).toHaveLength(1);
+  });
+
+  it("refuses a values-only save the platform will not let the caller write", async () => {
+    const editor = auth(A, "Editor");
+    await actions.createEvent.run(editor, {
+      cookie: COOKIE,
+      event: eventPayload("ev-guarded"),
+      values: [{ itemDefinitionId: "item-submit-a", value: "教育委員会" }],
+    });
+    // A caller the platform refuses at the write-check (the fake
+    // refuses the viewer cookie, as the real guard refuses a
+    // Viewer): the platform's 403 comes back as-is, exactly like a
+    // refused save, and nothing is written.
+    const error = await actions.setEventValues
+      .run(auth(A, "Viewer"), {
+        cookie: VIEWER_COOKIE,
+        subjectKind: "event",
+        subjectId: "ev-guarded",
+        values: [{ itemDefinitionId: "item-submit-a", value: "職員室" }],
+      })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PlatformRelayError);
+    expect(error).toMatchObject({ status: 403 });
+    const values = await actions.getEventValues.run(editor, {
+      cookie: COOKIE,
+      subjectKind: "event",
+      subjectId: "ev-guarded",
+    });
+    expect(values.map((v) => v.valueText)).toEqual(["教育委員会"]);
+  });
+
+  it("refuses a values-only save for a subject the platform does not have", async () => {
+    const error = await actions.setEventValues
+      .run(auth(A, "Editor"), {
+        cookie: COOKIE,
+        subjectKind: "event",
+        subjectId: "ev-missing",
+        values: [{ itemDefinitionId: "item-submit-a", value: "x" }],
+      })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PlatformRelayError);
+    expect(error).toMatchObject({ status: 404 });
+    // And for an absence that is not there either.
+    const absenceError = await actions.setEventValues
+      .run(auth(A, "Editor"), {
+        cookie: COOKIE,
+        subjectKind: "absence",
+        subjectId: "abs-missing",
+        values: [{ itemDefinitionId: "item-submit-a", value: "x" }],
+      })
+      .catch((e: unknown) => e);
+    expect(absenceError).toBeInstanceOf(PlatformRelayError);
+    expect(absenceError).toMatchObject({ status: 404 });
+  });
+
+  it("serves an absence's values only when the platform shows the caller the record's texts", async () => {
+    const editor = auth(A, "Editor");
+    await actions.createAbsence.run(editor, {
+      cookie: COOKIE,
+      absence: absencePayload("abs-values"),
+      values: [{ itemDefinitionId: "item-trip-form-a", value: "remote" }],
+    });
+    // The platform hands this caller the record whole — its
+    // purpose included — so the values are served.
+    const visible = await actions.getEventValues.run(editor, {
+      cookie: COOKIE,
+      subjectKind: "absence",
+      subjectId: "abs-values",
+    });
+    expect(visible.map((v) => v.valueOptionId)).toEqual(["opt-remote"]);
+
+    // The restricted shape is what the platform hands a reader who
+    // may not see a leave's texts (PR #64): it has no purpose field,
+    // and that reader is served no values.
+    const record = fake.absences.get("abs-values") as Record<string, unknown>;
+    const restricted = { ...record };
+    delete restricted.purpose;
+    fake.absences.set("abs-values", restricted);
+    expect(
+      await actions.getEventValues.run(editor, {
+        cookie: COOKIE,
+        subjectKind: "absence",
+        subjectId: "abs-values",
+      }),
+    ).toEqual([]);
+    fake.absences.set("abs-values", record);
+  });
+
+  it("serves no values for an event the platform will not show the caller", async () => {
+    const editor = auth(A, "Editor");
+    // ev-1 exists in the platform and carries values (created
+    // earlier); a platform refusal to show it serves none of them.
+    fake.failures.push({
+      method: "GET",
+      pathPrefix: EVENTS,
+      status: 403,
+      body: { error: "権限がありません" },
+    });
+    expect(
+      await actions.getEventValues.run(editor, {
+        cookie: COOKIE,
+        subjectKind: "event",
+        subjectId: "ev-1",
+      }),
+    ).toEqual([]);
+    fake.failures = [];
+    // A subject the platform does not have serves none either.
+    expect(
+      await actions.getEventValues.run(editor, {
+        cookie: COOKIE,
+        subjectKind: "event",
+        subjectId: "ev-missing",
+      }),
+    ).toEqual([]);
+    // And once the platform shows it again, the values are back.
+    const values = await actions.getEventValues.run(editor, {
+      cookie: COOKIE,
+      subjectKind: "event",
+      subjectId: "ev-1",
+    });
+    expect(values.map((v) => v.valueText)).toEqual(["教育委員会"]);
   });
 });

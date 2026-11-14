@@ -148,6 +148,12 @@ export function createEventActions(db: Db, platformClient: PlatformApiClient) {
     return record as Record<string, unknown>;
   }
 
+  /** The platform path of one subject record. */
+  function subjectPath(subjectKind: SubjectKind, subjectId: string): string {
+    const base = subjectKind === "event" ? EVENTS_PATH : ABSENCES_PATH;
+    return `${base}/${encodeURIComponent(subjectId)}`;
+  }
+
   return defineActions({
     // --- Events (platform records, relayed) ------------------------
 
@@ -266,8 +272,31 @@ export function createEventActions(db: Db, platformClient: PlatformApiClient) {
 
     // --- Additional items (this database) --------------------------
 
+    /**
+     * A subject's additional items, gated by the platform record
+     * itself: the values are served only when the platform shows
+     * this caller the record (Issue #29 review). A record the
+     * platform will not hand over — gone, another school's, or not
+     * for this caller — answers with the empty set, as an unknown
+     * subject always did. For an absence there is one more gate:
+     * the platform hands a reader who may not see the private texts
+     * a restricted shape with no purpose field (the leave privacy
+     * rule, PR #64), and that reader does not get the values
+     * either. The judgment stays the platform's — this layer holds
+     * no second copy of it, it only looks at the shape it was
+     * handed.
+     */
     getEventValues: scheduleAction("view.read", async ({ auth, request }) => {
       const input = getEventValuesInputSchema.parse(request);
+      const shown = await platformClient.getJson(
+        subjectPath(input.subjectKind, input.subjectId),
+        input.cookie,
+      );
+      if (shown.status < 200 || shown.status >= 300) return [];
+      if (input.subjectKind === "absence") {
+        const body = shown.body;
+        if (!body || typeof body !== "object" || !("purpose" in body)) return [];
+      }
       return valuesStore.getEventValues(db, auth.schoolId, input.subjectKind, input.subjectId);
     }),
 
@@ -276,10 +305,20 @@ export function createEventActions(db: Db, platformClient: PlatformApiClient) {
      * platform record's additional items without touching the
      * record. Declared with platformAction like the saves it
      * completes — who may set a record's values is who may save the
-     * record, and that verdict is the platform's （連携5).
+     * record, and that verdict is the platform's （連携5). Unlike
+     * the saves it completes, this action's own work never reaches
+     * the platform, so the verdict is asked for explicitly first:
+     * the platform's write-check runs the very guard a save would
+     * run, and its answer — 401, 403, a 404 for a subject that is
+     * not there — comes back as-is and nothing is written.
      */
     setEventValues: platformAction("event.write", async ({ auth, request }) => {
       const input = setEventValuesInputSchema.parse(request);
+      await relay(
+        "GET",
+        `${subjectPath(input.subjectKind, input.subjectId)}/write-check`,
+        input.cookie,
+      );
       return saveValues(auth, input.subjectKind, input.subjectId, input.values);
     }),
 

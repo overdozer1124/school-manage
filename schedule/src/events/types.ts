@@ -121,6 +121,10 @@ export const pendingAbsencesInputSchema = z.object({
 export type PendingAbsencesInput = z.infer<typeof pendingAbsencesInputSchema>;
 
 export const setEventValuesInputSchema = z.object({
+  /** The caller's platform cookie: saving values alone asks the
+   *  platform's write-check first (Issue #29 review), like every
+   *  other relay input. */
+  cookie: nonEmptyString,
   subjectKind: subjectKindSchema,
   subjectId: nonEmptyString,
   values: z.array(eventValueInputSchema),
@@ -128,6 +132,9 @@ export const setEventValuesInputSchema = z.object({
 export type SetEventValuesInput = z.infer<typeof setEventValuesInputSchema>;
 
 export const getEventValuesInputSchema = z.object({
+  /** The caller's platform cookie: a subject's values are read only
+   *  after the platform shows that caller the record itself. */
+  cookie: nonEmptyString,
   subjectKind: subjectKindSchema,
   subjectId: nonEmptyString,
 });

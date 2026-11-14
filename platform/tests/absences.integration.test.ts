@@ -669,4 +669,60 @@ describe.skipIf(!url)("staff absences", () => {
     const after = await api("GET", `${ABSENCES}/abs-delete`, { cookie: editorA() });
     expect(after.status).toBe(404);
   });
+
+  it("answers the absence write-check with the save rule's own verdict, and writes nothing", async () => {
+    const created = await api("POST", ABSENCES, {
+      cookie: editorA(),
+      body: absenceInput("abs-check"),
+    });
+    expect(created.status).toBe(201);
+    // A writer may write anyone's absence.
+    expect(
+      (await api("GET", `${ABSENCES}/abs-check/write-check`, { cookie: editorA() })).status,
+    ).toBe(200);
+    // The record's own person (a Viewer linked to staff-1) may
+    // write their own.
+    expect(
+      (await api("GET", `${ABSENCES}/abs-check/write-check`, { cookie: teacher1A() })).status,
+    ).toBe(200);
+    // Another teacher may not write someone else's.
+    expect(
+      (await api("GET", `${ABSENCES}/abs-check/write-check`, { cookie: teacher2A() })).status,
+    ).toBe(403);
+    // A missing absence is a 404, another school's writer gets the
+    // 404 too, and no session is a 401.
+    expect(
+      (await api("GET", `${ABSENCES}/abs-missing/write-check`, { cookie: editorA() })).status,
+    ).toBe(404);
+    expect(
+      (await api("GET", `${ABSENCES}/abs-check/write-check`, { cookie: editorB() })).status,
+    ).toBe(404);
+    expect((await api("GET", `${ABSENCES}/abs-check/write-check`)).status).toBe(401);
+    // The check wrote nothing: the record is still at revision 1.
+    const read = await api("GET", `${ABSENCES}/abs-check`, { cookie: editorA() });
+    expect(read.json.revision).toBe(1);
+  });
+
+  it("accepts an update sent in the read shape, as a move sends it", async () => {
+    await api("POST", ABSENCES, {
+      cookie: editorA(),
+      body: absenceInput("abs-move-shape", { purpose: "出張", note: "メモ" }),
+    });
+    // An Admin reads the full shape — the stamps and the
+    // subdivision key included.
+    const read = await api("GET", `${ABSENCES}/abs-move-shape`, { cookie: adminA() });
+    expect(read.status).toBe(200);
+    expect(read.json).toHaveProperty("subdivisionKey");
+    // The schedule relay's move spreads that body whole and
+    // replaces only the dates; the input schema ignores the
+    // read-only fields (createdAt, confirmedBy, ...).
+    const moved = await api("PUT", `${ABSENCES}/abs-move-shape`, {
+      cookie: editorA(),
+      body: { ...read.json, fromDate: "2026-11-12", toDate: "2026-11-13" },
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.json.fromDate).toBe("2026-11-12");
+    expect(moved.json.toDate).toBe("2026-11-13");
+    expect(moved.json.revision).toBe(2);
+  });
 });
