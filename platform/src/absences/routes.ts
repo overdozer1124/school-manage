@@ -2,10 +2,12 @@ import { Router, type Request, type Response } from "express";
 import {
   absenceInputSchema,
   absencePublicSchema,
+  absenceRestrictedSchema,
   absenceSchema,
   absenceSubdivisionInputSchema,
   absenceSubdivisionRecordSchema,
   canViewAbsenceSubdivision,
+  canViewAbsenceTexts,
   isOwnAbsence,
   isValidDateString,
   type Absence,
@@ -48,7 +50,11 @@ import type { Membership, Product } from "../db/schema.js";
  * The subdivision (the leave classification) is private (4.5): a
  * read answers with the full record only for an Admin of the school
  * or the person the absence is about, and with the public shape —
- * which has no subdivision field — for everyone else.
+ * which has no subdivision field — for everyone else. A leave
+ * absence's purpose and note are private under the same judgment
+ * (the Issue #25 follow-up): for everyone else a leave answers with
+ * the restricted shape, which has neither the subdivision nor the
+ * texts. Other kinds keep their texts in the public shape.
  */
 export interface AbsencesRouterDeps {
   config: AuthConfig;
@@ -165,11 +171,18 @@ function viewerOf(membership: Membership, flags: RoleFlags): AbsenceViewer {
   return { teacherId: membership.teacherId, isAdmin: flags.isAdmin };
 }
 
-/** The response body for one absence, shaped for its reader (4.5). */
+/**
+ * The response body for one absence, shaped for its reader (4.5).
+ * Every answer that carries an absence — reads, the pending list,
+ * and the answers to a create, an update and a confirm, whose caller
+ * need not be the person the absence is about — goes through here,
+ * so the shaping cannot be bypassed by writing instead of reading.
+ */
 function readResponse(record: Absence, viewer: AbsenceViewer): unknown {
-  return canViewAbsenceSubdivision(record, viewer)
-    ? absenceSchema.parse(record)
-    : absencePublicSchema.parse(record);
+  if (canViewAbsenceSubdivision(record, viewer)) return absenceSchema.parse(record);
+  return canViewAbsenceTexts(record, viewer)
+    ? absencePublicSchema.parse(record)
+    : absenceRestrictedSchema.parse(record);
 }
 
 /**
@@ -188,6 +201,29 @@ function assertSelfService(input: AbsenceInput, authed: AuthedMember, flags: Rol
   if (!isOwnAbsence(input, authed.membership.teacherId)) {
     throw new AuthError(403, "権限がありません");
   }
+}
+
+/**
+ * The stored values a full-replace update keeps for the fields its
+ * caller may not see. The input schema requires every field, but a
+ * caller who was never shown a field — the subdivision for anyone
+ * but an Admin and the person, a leave's purpose and note under the
+ * same judgment — cannot name its value: leaving the key out would
+ * refuse the edit with a 400, and sending null would silently clear
+ * what is stored. So whatever the body carries for such a field is
+ * ignored and the stored value is carried over instead; a caller
+ * who may see the field replaces it as before.
+ */
+function carriedFields(existing: Absence, viewer: AbsenceViewer): Partial<AbsenceInput> {
+  const carried: Partial<AbsenceInput> = {};
+  if (!canViewAbsenceSubdivision(existing, viewer)) {
+    carried.subdivisionKey = existing.subdivisionKey;
+  }
+  if (!canViewAbsenceTexts(existing, viewer)) {
+    carried.purpose = existing.purpose;
+    carried.note = existing.note;
+  }
+  return carried;
 }
 
 export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
@@ -338,13 +374,33 @@ export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
         throw new AuthError(400, "入力が正しくありません");
       }
       const revision = parseRevision(body);
-      const input = parseAbsenceInput(withSchool({ ...body, id }, authed.claims.schoolId));
       const flags = await roleFlags(deps.authStore, authed.membership.id);
+      const existing = await deps.absenceStore.get(authed.claims.schoolId, id);
+      if (!existing) throw new AbsenceNotFoundError("absence", id);
+      // Fields this caller may not see keep their stored values —
+      // the body's word on them is not taken (see carriedFields).
+      const viewer = viewerOf(authed.membership, flags);
+      const carried = carriedFields(existing, viewer);
+      const input = parseAbsenceInput(
+        withSchool({ ...body, id, ...carried }, authed.claims.schoolId),
+      );
+      // A save that carries hidden fields over may not also change
+      // the record's kind or the person it is about: the carried
+      // values are hidden under the stored kind and person, and
+      // under a new one they could become visible — a trip's texts
+      // are shown to all staff, and a new person may read their own
+      // record. Changing the kind or the person of such a record is
+      // an Admin's work; an Admin sees every field, nothing is
+      // carried for them, and this never refuses an Admin.
+      if (
+        Object.keys(carried).length > 0 &&
+        (input.kind !== existing.kind || input.staffId !== existing.staffId)
+      ) {
+        throw new AuthError(403, "権限がありません");
+      }
       if (!flags.isWriter) {
         // A non-writer may only edit their own absence, and may not
         // hand it to someone else in the edit either.
-        const existing = await deps.absenceStore.get(authed.claims.schoolId, id);
-        if (!existing) throw new AbsenceNotFoundError("absence", id);
         if (
           !isOwnAbsence(existing, authed.membership.teacherId) ||
           !isOwnAbsence(input, authed.membership.teacherId)
@@ -357,7 +413,7 @@ export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
         { userId: authed.claims.personId, via: "platform" },
         storedCertainty(input, flags),
       );
-      res.json(readResponse(updated, viewerOf(authed.membership, flags)));
+      res.json(readResponse(updated, viewer));
     } catch (error) {
       handleError(res, error);
     }
