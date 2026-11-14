@@ -129,6 +129,15 @@ export async function upsertDutyDefinition(
         .where(
           and(eq(rotationRules.schoolId, schoolId), eq(rotationRules.dutyDefinitionId, input.id)),
         );
+      // A rotation generates assignments for people, but a duty
+      // on a target group takes targets, never people (the manual
+      // path refuses the same combination per cell). Reject the
+      // pair here, on the definition as it would stand after this
+      // save — including a rule kept from before when only the
+      // target group is being set. Throwing rolls the save back.
+      if (definition.targetGroupId && rules.length > 0) {
+        throw new Error("a duty on a target group cannot have a rotation rule");
+      }
       return { ...definition, rotation: (rules[0] as RotationRuleRow | undefined) ?? null };
     });
   } catch (error) {
@@ -198,15 +207,18 @@ export interface SetAssignmentEntry {
  * Sets one cell by hand. A manual set over an automatic row keeps
  * the row (and its created_by) and marks it as a manual override;
  * over a manual or swap row it simply replaces the holder. Naming
- * no holder at all clears the cell. Returns the row, or null when
- * the cell was cleared.
+ * no holder at all empties the cell but leaves a manual row with
+ * no holder (the holder check allows both to be null): the cell
+ * was cleared on purpose, and because a plan keeps manual rows,
+ * the next automatic generation leaves it empty instead of
+ * refilling it as if nobody had touched it.
  */
 export async function setAssignment(
   db: Db,
   schoolId: string,
   entry: SetAssignmentEntry,
   actor: string,
-): Promise<DutyAssignmentRow | null> {
+): Promise<DutyAssignmentRow> {
   return db.transaction(async (tx) => {
     const cell = and(
       eq(dutyAssignments.schoolId, schoolId),
@@ -216,10 +228,6 @@ export async function setAssignment(
     );
     const existing = (await tx.select().from(dutyAssignments).where(cell))[0] as
       DutyAssignmentRow | undefined;
-    if (entry.personId === null && entry.targetId === null) {
-      if (existing) await tx.delete(dutyAssignments).where(cell);
-      return null;
-    }
     if (existing) {
       const rows = await tx
         .update(dutyAssignments)
@@ -303,10 +311,20 @@ export async function buildRotationPlan(
     startsOn: definition.applicableStartsOn,
     endsOn: definition.applicableEndsOn,
   };
+  // The first unit date: for a week duty the range can start
+  // mid-week, and the first unit is that week's start, which is
+  // BEFORE range.from. Every read below is aligned to this date —
+  // reading existing rows from range.from would miss the week
+  // row that opens the range (the plan would try to create it
+  // again and hit the cell unique constraint), and the "earlier"
+  // boundary must sit here too, or that opening row counts as
+  // the previous holder and the rotation shifts by one.
+  const weekStart = (rule.changeWeekdays?.[0] as Weekday | undefined) ?? "mon";
+  const firstUnitDate =
+    definition.granularity === "week" ? weekStartOf(range.from, weekStart) : range.from;
   const unitDates: string[] = [];
   if (definition.granularity === "week") {
-    const weekStart = (rule.changeWeekdays?.[0] as Weekday | undefined) ?? "mon";
-    for (let date = weekStartOf(range.from, weekStart); date <= range.to; date = addDays(date, 7)) {
+    for (let date = firstUnitDate; date <= range.to; date = addDays(date, 7)) {
       if (dutyAppliesOn(periodLike, date, factsOf(date))) unitDates.push(date);
     }
   } else {
@@ -325,7 +343,7 @@ export async function buildRotationPlan(
       and(
         eq(dutyAssignments.schoolId, schoolId),
         eq(dutyAssignments.dutyDefinitionId, definition.id),
-        lt(dutyAssignments.date, range.from),
+        lt(dutyAssignments.date, firstUnitDate),
       ),
     )
     .orderBy(asc(dutyAssignments.date));
@@ -348,7 +366,7 @@ export async function buildRotationPlan(
   );
 
   const existingRows = await getAssignments(db, schoolId, {
-    from: range.from,
+    from: firstUnitDate,
     to: range.to,
     dutyDefinitionId: definition.id,
   });
@@ -366,7 +384,11 @@ export async function buildRotationPlan(
 export interface ApplyRotationResult {
   created: number;
   updated: number;
-  /** Cells left untouched: manual / swap rows and rows already right. */
+  /**
+   * Cells left untouched: manual / swap rows, rows already right,
+   * and "replace" cells whose row stopped being automatic after
+   * the plan was made (a manual set landed in between).
+   */
   skipped: number;
   assignments: DutyAssignmentRow[];
 }
@@ -416,6 +438,11 @@ export async function applyRotationPlan(
         assignments.push(rows[0] as DutyAssignmentRow);
         continue;
       }
+      // The plan was computed outside this transaction: a manual
+      // set may have landed on the cell in between. The update
+      // only reaches rows that are still automatic — if it
+      // matches nothing, the cell is counted as skipped and the
+      // manual row is left exactly as it is.
       const rows = await tx
         .update(dutyAssignments)
         .set({ personId: cell.personId, updatedBy: actor, updatedAt: new Date() })
@@ -425,9 +452,14 @@ export async function applyRotationPlan(
             eq(dutyAssignments.dutyDefinitionId, definitionId),
             eq(dutyAssignments.date, cell.date),
             eq(dutyAssignments.slot, cell.slot),
+            eq(dutyAssignments.origin, "auto"),
           ),
         )
         .returning();
+      if (rows.length === 0) {
+        skipped += 1;
+        continue;
+      }
       updated += 1;
       assignments.push(rows[0] as DutyAssignmentRow);
     }

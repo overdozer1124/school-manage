@@ -188,7 +188,9 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
       if (personId && definition.targetGroupId) {
         throw new Error("a duty on a target group takes a target, not a person");
       }
-      const assignment = await store.setAssignment(
+      // Naming no holder empties the cell; the store keeps an
+      // empty manual row for it, and that row is what returns.
+      return store.setAssignment(
         db,
         auth.schoolId,
         {
@@ -201,7 +203,6 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
         },
         auth.userId,
       );
-      return assignment ?? { deleted: true };
     }),
 
     previewRotation: scheduleAction("duty.write", async ({ auth, request }) => {

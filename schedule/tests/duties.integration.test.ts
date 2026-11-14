@@ -1,7 +1,9 @@
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AuthContext, type Role } from "@school-manage/platform-client";
+import { resolveDayFacts } from "@school-manage/calendar-types";
 import { createDb, type Db } from "../src/db/client.js";
+import * as dutyStore from "../src/db/duties.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { createDefinitionActions } from "../src/definitions/actions.js";
 import { createDutyActions } from "../src/duties/actions.js";
@@ -82,6 +84,7 @@ function nextDay(date: string): string {
 
 describe.skipIf(!url)("schedule duties", () => {
   let queryClient: ReturnType<typeof postgres>;
+  let db: Db;
   let duties: DutyActions;
   let dutiesNoPlatform: DutyActions;
   let definitions: ReturnType<typeof createDefinitionActions>;
@@ -95,7 +98,7 @@ describe.skipIf(!url)("schedule duties", () => {
     await admin.end();
 
     const created = createDb(url);
-    const db: Db = created.db;
+    db = created.db;
     queryClient = created.queryClient;
     await runMigrations(db);
     duties = createDutyActions(db, fakePlatform);
@@ -247,6 +250,78 @@ describe.skipIf(!url)("schedule duties", () => {
     ]);
   });
 
+  it("a week duty applied in two chunks starting mid-week continues cleanly", async () => {
+    const adminA = auth(A, "Admin");
+    await duties.upsertDutyDefinition.run(adminA, {
+      id: "duty-week-split",
+      name: "週番（分割適用）",
+      granularity: "week",
+      applicablePeriod: "all_year",
+      rotation: { personIds: ["teacher-a1", "teacher-a2"], changeWeekdays: ["fri"] },
+    });
+    // The range starts on a Monday, but the Friday-changeover
+    // weeks start earlier (04-03). Applying in two chunks must
+    // neither collide with the earlier chunk's week rows nor
+    // shift the rotation.
+    const first = await duties.applyRotation.run(adminA, {
+      dutyDefinitionId: "duty-week-split",
+      from: "2026-04-06",
+      to: "2026-04-19",
+    });
+    expect(first).toMatchObject({ created: 3, updated: 0, skipped: 0 });
+    const second = await duties.applyRotation.run(adminA, {
+      dutyDefinitionId: "duty-week-split",
+      from: "2026-04-20",
+      to: "2026-05-03",
+    });
+    expect(second).toMatchObject({ created: 2, updated: 0, skipped: 1 });
+    const rows = await duties.getDutyAssignments.run(adminA, {
+      dutyDefinitionId: "duty-week-split",
+      from: "2026-04-01",
+      to: "2026-05-03",
+    });
+    expect(rows.map((a) => `${a.date} ${a.personId} ${a.origin}`)).toEqual([
+      "2026-04-03 teacher-a1 auto",
+      "2026-04-10 teacher-a2 auto",
+      "2026-04-17 teacher-a1 auto",
+      "2026-04-24 teacher-a2 auto",
+      "2026-05-01 teacher-a1 auto",
+    ]);
+  });
+
+  it("applying the same week range twice keeps every cell the second time", async () => {
+    const adminA = auth(A, "Admin");
+    await duties.upsertDutyDefinition.run(adminA, {
+      id: "duty-week-twice",
+      name: "週番（再適用）",
+      granularity: "week",
+      applicablePeriod: "all_year",
+      rotation: { personIds: ["teacher-a1", "teacher-a2"], changeWeekdays: ["fri"] },
+    });
+    const first = await duties.applyRotation.run(adminA, {
+      dutyDefinitionId: "duty-week-twice",
+      from: "2026-04-06",
+      to: "2026-04-19",
+    });
+    expect(first).toMatchObject({ created: 3, updated: 0, skipped: 0 });
+    const second = await duties.applyRotation.run(adminA, {
+      dutyDefinitionId: "duty-week-twice",
+      from: "2026-04-06",
+      to: "2026-04-19",
+    });
+    expect(second).toMatchObject({ created: 0, updated: 0, skipped: 3 });
+    const rows = await duties.getDutyAssignments.run(adminA, {
+      dutyDefinitionId: "duty-week-twice",
+      from: "2026-04-01",
+      to: "2026-04-19",
+    });
+    expect(rows.map((a) => `${a.date} ${a.personId}`)).toEqual([
+      "2026-04-03 teacher-a1",
+      "2026-04-10 teacher-a2",
+      "2026-04-17 teacher-a1",
+    ]);
+  });
+
   it("applying never overwrites a manual assignment; a manual set over an auto row is an override", async () => {
     const editorA = auth(A, "Editor");
     await duties.upsertDutyDefinition.run(auth(A, "Admin"), {
@@ -304,20 +379,66 @@ describe.skipIf(!url)("schedule duties", () => {
       personId: "teacher-a1",
     });
 
-    // Naming no holder clears the cell.
+    // Naming no holder empties the cell but leaves a manual row
+    // with no holder, so the clearing itself is on record.
     const cleared = await duties.setDutyAssignment.run(editorA, {
       dutyDefinitionId: "duty-manual",
       date: "2026-04-07",
       slot: "all_day",
     });
-    expect(cleared).toEqual({ deleted: true });
-    expect(
-      await duties.getDutyAssignments.run(editorA, {
-        dutyDefinitionId: "duty-manual",
-        from: "2026-04-07",
-        to: "2026-04-07",
-      }),
-    ).toEqual([]);
+    expect(cleared).toMatchObject({
+      id: rows[1]?.id,
+      personId: null,
+      targetId: null,
+      origin: "manual",
+      isManualOverride: true,
+    });
+    const afterClear = await duties.getDutyAssignments.run(editorA, {
+      dutyDefinitionId: "duty-manual",
+      from: "2026-04-07",
+      to: "2026-04-07",
+    });
+    expect(afterClear.map((a) => `${a.date} ${a.personId} ${a.origin}`)).toEqual([
+      "2026-04-07 null manual",
+    ]);
+  });
+
+  it("a manually cleared cell is not refilled by the next rotation apply", async () => {
+    const editorA = auth(A, "Editor");
+    await duties.upsertDutyDefinition.run(auth(A, "Admin"), {
+      id: "duty-clear",
+      name: "クリアテスト",
+      granularity: "day",
+      applicablePeriod: "all_year",
+      rotation: { personIds: ["teacher-a1", "teacher-a2"] },
+    });
+    await duties.applyRotation.run(editorA, {
+      dutyDefinitionId: "duty-clear",
+      from: "2026-04-06",
+      to: "2026-04-07",
+    });
+    await duties.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-clear",
+      date: "2026-04-07",
+      slot: "all_day",
+    });
+    // The cleared cell is a manual row, so applying again keeps
+    // both cells and creates nothing.
+    const reapplied = await duties.applyRotation.run(editorA, {
+      dutyDefinitionId: "duty-clear",
+      from: "2026-04-06",
+      to: "2026-04-07",
+    });
+    expect(reapplied).toMatchObject({ created: 0, updated: 0, skipped: 2 });
+    const rows = await duties.getDutyAssignments.run(editorA, {
+      dutyDefinitionId: "duty-clear",
+      from: "2026-04-06",
+      to: "2026-04-07",
+    });
+    expect(rows.map((a) => `${a.date} ${a.personId} ${a.origin}`)).toEqual([
+      "2026-04-06 teacher-a1 auto",
+      "2026-04-07 null manual",
+    ]);
   });
 
   it("regenerating a later range continues the rotation instead of restarting it", async () => {
@@ -531,5 +652,104 @@ describe.skipIf(!url)("schedule duties", () => {
         to: "2026-07-21",
       }),
     ).rejects.toThrow(/needs the platform calendar/);
+  });
+
+  it("applying a stale plan leaves a manual assignment that landed after the preview", async () => {
+    const adminA = auth(A, "Admin");
+    await duties.upsertDutyDefinition.run(adminA, {
+      id: "duty-race",
+      name: "競合テスト",
+      granularity: "day",
+      applicablePeriod: "all_year",
+      rotation: { personIds: ["teacher-a1", "teacher-a2"] },
+    });
+    await duties.applyRotation.run(adminA, {
+      dutyDefinitionId: "duty-race",
+      from: "2026-06-01",
+      to: "2026-06-02",
+    });
+    // Reversing the rotation makes both cells "replace" in a plan.
+    await duties.upsertDutyDefinition.run(adminA, {
+      id: "duty-race",
+      name: "競合テスト",
+      granularity: "day",
+      applicablePeriod: "all_year",
+      rotation: { personIds: ["teacher-a2", "teacher-a1"] },
+    });
+    const definition = await dutyStore.getDutyDefinition(db, A, "duty-race");
+    if (!definition) throw new Error("duty-race definition missing");
+    const plan = await dutyStore.buildRotationPlan(db, A, {
+      definition,
+      range: { from: "2026-06-01", to: "2026-06-02" },
+      slots: ["all_day"],
+      factsOf: (date) => resolveDayFacts(date, undefined, []),
+    });
+    expect(plan.map((c) => c.action)).toEqual(["replace", "replace"]);
+
+    // A manual set lands on one cell after the plan was made.
+    await duties.setDutyAssignment.run(auth(A, "Editor"), {
+      dutyDefinitionId: "duty-race",
+      date: "2026-06-01",
+      slot: "all_day",
+      personId: "teacher-a3",
+    });
+    const result = await dutyStore.applyRotationPlan(db, A, "duty-race", plan, "user-school-a");
+    expect(result).toMatchObject({ created: 0, updated: 1, skipped: 1 });
+    const rows = await duties.getDutyAssignments.run(adminA, {
+      dutyDefinitionId: "duty-race",
+      from: "2026-06-01",
+      to: "2026-06-02",
+    });
+    expect(rows.map((a) => `${a.date} ${a.personId} ${a.origin}`)).toEqual([
+      "2026-06-01 teacher-a3 manual",
+      "2026-06-02 teacher-a1 auto",
+    ]);
+  });
+
+  it("a duty definition cannot name both a target group and a rotation", async () => {
+    const adminA = auth(A, "Admin");
+    await definitions.upsertTargetGroup.run(adminA, {
+      id: "tg-rotation-check",
+      key: "rotation_check",
+      name: "輪番不可チェック",
+    });
+    // Both in one save: refused, and nothing is written.
+    await expect(
+      duties.upsertDutyDefinition.run(adminA, {
+        id: "duty-both",
+        name: "両指定",
+        granularity: "day",
+        applicablePeriod: "all_year",
+        targetGroupId: "tg-rotation-check",
+        rotation: { personIds: ["teacher-a1", "teacher-a2"] },
+      }),
+    ).rejects.toThrow(/cannot have a rotation rule/);
+    expect(
+      (await duties.getDutyDefinitions.run(adminA, null)).find((d) => d.id === "duty-both"),
+    ).toBeUndefined();
+
+    // Adding a target group to a definition that already has a
+    // rotation is refused too, and the definition is unchanged.
+    await duties.upsertDutyDefinition.run(adminA, {
+      id: "duty-retain",
+      name: "輪番保持",
+      granularity: "day",
+      applicablePeriod: "all_year",
+      rotation: { personIds: ["teacher-a1", "teacher-a2"] },
+    });
+    await expect(
+      duties.upsertDutyDefinition.run(adminA, {
+        id: "duty-retain",
+        name: "輪番保持",
+        granularity: "day",
+        applicablePeriod: "all_year",
+        targetGroupId: "tg-rotation-check",
+      }),
+    ).rejects.toThrow(/cannot have a rotation rule/);
+    const retained = (await duties.getDutyDefinitions.run(adminA, null)).find(
+      (d) => d.id === "duty-retain",
+    );
+    expect(retained?.targetGroupId).toBeNull();
+    expect(retained?.rotation?.personIds).toEqual(["teacher-a1", "teacher-a2"]);
   });
 });
