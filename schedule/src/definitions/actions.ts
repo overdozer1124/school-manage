@@ -105,7 +105,12 @@ export function createDefinitionActions(db: Db) {
 
     saveSettings: scheduleAction("school.admin", async ({ auth, request }) => {
       const input = saveSettingsInputSchema.parse(request);
-      return store.saveSettings(db, auth.schoolId, input.inputOpener);
+      return store.saveSettings(
+        db,
+        auth.schoolId,
+        input.inputOpener,
+        input.dutyConflictAbsenceKinds,
+      );
     }),
 
     applyPreset: scheduleAction("school.admin", async ({ auth, request }) => {

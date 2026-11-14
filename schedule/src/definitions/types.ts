@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { absenceKindSchema } from "@school-manage/calendar-types";
 
 /**
  * Payload shapes for the definition actions (Issue #27). The enums
@@ -98,6 +99,12 @@ export type InputOpener = z.infer<typeof inputOpenerSchema>;
 
 export const saveSettingsInputSchema = z.object({
   inputOpener: inputOpenerSchema,
+  /**
+   * The absence kinds that count for duty-conflict detection
+   * (Issue #31). Optional: leaving it out keeps the stored value;
+   * null counts every kind, a list counts only those kinds.
+   */
+  dutyConflictAbsenceKinds: z.array(absenceKindSchema).nullable().optional(),
 });
 export type SaveSettingsInput = z.infer<typeof saveSettingsInputSchema>;
 
