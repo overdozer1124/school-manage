@@ -623,6 +623,94 @@ describe.skipIf(!url)("staff absences", () => {
     expect(asAdmin.json.revision).toBe(3);
   });
 
+  it("refuses an Editor who would expose a leave's hidden fields by changing its kind or its person", async () => {
+    const created = await api("POST", ABSENCES, {
+      cookie: adminA(),
+      body: absenceInput("abs-leave-retype", {
+        staffId: "staff-1",
+        fromDate: "2026-11-24",
+        toDate: "2026-11-24",
+        subdivisionKey: "sick",
+        purpose: "通院",
+        note: "家族の付き添い",
+        certainty: "confirmed",
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(created.json.revision).toBe(1);
+
+    // The Editor cannot see the leave's subdivision, purpose or
+    // note, so an edit by them carries the stored values over.
+    // Turning the record into a business trip in the same save
+    // would put those carried texts on display — a trip's texts
+    // are visible to all staff — so the edit is refused.
+    const retyped = await api("PUT", `${ABSENCES}/abs-leave-retype`, {
+      cookie: editorA(),
+      body: absenceInput("abs-leave-retype", {
+        staffId: "staff-1",
+        fromDate: "2026-11-24",
+        toDate: "2026-11-24",
+        kind: "business_trip",
+        subdivisionKey: null,
+        certainty: "confirmed",
+        revision: 1,
+      }),
+    });
+    expect(retyped.status).toBe(403);
+
+    // Handing the record to another staff member is refused the
+    // same way: the new person could then read the carried texts
+    // as their own.
+    const reassigned = await api("PUT", `${ABSENCES}/abs-leave-retype`, {
+      cookie: editorA(),
+      body: absenceInput("abs-leave-retype", {
+        staffId: "staff-2",
+        fromDate: "2026-11-24",
+        toDate: "2026-11-24",
+        subdivisionKey: "sick",
+        certainty: "confirmed",
+        revision: 1,
+      }),
+    });
+    expect(reassigned.status).toBe(403);
+
+    // Both refused edits left the stored record exactly as it was,
+    // and the texts did not leak to the would-be new person either.
+    const asAdmin = await api("GET", `${ABSENCES}/abs-leave-retype`, { cookie: adminA() });
+    expect(asAdmin.json.kind).toBe("leave");
+    expect(asAdmin.json.staffId).toBe("staff-1");
+    expect(asAdmin.json.subdivisionKey).toBe("sick");
+    expect(asAdmin.json.purpose).toBe("通院");
+    expect(asAdmin.json.note).toBe("家族の付き添い");
+    expect(asAdmin.json.revision).toBe(1);
+
+    const asStaff2 = await api("GET", `${ABSENCES}/abs-leave-retype`, { cookie: teacher2A() });
+    expect(asStaff2.status).toBe(200);
+    expect("subdivisionKey" in asStaff2.json).toBe(false);
+    expect("purpose" in asStaff2.json).toBe(false);
+    expect("note" in asStaff2.json).toBe(false);
+
+    // An Admin sees every field, so nothing is carried over for
+    // them and they may still change the kind.
+    const byAdmin = await api("PUT", `${ABSENCES}/abs-leave-retype`, {
+      cookie: adminA(),
+      body: absenceInput("abs-leave-retype", {
+        staffId: "staff-1",
+        fromDate: "2026-11-24",
+        toDate: "2026-11-24",
+        kind: "business_trip",
+        subdivisionKey: null,
+        purpose: "通院",
+        note: "家族の付き添い",
+        certainty: "confirmed",
+        revision: 1,
+      }),
+    });
+    expect(byAdmin.status).toBe(200);
+    expect(byAdmin.json.kind).toBe("business_trip");
+    expect(byAdmin.json.revision).toBe(2);
+  });
+
   it("lets an Admin rewrite the hidden fields of a leave", async () => {
     const edited = await api("PUT", `${ABSENCES}/abs-leave-carry`, {
       cookie: adminA(),

@@ -379,12 +379,25 @@ export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
       if (!existing) throw new AbsenceNotFoundError("absence", id);
       // Fields this caller may not see keep their stored values —
       // the body's word on them is not taken (see carriedFields).
+      const viewer = viewerOf(authed.membership, flags);
+      const carried = carriedFields(existing, viewer);
       const input = parseAbsenceInput(
-        withSchool(
-          { ...body, id, ...carriedFields(existing, viewerOf(authed.membership, flags)) },
-          authed.claims.schoolId,
-        ),
+        withSchool({ ...body, id, ...carried }, authed.claims.schoolId),
       );
+      // A save that carries hidden fields over may not also change
+      // the record's kind or the person it is about: the carried
+      // values are hidden under the stored kind and person, and
+      // under a new one they could become visible — a trip's texts
+      // are shown to all staff, and a new person may read their own
+      // record. Changing the kind or the person of such a record is
+      // an Admin's work; an Admin sees every field, nothing is
+      // carried for them, and this never refuses an Admin.
+      if (
+        Object.keys(carried).length > 0 &&
+        (input.kind !== existing.kind || input.staffId !== existing.staffId)
+      ) {
+        throw new AuthError(403, "権限がありません");
+      }
       if (!flags.isWriter) {
         // A non-writer may only edit their own absence, and may not
         // hand it to someone else in the edit either.
@@ -400,7 +413,7 @@ export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
         { userId: authed.claims.personId, via: "platform" },
         storedCertainty(input, flags),
       );
-      res.json(readResponse(updated, viewerOf(authed.membership, flags)));
+      res.json(readResponse(updated, viewer));
     } catch (error) {
       handleError(res, error);
     }
