@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "./client.js";
 import { eventValues, type EventValueRow } from "./schema.js";
 import type { DailyValueColumns } from "../dailyValues/value.js";
@@ -93,6 +93,35 @@ export async function getEventValues(
       ),
     )
     .orderBy(asc(eventValues.itemDefinitionId), asc(eventValues.targetKey));
+}
+
+/**
+ * The values of many subjects of one kind at once (the range read,
+ * Issue #33): a month of events would otherwise be one query per
+ * event. An empty subject list reads nothing.
+ */
+export async function getEventValuesForSubjects(
+  db: Db,
+  schoolId: string,
+  subjectKind: EventSubjectKind,
+  subjectIds: readonly string[],
+): Promise<EventValueRow[]> {
+  if (subjectIds.length === 0) return [];
+  return db
+    .select()
+    .from(eventValues)
+    .where(
+      and(
+        eq(eventValues.schoolId, schoolId),
+        eq(eventValues.subjectKind, subjectKind),
+        inArray(eventValues.subjectId, [...subjectIds]),
+      ),
+    )
+    .orderBy(
+      asc(eventValues.subjectId),
+      asc(eventValues.itemDefinitionId),
+      asc(eventValues.targetKey),
+    );
 }
 
 /** Removes a subject's values; returns how many rows were removed. */
