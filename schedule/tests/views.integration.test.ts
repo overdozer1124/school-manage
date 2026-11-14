@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AuthContext, type Role } from "@school-manage/platform-client";
 import { createDb, type Db } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
+import { dutyDefinitions } from "../src/db/schema.js";
 import { createDefinitionActions } from "../src/definitions/actions.js";
 import { createViewActions } from "../src/views/actions.js";
 
@@ -48,6 +49,17 @@ describe.skipIf(!url)("schedule views", () => {
     await runMigrations(db);
     views = createViewActions(db);
     definitions = createDefinitionActions(db);
+
+    // A duty definition for the duty column below to key into:
+    // since Issue #30 view_columns.duty_definition_id is a real
+    // foreign key, so the id must exist (it was a free id in #32).
+    await db.insert(dutyDefinitions).values({
+      schoolId: A,
+      id: "duty-nitiban",
+      name: "日番",
+      granularity: "day",
+      applicablePeriod: "all_year",
+    });
 
     // One item and one axis per school, for columns to reference.
     for (const [school, suffix] of [
