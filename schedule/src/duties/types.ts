@@ -96,3 +96,69 @@ export const rotationRangeInputSchema = z
   })
   .refine(rangeRefine, { message: "from must not be after to" });
 export type RotationRangeInput = z.infer<typeof rotationRangeInputSchema>;
+
+// ---------- Duty changes and conflicts (Issue #31) -----------------
+
+export const dutyChangeKindSchema = z.enum(["swap", "substitute", "reassign"]);
+export type DutyChangeKind = z.infer<typeof dutyChangeKindSchema>;
+
+/**
+ * A proposed duty change. A swap names the other assignment (the
+ * two must belong to the same duty; the store checks); a
+ * substitute or reassignment names the person who takes over.
+ * Exactly the fields of the kind are required — the refinement
+ * refuses the other shapes here, before any row is read.
+ */
+export const proposeDutyChangeInputSchema = z
+  .object({
+    kind: dutyChangeKindSchema,
+    assignmentAId: nonEmptyString,
+    assignmentBId: nonEmptyString.nullable().optional(),
+    toPersonId: nonEmptyString.nullable().optional(),
+    reason: z.string().optional(),
+  })
+  .refine((v) => v.kind !== "swap" || (v.assignmentBId != null && v.toPersonId == null), {
+    message: "a swap names assignmentBId (and no toPersonId)",
+  })
+  .refine((v) => v.kind === "swap" || (v.toPersonId != null && v.assignmentBId == null), {
+    message: "a substitute / reassign names toPersonId (and no assignmentBId)",
+  });
+export type ProposeDutyChangeInput = z.infer<typeof proposeDutyChangeInputSchema>;
+
+export const dutyChangeIdInputSchema = z.object({
+  id: nonEmptyString,
+});
+export type DutyChangeIdInput = z.infer<typeof dutyChangeIdInputSchema>;
+
+export const getDutyChangesInputSchema = z.object({
+  dutyDefinitionId: nonEmptyString.optional(),
+});
+export type GetDutyChangesInput = z.infer<typeof getDutyChangesInputSchema>;
+
+/** A conflict read over a range, optionally for one duty. */
+export const getDutyConflictsInputSchema = z
+  .object({
+    from: dateStringSchema,
+    to: dateStringSchema,
+    dutyDefinitionId: nonEmptyString.optional(),
+  })
+  .refine(rangeRefine, { message: "from must not be after to" });
+export type GetDutyConflictsInput = z.infer<typeof getDutyConflictsInputSchema>;
+
+/**
+ * Recording that an assignment × absence conflict was reviewed
+ * and is left as it is. The absence is a platform record named by
+ * id; there is nothing in this database to check it against.
+ */
+export const waiveConflictInputSchema = z.object({
+  assignmentId: nonEmptyString,
+  absenceId: nonEmptyString,
+  reason: z.string().optional(),
+});
+export type WaiveConflictInput = z.infer<typeof waiveConflictInputSchema>;
+
+/** The takeover candidates for one assignment's holder. */
+export const getDutyChangeCandidatesInputSchema = z.object({
+  assignmentId: nonEmptyString,
+});
+export type GetDutyChangeCandidatesInput = z.infer<typeof getDutyChangeCandidatesInputSchema>;

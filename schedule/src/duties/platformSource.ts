@@ -1,9 +1,17 @@
-import type { DayType, DutyTermRange } from "@school-manage/calendar-types";
+import type {
+  AbsenceKind,
+  CalendarTime,
+  Certainty,
+  DayType,
+  DutyTermRange,
+} from "@school-manage/calendar-types";
 import type { PlatformApiClient } from "../platformClient.js";
 
 /**
  * What the duty logic needs from the platform (Issue #30): the
  * school's staff roster, its recorded calendar days, and its terms.
+ * Issue #31 adds the school's staff absences, which duty-conflict
+ * derivation reads (DESIGN-INTEGRATION 2.3).
  * Duty definitions say "long vacation only" or "in term" without
  * naming dates — the platform calendar decides what that means
  * (DESIGN schedule 4.7: 「長期休業の判定には共通基盤の学期と日の種別
@@ -32,6 +40,24 @@ export interface DutyCalendarDay {
   dayType: DayType;
 }
 
+/**
+ * One staff absence, as duty-conflict derivation reads it (Issue
+ * #31, DESIGN-INTEGRATION 2.3): who is away, in which kind, how
+ * certain, and over which dates / part of day. The absence's texts
+ * and subdivision are not part of this shape — derivation never
+ * needs them, and a leave's texts stay behind the platform's
+ * privacy rules.
+ */
+export interface DutyAbsenceEntry {
+  id: string;
+  staffId: string;
+  kind: AbsenceKind;
+  certainty: Certainty;
+  fromDate: string;
+  toDate: string;
+  time: CalendarTime;
+}
+
 export interface DutyPlatformSource {
   /** The school's staff master, in the platform's display order. */
   listStaff(schoolId: string): Promise<readonly DutyStaffEntry[]>;
@@ -43,6 +69,13 @@ export interface DutyPlatformSource {
   ): Promise<readonly DutyCalendarDay[]>;
   /** The school's terms, across its school years. */
   listTerms(schoolId: string): Promise<readonly DutyTermRange[]>;
+  /** The school's staff absences overlapping the range, tentative
+   *  ones included (DESIGN-AUTH-TENANCY 4.6: conflict detection
+   *  counts them, and says they are tentative). */
+  listAbsences(
+    schoolId: string,
+    range: { from: string; to: string },
+  ): Promise<readonly DutyAbsenceEntry[]>;
 }
 
 interface StaffListBody {
@@ -51,6 +84,33 @@ interface StaffListBody {
 
 interface DayListBody {
   items?: { date?: unknown; dayType?: unknown }[];
+}
+
+interface AbsenceListBody {
+  items?: {
+    id?: unknown;
+    staffId?: unknown;
+    kind?: unknown;
+    certainty?: unknown;
+    fromDate?: unknown;
+    toDate?: unknown;
+    time?: unknown;
+  }[];
+}
+
+const ABSENCE_KINDS: readonly string[] = ["business_trip", "training", "leave", "other"];
+
+/** A CalendarTime as JSON, checked only as far as derivation
+ *  relies on: an object naming one of the four kinds. The platform
+ *  validates the value when the absence is written; a malformed
+ *  one here is dropped rather than guessed at. */
+function asCalendarTime(value: unknown): CalendarTime | null {
+  if (typeof value !== "object" || value === null) return null;
+  const kind = (value as { kind?: unknown }).kind;
+  if (kind !== "all_day" && kind !== "half_day" && kind !== "clock" && kind !== "periods") {
+    return null;
+  }
+  return value as CalendarTime;
 }
 
 function itemsOf<T>(body: unknown): T[] {
@@ -90,6 +150,37 @@ export function createHttpDutyPlatformSource(
       return items
         .filter((i) => typeof i.date === "string" && typeof i.dayType === "string")
         .map((i) => ({ date: i.date as string, dayType: i.dayType as DayType }));
+    },
+    async listAbsences(_schoolId, range) {
+      const items = await getItems<NonNullable<AbsenceListBody["items"]>[number]>(
+        `/calendar/absences?from=${range.from}&to=${range.to}`,
+      );
+      const entries: DutyAbsenceEntry[] = [];
+      for (const item of items) {
+        const time = asCalendarTime(item.time);
+        if (
+          typeof item.id !== "string" ||
+          typeof item.staffId !== "string" ||
+          typeof item.kind !== "string" ||
+          !ABSENCE_KINDS.includes(item.kind) ||
+          (item.certainty !== "tentative" && item.certainty !== "confirmed") ||
+          typeof item.fromDate !== "string" ||
+          typeof item.toDate !== "string" ||
+          time === null
+        ) {
+          continue;
+        }
+        entries.push({
+          id: item.id,
+          staffId: item.staffId,
+          kind: item.kind as AbsenceKind,
+          certainty: item.certainty,
+          fromDate: item.fromDate,
+          toDate: item.toDate,
+          time,
+        });
+      }
+      return entries;
     },
     async listTerms() {
       // The platform stores terms (its school-year masters) but

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { type DayType, type Weekday } from "./codes.js";
-import { isValidTimeString, weekdayOf } from "./time.js";
+import { type AbsenceKind, type Certainty, type DayType, type Weekday } from "./codes.js";
+import { addDays, datesInRange, isValidTimeString, weekdayOf, type CalendarTime } from "./time.js";
 
 /**
  * Duty (当番) shared logic (DESIGN schedule 4.7, Issue #30). The slot,
@@ -242,4 +242,331 @@ export function planRotation(
     lastDate = cell.date;
   }
   return planned;
+}
+
+// ---------- conflict derivation (DESIGN schedule 4.7.2, Issue #31) ----
+
+/**
+ * Whether an absence occupying part of one date overlaps a duty
+ * slot on that date. This is the absence counterpart of eventSlot /
+ * slotsOverlap: an absence's span is a CalendarTime (DESIGN-
+ * INTEGRATION 2.3), so a half_day absence names its half directly
+ * and a clock absence is placed by its hours through eventSlot —
+ * a morning-only trip does not clash with an afternoon duty.
+ *
+ * Two cases cannot be decided exactly without the day pattern's
+ * clock times, which this layer does not read: a periods absence
+ * against an am/pm duty, and a clock or half_day absence against a
+ * single-period duty. Both answer "overlaps" — a conflict is a
+ * warning that invites a human look, never a block (4.7.2), so the
+ * undecidable case warns. A periods absence against a period duty
+ * IS decided exactly, by the period numbers.
+ */
+export function dutyAbsenceOverlapsSlot(dutySlot: string, time: CalendarTime): boolean {
+  if (dutySlot === "week" || dutySlot === "all_day") return true;
+  switch (time.kind) {
+    case "all_day":
+      return true;
+    case "half_day":
+      if (dutySlot === "am" || dutySlot === "pm") return dutySlot === time.half;
+      return true;
+    case "clock": {
+      if (dutySlot === "am" || dutySlot === "pm") {
+        const slot = eventSlot({
+          isAllDay: false,
+          slot: "all_day",
+          startsAt: time.startsAt,
+          endsAt: time.endsAt,
+        });
+        return slotsOverlap(dutySlot, slot);
+      }
+      return true;
+    }
+    case "periods": {
+      if (PERIOD_SLOT_RE.test(dutySlot)) {
+        const n = Number(dutySlot);
+        return time.from <= n && n <= time.to;
+      }
+      return true;
+    }
+  }
+}
+
+/**
+ * One platform absence, as conflict derivation reads it (Issue #31):
+ * who is away, in which kind, how certain, and over which dates /
+ * part of day. The absence's own texts and subdivision never travel
+ * here — derivation needs none of them, and a leave's texts stay
+ * behind the platform's privacy rules (DESIGN-AUTH-TENANCY 4.5).
+ */
+export interface DutyAbsenceFact {
+  id: string;
+  staffId: string;
+  kind: AbsenceKind;
+  certainty: Certainty;
+  fromDate: string;
+  toDate: string;
+  time: CalendarTime;
+}
+
+/** One duty assignment, as conflict derivation reads it. */
+export interface DutyAssignmentFact {
+  id: string;
+  dutyDefinitionId: string;
+  date: string;
+  slot: string;
+  personId: string | null;
+  origin: DutyOrigin;
+}
+
+/**
+ * One cell a duty definition is expected to fill on a date. The
+ * caller computes these from the definition's applicable period
+ * and the platform calendar (the same facts a rotation preview
+ * uses); derivation only checks whether a holder stands there.
+ */
+export interface DutyExpectedCell {
+  dutyDefinitionId: string;
+  date: string;
+  slot: string;
+}
+
+/**
+ * One derived conflict (DESIGN schedule 4.7.2). Conflicts are
+ * never stored — they are recomputed from the assignments and the
+ * absences of the moment, so an absence that disappears takes its
+ * conflicts with it. Only the waiver of a conflict is recorded.
+ *
+ * - absence: the holder is away (in an absence of a kind the
+ *   school counts) over the assignment's slot. certainty carries
+ *   the absence's own: a tentative absence conflicts too, and is
+ *   recognisable as tentative (DESIGN-AUTH-TENANCY 4.6).
+ * - double: the same person holds two duties over the same moment
+ *   (assignmentId and otherAssignmentId name the pair).
+ * - unassigned: a cell the definition is in force on has no
+ *   holder. A cell a person deliberately cleared by hand (an empty
+ *   manual row, Issue #30) is a decision, not a gap, and does not
+ *   appear here.
+ */
+export interface DutyConflict {
+  kind: "absence" | "double" | "unassigned";
+  assignmentId: string | null;
+  otherAssignmentId: string | null;
+  dutyDefinitionId: string;
+  dutyName: string;
+  date: string;
+  slot: string;
+  personId: string | null;
+  absenceId: string | null;
+  absenceKind: AbsenceKind | null;
+  certainty: Certainty | null;
+}
+
+export interface DeriveDutyConflictsInput {
+  from: string;
+  to: string;
+  /** The school's assignments; a window slightly wider than the
+   *  range is fine — week assignments are expanded to their days
+   *  and only days inside the range produce conflicts. */
+  assignments: readonly DutyAssignmentFact[];
+  /** The platform's absences overlapping the range. */
+  absences: readonly DutyAbsenceFact[];
+  /** (assignmentId, absenceId) pairs a person has waived. */
+  waivers: readonly { assignmentId: string; absenceId: string }[];
+  /** The absence kinds the school counts as conflicts, or null
+   *  when every kind counts (the school's setting, Issue #31). */
+  absenceKinds: readonly AbsenceKind[] | null;
+  /** Cells the definitions are in force on inside the range. */
+  expectedCells: readonly DutyExpectedCell[];
+  /** Duty names by definition id, for display. */
+  dutyNames: Readonly<Record<string, string>>;
+}
+
+/** The dates an assignment covers: a week assignment covers its
+ *  seven days, every other slot covers its own date. */
+function effectiveDates(a: { date: string; slot: string }): string[] {
+  return a.slot === "week" ? datesInRange(a.date, addDays(a.date, 6)) : [a.date];
+}
+
+function byCellOrder(a: DutyAssignmentFact, b: DutyAssignmentFact): number {
+  return (
+    a.date.localeCompare(b.date) ||
+    a.dutyDefinitionId.localeCompare(b.dutyDefinitionId) ||
+    a.slot.localeCompare(b.slot) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+/**
+ * Derives the conflicts of a range from the assignments and the
+ * absences, following the prototype's computeConflicts (school-
+ * schedule actions.ts), adapted to this implementation: holders
+ * and absent staff are matched by staff-master id (there are no
+ * free-text holders here), absences come from the platform rather
+ * than from events, and the applicable cells are the caller's —
+ * this implementation derives a definition's in-force days from
+ * the platform calendar, which a pure function cannot read.
+ */
+export function deriveDutyConflicts(input: DeriveDutyConflictsInput): DutyConflict[] {
+  const { from, to } = input;
+  const out: DutyConflict[] = [];
+  const assignments = [...input.assignments].sort(byCellOrder);
+  const waived = new Set(input.waivers.map((w) => `${w.assignmentId}:${w.absenceId}`));
+  const counted = (kind: AbsenceKind): boolean =>
+    input.absenceKinds === null || input.absenceKinds.includes(kind);
+  const inRange = (date: string): boolean => from <= date && date <= to;
+
+  // Absence overlaps.
+  for (const a of assignments) {
+    if (a.personId === null) continue;
+    for (const date of effectiveDates(a)) {
+      if (!inRange(date)) continue;
+      for (const absence of input.absences) {
+        if (absence.staffId !== a.personId) continue;
+        if (!counted(absence.kind)) continue;
+        if (date < absence.fromDate || date > absence.toDate) continue;
+        if (!dutyAbsenceOverlapsSlot(a.slot, absence.time)) continue;
+        if (waived.has(`${a.id}:${absence.id}`)) continue;
+        out.push({
+          kind: "absence",
+          assignmentId: a.id,
+          otherAssignmentId: null,
+          dutyDefinitionId: a.dutyDefinitionId,
+          dutyName: input.dutyNames[a.dutyDefinitionId] ?? "",
+          date,
+          slot: a.slot,
+          personId: a.personId,
+          absenceId: absence.id,
+          absenceKind: absence.kind,
+          certainty: absence.certainty,
+        });
+      }
+    }
+  }
+
+  // The same person on two duties at the same moment.
+  const seenDouble = new Set<string>();
+  for (let i = 0; i < assignments.length; i += 1) {
+    for (let j = i + 1; j < assignments.length; j += 1) {
+      const a = assignments[i] as DutyAssignmentFact;
+      const b = assignments[j] as DutyAssignmentFact;
+      if (a.personId === null || a.personId !== b.personId) continue;
+      if (!slotsOverlap(a.slot, b.slot)) continue;
+      const bDates = new Set(effectiveDates(b));
+      for (const date of effectiveDates(a)) {
+        if (!inRange(date) || !bDates.has(date)) continue;
+        const key = `${a.id}:${b.id}:${date}`;
+        if (seenDouble.has(key)) continue;
+        seenDouble.add(key);
+        out.push({
+          kind: "double",
+          assignmentId: a.id,
+          otherAssignmentId: b.id,
+          dutyDefinitionId: a.dutyDefinitionId,
+          dutyName: input.dutyNames[a.dutyDefinitionId] ?? "",
+          date,
+          slot: a.slot,
+          personId: a.personId,
+          absenceId: null,
+          absenceKind: null,
+          certainty: null,
+        });
+      }
+    }
+  }
+
+  // Applicable cells with nobody standing in them.
+  const rowByCell = new Map(
+    assignments.map((a) => [`${a.dutyDefinitionId}|${a.date}|${a.slot}`, a] as const),
+  );
+  for (const cell of input.expectedCells) {
+    if (!inRange(cell.date)) continue;
+    const row = rowByCell.get(`${cell.dutyDefinitionId}|${cell.date}|${cell.slot}`);
+    if (row && (row.personId !== null || row.origin === "manual")) continue;
+    out.push({
+      kind: "unassigned",
+      assignmentId: null,
+      otherAssignmentId: null,
+      dutyDefinitionId: cell.dutyDefinitionId,
+      dutyName: input.dutyNames[cell.dutyDefinitionId] ?? "",
+      date: cell.date,
+      slot: cell.slot,
+      personId: null,
+      absenceId: null,
+      absenceKind: null,
+      certainty: null,
+    });
+  }
+
+  out.sort(
+    (x, y) =>
+      x.date.localeCompare(y.date) ||
+      x.dutyDefinitionId.localeCompare(y.dutyDefinitionId) ||
+      x.slot.localeCompare(y.slot) ||
+      x.kind.localeCompare(y.kind),
+  );
+  return out;
+}
+
+export interface RankDutyCandidatesInput {
+  /** The order "near" is measured in: the definition's rotation
+   *  roster, or the staff list's display order when the duty has
+   *  no rotation rule. */
+  roster: readonly string[];
+  /** The holder being replaced: excluded, and the starting point
+   *  the cyclic distance is counted from. */
+  currentPersonId: string | null;
+  /** The dates the occasion spans: one date, or a week
+   *  assignment's seven days. */
+  dates: readonly string[];
+  slot: string;
+  /** Absences overlapping the dates (any kind: a person who is
+   *  away is not a candidate, whichever kind of absence it is). */
+  absences: readonly DutyAbsenceFact[];
+  /** Assignments in a window around the dates (any definition);
+   *  a person already holding an overlapping duty on one of those
+   *  days is not asked to hold a second one. */
+  assignments: readonly DutyAssignmentFact[];
+}
+
+/**
+ * The people who could take over a duty on one occasion, nearest
+ * first (DESIGN schedule 4.7.1): no absence over the duty's slot
+ * on any of the occasion's days, not already on an overlapping
+ * duty on one of those days, and — among those — nearest to the
+ * current holder in the rotation order, counting cyclically
+ * forward from the holder (the next person in the rotation is
+ * the nearest). A holder who is not in the roster counts from
+ * its head.
+ */
+export function rankDutyCandidates(input: RankDutyCandidatesInput): string[] {
+  const { roster, currentPersonId, dates, slot } = input;
+  const absent = new Set(
+    input.absences
+      .filter(
+        (absence) =>
+          dates.some((date) => absence.fromDate <= date && date <= absence.toDate) &&
+          dutyAbsenceOverlapsSlot(slot, absence.time),
+      )
+      .map((absence) => absence.staffId),
+  );
+  const busy = new Set(
+    input.assignments
+      .filter(
+        (a) =>
+          a.personId !== null &&
+          effectiveDates(a).some((date) => dates.includes(date)) &&
+          slotsOverlap(a.slot, slot),
+      )
+      .map((a) => a.personId as string),
+  );
+  const start = currentPersonId === null ? -1 : roster.indexOf(currentPersonId);
+  const ordered: string[] = [];
+  for (let step = 1; step <= roster.length; step += 1) {
+    const personId = roster[(start + step) % roster.length] as string;
+    if (personId === currentPersonId) continue;
+    if (absent.has(personId) || busy.has(personId)) continue;
+    ordered.push(personId);
+  }
+  return ordered;
 }
