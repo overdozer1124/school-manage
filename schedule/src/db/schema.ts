@@ -382,3 +382,130 @@ export const viewColumns = pgTable(
 );
 
 export type ViewColumnRow = typeof viewColumns.$inferSelect;
+
+/**
+ * An additional item value attached to a platform record (DESIGN
+ * schedule 4.5 `event_values`, DESIGN-INTEGRATION 10 implementation
+ * 2): the school-defined extras of an event or an absence (a
+ * deadline's destination, the details of a business trip) live in
+ * this database, keyed by the platform record's id, because the
+ * platform holds only the shared skeleton. subject_kind says which
+ * platform record subject_id names; there is deliberately no
+ * foreign key on it — the record lives in another database, and its
+ * existence is established by the platform call that precedes the
+ * values write (Issue #29).
+ *
+ * The target and typed-value columns follow daily_values exactly
+ * (same TargetRef / target_key treatment, same value columns), so a
+ * value reads the same whichever table holds it. The target is
+ * optional here (DESIGN 4.5: target_id nullable): a value that is
+ * not split by target carries the empty target key alongside any
+ * per-target values of the same item.
+ */
+export const eventValues = pgTable(
+  "event_values",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    subjectKind: text("subject_kind").notNull(),
+    subjectId: text("subject_id").notNull(),
+    itemDefinitionId: text("item_definition_id").notNull(),
+    targetId: text("target_id"),
+    targetRef: jsonb("target_ref").$type<TargetRef>(),
+    targetKey: text("target_key").default("").notNull(),
+    valueText: text("value_text"),
+    valueTime: text("value_time"),
+    valueTimeEnd: text("value_time_end"),
+    valueNumber: doublePrecision("value_number"),
+    valueBoolean: boolean("value_boolean"),
+    valueOptionId: text("value_option_id"),
+    valuePersonId: text("value_person_id"),
+    valueJson: jsonb("value_json"),
+    createdBy: text("created_by").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("event_values_subject_item_unique").on(
+      t.schoolId,
+      t.subjectKind,
+      t.subjectId,
+      t.itemDefinitionId,
+      t.targetKey,
+    ),
+    foreignKey({
+      name: "event_values_item_fk",
+      columns: [t.schoolId, t.itemDefinitionId],
+      foreignColumns: [itemDefinitions.schoolId, itemDefinitions.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "event_values_target_fk",
+      columns: [t.schoolId, t.targetId],
+      foreignColumns: [targets.schoolId, targets.id],
+    }),
+    check("event_values_subject_kind_check", sql`${t.subjectKind} in ('event', 'absence')`),
+    check("event_values_target_check", sql`${t.targetId} is null or ${t.targetRef} is null`),
+  ],
+);
+
+export type EventValueRow = typeof eventValues.$inferSelect;
+
+/** One step of a kind template's quick-entry flow (DESIGN schedule
+ *  6.5): a built-in step (the person, the location, the time band,
+ *  the leave subdivision) or one of the kind's own items. An "item"
+ *  step names its item definition once the school has bound one;
+ *  the shipped deadline default leaves it null (its item is the
+ *  school's own submission-destination definition). */
+export interface KindTemplateStep {
+  kind: "person" | "location" | "time" | "subdivision" | "item";
+  /** The item an "item" step is bound to; null while unbound (and
+   *  for the built-in steps, which name no item). The store
+   *  normalizes a missing binding to null, so stored steps always
+   *  carry the field. */
+  itemDefinitionId: string | null;
+}
+
+/**
+ * A kind template (DESIGN schedule 6.3.1 / 6.5): per event kind,
+ * which items are shown, what the person is called （担当者／出張者／
+ * 取得者）, what the cell display leads with (the title, the person,
+ * or both), and the quick-entry step order. subject_kind records
+ * where the platform stores entries of this kind: business trips
+ * and leave are platform absences, not events — the template says
+ * so, as Issue #29 requires. kind_code is the platform's kind code
+ * within the subject (the shared event / absence kind lists);
+ * steps and item_definition_ids are kept as JSON, in display order.
+ */
+export const kindTemplates = pgTable(
+  "kind_templates",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    subjectKind: text("subject_kind").notNull(),
+    kindCode: text("kind_code").notNull(),
+    personLabel: text("person_label").notNull(),
+    displaySource: text("display_source").notNull(),
+    steps: jsonb("steps").$type<KindTemplateStep[]>().notNull(),
+    itemDefinitionIds: jsonb("item_definition_ids").$type<string[]>().default([]).notNull(),
+    sort: integer("sort").default(0).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("kind_templates_school_key_unique").on(t.schoolId, t.key),
+    check("kind_templates_subject_kind_check", sql`${t.subjectKind} in ('event', 'absence')`),
+    check(
+      "kind_templates_kind_code_check",
+      sql`(${t.subjectKind} = 'event' and ${t.kindCode} in ('event', 'meeting', 'exam', 'deadline', 'other'))
+        or (${t.subjectKind} = 'absence' and ${t.kindCode} in ('business_trip', 'training', 'leave', 'other'))`,
+    ),
+    check(
+      "kind_templates_display_source_check",
+      sql`${t.displaySource} in ('title', 'person', 'person_title')`,
+    ),
+  ],
+);
+
+export type KindTemplateRow = typeof kindTemplates.$inferSelect;

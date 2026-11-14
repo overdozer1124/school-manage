@@ -29,6 +29,13 @@
       "when": 1794553260899,
       "tag": "0003_lively_hercules",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794622884252,
+      "tag": "0004_spicy_polaris",
+      "breakpoints": true
     }
   ]
 }

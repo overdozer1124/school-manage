@@ -46,3 +46,34 @@ export function scheduleAction<Req, Res>(
 ): SecureAction<Req, Res> {
   return secureAction({ permission, permissions: schedulePermissions, handler });
 }
+
+/**
+ * Declares an action whose data lives in the platform (events and
+ * absences, DESIGN-INTEGRATION 10 implementation 1; Issue #29). The
+ * handler relays the call to the platform with the user's cookie,
+ * and the platform performs the permission check: the name recorded
+ * here is the DESIGN-AUTH-TENANCY 4.4 permission for the operation
+ * ("event.write" / "event.confirm"), kept for the registry, and it
+ * is deliberately NOT a key of schedulePermissions and NOT checked
+ * against schedule's own role. Checking it here would be wrong, not
+ * just redundant: the write rule is Editor-or-more in *either*
+ * product （連携5), and this server only knows the caller's schedule
+ * role — a timetable Editor with a schedule Viewer role must still
+ * be able to save. The platform's verdict (401 / 403 / 409) is
+ * returned to the caller as-is instead. What the caller must have is
+ * an AuthContext, which verifyRequest has already established
+ * (signed in, a current membership, a live entitlement — 4.3 steps
+ * 1-2) before any action runs.
+ */
+export function platformAction<Req, Res>(
+  permission: string,
+  handler: (ctx: { auth: AuthContext; request: Req }) => Promise<Res> | Res,
+): SecureAction<Req, Res> {
+  return {
+    kind: "secure",
+    permission,
+    async run(auth, request) {
+      return handler({ auth, request });
+    },
+  };
+}
