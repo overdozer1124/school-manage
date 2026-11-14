@@ -130,6 +130,28 @@ export function calendarTimeToPeriods(time: CalendarTime, dayPeriods: PeriodTime
     .map((p) => p.period);
 }
 
+function formatDate(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Adds n days to a YYYY-MM-DD date (UTC arithmetic, so no DST drift). */
+export function addDays(date: string, n: number): string {
+  const [y, m, d] = date.split("-").map(Number) as [number, number, number];
+  return formatDate(new Date(Date.UTC(y, m - 1, d + n)));
+}
+
+/** Every date from `from` to `to` inclusive, ascending; empty when to < from. */
+export function datesInRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  for (let date = from; date <= to; date = addDays(date, 1)) {
+    dates.push(date);
+  }
+  return dates;
+}
+
 const WEEKDAYS: Weekday[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
 /** The weekday a date falls on, without any swap applied. */
@@ -144,6 +166,17 @@ export function weekdayOf(date: string): Weekday {
  */
 export function effectiveWeekday(date: string, weekdaySwap: Weekday | null | undefined): Weekday {
   return weekdaySwap ?? weekdayOf(date);
+}
+
+/**
+ * The first day of the week containing a date, where the week starts
+ * on weekStart (Monday by default; a Friday-changeover week duty
+ * passes "fri", DESIGN schedule 4.7's 週番の金曜交代).
+ */
+export function weekStartOf(date: string, weekStart: Weekday = "mon"): string {
+  const dayIndex = WEEKDAYS.indexOf(weekdayOf(date));
+  const startIndex = WEEKDAYS.indexOf(weekStart);
+  return addDays(date, -((dayIndex - startIndex + 7) % 7));
 }
 
 export { weekdaySchema };

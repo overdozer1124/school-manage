@@ -281,6 +281,140 @@ export const dailyValues = pgTable(
 export type DailyValueRow = typeof dailyValues.$inferSelect;
 
 /**
+ * A duty definition: one kind of duty a school runs (DESIGN schedule
+ * 4.7) — 日番, 日直, 週番, 清掃当番 — under the school's own name.
+ * granularity says how the duty repeats (a whole day, morning /
+ * afternoon halves, a week, or lesson periods); applicable_period
+ * says when it is in force. For long_vacation_only and term the
+ * platform calendar decides (its day types and its terms), so no
+ * dates are configured here; the range columns belong to
+ * custom_range. target_group_id names the axis when the duty is the
+ * students' rather than the staff's; null is a staff duty.
+ */
+export const dutyDefinitions = pgTable(
+  "duty_definitions",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    name: text("name").notNull(),
+    granularity: text("granularity").notNull(),
+    applicablePeriod: text("applicable_period").notNull(),
+    applicableStartsOn: date("applicable_starts_on"),
+    applicableEndsOn: date("applicable_ends_on"),
+    targetGroupId: text("target_group_id"),
+    sort: integer("sort").default(0).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    foreignKey({
+      name: "duty_definitions_group_fk",
+      columns: [t.schoolId, t.targetGroupId],
+      foreignColumns: [targetGroups.schoolId, targetGroups.id],
+    }),
+    check(
+      "duty_definitions_granularity_check",
+      sql`${t.granularity} in ('day', 'am_pm', 'week', 'period')`,
+    ),
+    check(
+      "duty_definitions_applicable_period_check",
+      sql`${t.applicablePeriod} in ('all_year', 'term', 'long_vacation_only', 'custom_range')`,
+    ),
+    check(
+      "duty_definitions_range_order",
+      sql`${t.applicableStartsOn} is null or ${t.applicableEndsOn} is null or ${t.applicableStartsOn} <= ${t.applicableEndsOn}`,
+    ),
+  ],
+);
+
+export type DutyDefinitionRow = typeof dutyDefinitions.$inferSelect;
+
+/**
+ * The rotation rule of one duty definition (DESIGN schedule 4.7):
+ * the roster, in order, and the weekdays the holder changes on.
+ * The roster names the platform's staff masters (DESIGN-INTEGRATION
+ * 2.4) — staff ids cannot be a foreign key from this database, so
+ * membership in the school's staff is checked against the platform
+ * when a rule is written (Issue #30). One rule per definition.
+ * change_weekdays is null when the holder advances at every cell;
+ * for a week duty its first entry is also the day the week starts
+ * (週番の金曜交代 means the week runs Friday to Thursday).
+ */
+export const rotationRules = pgTable(
+  "rotation_rules",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    dutyDefinitionId: text("duty_definition_id").notNull(),
+    personIds: jsonb("person_ids").$type<string[]>().notNull(),
+    changeWeekdays: jsonb("change_weekdays").$type<string[]>(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("rotation_rules_definition_unique").on(t.schoolId, t.dutyDefinitionId),
+    foreignKey({
+      name: "rotation_rules_definition_fk",
+      columns: [t.schoolId, t.dutyDefinitionId],
+      foreignColumns: [dutyDefinitions.schoolId, dutyDefinitions.id],
+    }).onDelete("cascade"),
+  ],
+);
+
+export type RotationRuleRow = typeof rotationRules.$inferSelect;
+
+/**
+ * One duty assignment (DESIGN schedule 4.7): who holds a duty on a
+ * date (the week's first day for a week duty), in a slot. The holder
+ * is a staff member (person_id, a platform staff-master id — no
+ * foreign key is possible, so it is checked against the platform
+ * when written) or, for a students' duty, a row of `targets`
+ * (target_id, composite FK); never both. origin records how the
+ * assignment came to be (auto generation, a manual set, a swap) and
+ * is_manual_override marks a manual set that replaced a generated
+ * one; automatic generation never overwrites a manual or swap row.
+ * Audit columns follow DESIGN-AUTH-TENANCY 4.7.
+ */
+export const dutyAssignments = pgTable(
+  "duty_assignments",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    dutyDefinitionId: text("duty_definition_id").notNull(),
+    date: date("date").notNull(),
+    slot: text("slot").default("all_day").notNull(),
+    personId: text("person_id"),
+    targetId: text("target_id"),
+    note: text("note"),
+    origin: text("origin").default("manual").notNull(),
+    isManualOverride: boolean("is_manual_override").default(false).notNull(),
+    createdBy: text("created_by").notNull(),
+    updatedBy: text("updated_by").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("duty_assignments_cell_unique").on(t.schoolId, t.dutyDefinitionId, t.date, t.slot),
+    foreignKey({
+      name: "duty_assignments_definition_fk",
+      columns: [t.schoolId, t.dutyDefinitionId],
+      foreignColumns: [dutyDefinitions.schoolId, dutyDefinitions.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "duty_assignments_target_fk",
+      columns: [t.schoolId, t.targetId],
+      foreignColumns: [targets.schoolId, targets.id],
+    }),
+    check("duty_assignments_holder_check", sql`${t.personId} is null or ${t.targetId} is null`),
+    check("duty_assignments_origin_check", sql`${t.origin} in ('auto', 'manual', 'swap')`),
+    check(
+      "duty_assignments_slot_check",
+      sql`${t.slot} in ('all_day', 'am', 'pm', 'week') or ${t.slot} ~ '^[0-9]+$'`,
+    ),
+  ],
+);
+
+export type DutyAssignmentRow = typeof dutyAssignments.$inferSelect;
+
+/**
  * A view definition: how a slice of the schedule is shown, without
  * holding any data itself (DESIGN schedule 4.8). layout is one of
  * the 4.8.1 catalog keys, including the Phase 2 layouts — a
@@ -330,9 +464,11 @@ export type ViewDefinitionRow = typeof viewDefinitions.$inferSelect;
  * attribute of the day itself. A daily_item column references its
  * item definition (composite FK; deleting an item a view still
  * uses is refused, so a view cannot silently lose a column). A duty
- * column names its duty definition by id only: duty definitions
- * are a later issue, so there is no table to key into yet (the
- * same treatment as daily_values.value_option_id, Issue #28).
+ * column keys into its duty definition the same way since Issue
+ * #30 gave duty definitions a table in this database; deleting a
+ * duty definition a view still uses is refused too. (The decision
+ * PR #62 left open; the platform-side value_option_id stays keyless
+ * because its table is in another database, Issue #28.)
  * target_group_id expands the column per target of that axis;
  * null shows the column once. group_same_values switches the
  * 4.8.2 same-value grouping for this column (default on).
@@ -362,6 +498,11 @@ export const viewColumns = pgTable(
       name: "view_columns_item_fk",
       columns: [t.schoolId, t.itemDefinitionId],
       foreignColumns: [itemDefinitions.schoolId, itemDefinitions.id],
+    }),
+    foreignKey({
+      name: "view_columns_duty_fk",
+      columns: [t.schoolId, t.dutyDefinitionId],
+      foreignColumns: [dutyDefinitions.schoolId, dutyDefinitions.id],
     }),
     foreignKey({
       name: "view_columns_target_group_fk",

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   absencePublicSchema,
+  absenceRestrictedSchema,
   absenceSchema,
   absenceSubdivisionSchema,
   canViewAbsenceSubdivision,
+  canViewAbsenceTexts,
   defaultLeaveSubdivisions,
   isOwnAbsence,
   calendarDayInputSchema,
@@ -275,6 +277,25 @@ describe("absence privacy shape", () => {
       false,
     );
     expect(canViewAbsenceSubdivision(absence, { teacherId: null, isAdmin: false })).toBe(false);
+  });
+
+  it("drops a leave absence's subdivision, purpose and note in the restricted shape", () => {
+    const parsed = absenceRestrictedSchema.parse(absence);
+    expect("subdivisionKey" in parsed).toBe(false);
+    expect("purpose" in parsed).toBe(false);
+    expect("note" in parsed).toBe(false);
+    expect(parsed.kind).toBe("leave");
+    expect(parsed.staffId).toBe("staff-1");
+  });
+
+  it("shows the texts of a non-leave absence to every member, a leave's only under the subdivision judgment", () => {
+    const trip = { ...absence, kind: "business_trip" as const, subdivisionKey: null };
+    expect(canViewAbsenceTexts(trip, { teacherId: "staff-2", isAdmin: false })).toBe(true);
+    expect(canViewAbsenceTexts(trip, { teacherId: null, isAdmin: false })).toBe(true);
+    expect(canViewAbsenceTexts(absence, { teacherId: "staff-2", isAdmin: false })).toBe(false);
+    expect(canViewAbsenceTexts(absence, { teacherId: null, isAdmin: false })).toBe(false);
+    expect(canViewAbsenceTexts(absence, { teacherId: "staff-1", isAdmin: false })).toBe(true);
+    expect(canViewAbsenceTexts(absence, { teacherId: "staff-2", isAdmin: true })).toBe(true);
   });
 });
 
