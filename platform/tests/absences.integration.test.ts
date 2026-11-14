@@ -550,9 +550,98 @@ describe.skipIf(!url)("staff absences", () => {
     expect("purpose" in updated.json).toBe(false);
     expect("note" in updated.json).toBe(false);
 
-    // The stored texts themselves are untouched by the shaping.
+    // The stored texts themselves are untouched by the shaping —
+    // and untouched by this edit, too: the Editor cannot see them,
+    // so the note they sent is not taken and the stored value
+    // stands (a caller who cannot see a field cannot replace it).
     const afterAsSelf = await api("GET", `${ABSENCES}/abs-leave-texts`, { cookie: teacher1A() });
-    expect(afterAsSelf.json.note).toBe("家族の付き添い（日程変更）");
+    expect(afterAsSelf.json.note).toBe("家族の付き添い");
+  });
+
+  it("keeps the fields an Editor cannot see when they edit another's leave", async () => {
+    const created = await api("POST", ABSENCES, {
+      cookie: adminA(),
+      body: absenceInput("abs-leave-carry", {
+        staffId: "staff-1",
+        fromDate: "2026-11-20",
+        toDate: "2026-11-20",
+        subdivisionKey: "sick",
+        purpose: "通院",
+        note: "家族の付き添い",
+        certainty: "confirmed",
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect(created.json.revision).toBe(1);
+
+    // The Editor is neither an Admin nor the person, so the full
+    // record never reached them. A full-replace edit naming only
+    // what they can see — the dates move — must still go through:
+    // omitting the three hidden fields is not a 400.
+    const datesOnly = await api("PUT", `${ABSENCES}/abs-leave-carry`, {
+      cookie: editorA(),
+      body: {
+        id: "abs-leave-carry",
+        staffId: "staff-1",
+        fromDate: "2026-11-21",
+        toDate: "2026-11-22",
+        time: { kind: "all_day" },
+        kind: "leave",
+        certainty: "confirmed",
+        revision: 1,
+      },
+    });
+    expect(datesOnly.status).toBe(200);
+    expect(datesOnly.json.fromDate).toBe("2026-11-21");
+    expect(datesOnly.json.toDate).toBe("2026-11-22");
+    expect(datesOnly.json.revision).toBe(2);
+
+    // Sending nulls for the fields they cannot see does not clear
+    // them either — the body's word on them is not taken.
+    const withNulls = await api("PUT", `${ABSENCES}/abs-leave-carry`, {
+      cookie: editorA(),
+      body: absenceInput("abs-leave-carry", {
+        staffId: "staff-1",
+        fromDate: "2026-11-23",
+        toDate: "2026-11-23",
+        subdivisionKey: null,
+        purpose: null,
+        note: null,
+        certainty: "confirmed",
+        revision: 2,
+      }),
+    });
+    expect(withNulls.status).toBe(200);
+    expect(withNulls.json.revision).toBe(3);
+
+    // All three hidden fields kept their stored values throughout.
+    const asAdmin = await api("GET", `${ABSENCES}/abs-leave-carry`, { cookie: adminA() });
+    expect(asAdmin.json.fromDate).toBe("2026-11-23");
+    expect(asAdmin.json.subdivisionKey).toBe("sick");
+    expect(asAdmin.json.purpose).toBe("通院");
+    expect(asAdmin.json.note).toBe("家族の付き添い");
+    expect(asAdmin.json.revision).toBe(3);
+  });
+
+  it("lets an Admin rewrite the hidden fields of a leave", async () => {
+    const edited = await api("PUT", `${ABSENCES}/abs-leave-carry`, {
+      cookie: adminA(),
+      body: absenceInput("abs-leave-carry", {
+        staffId: "staff-1",
+        fromDate: "2026-11-23",
+        toDate: "2026-11-23",
+        subdivisionKey: "annual",
+        purpose: "私用",
+        note: "変更後のメモ",
+        certainty: "confirmed",
+        revision: 3,
+      }),
+    });
+    expect(edited.status).toBe(200);
+    expect(edited.json.subdivisionKey).toBe("annual");
+    expect(edited.json.purpose).toBe("私用");
+    expect(edited.json.note).toBe("変更後のメモ");
+    expect(edited.json.revision).toBe(4);
   });
 
   it("hides a leave absence's texts in the pending list and in the confirm answer", async () => {

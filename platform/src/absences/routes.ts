@@ -203,6 +203,29 @@ function assertSelfService(input: AbsenceInput, authed: AuthedMember, flags: Rol
   }
 }
 
+/**
+ * The stored values a full-replace update keeps for the fields its
+ * caller may not see. The input schema requires every field, but a
+ * caller who was never shown a field — the subdivision for anyone
+ * but an Admin and the person, a leave's purpose and note under the
+ * same judgment — cannot name its value: leaving the key out would
+ * refuse the edit with a 400, and sending null would silently clear
+ * what is stored. So whatever the body carries for such a field is
+ * ignored and the stored value is carried over instead; a caller
+ * who may see the field replaces it as before.
+ */
+function carriedFields(existing: Absence, viewer: AbsenceViewer): Partial<AbsenceInput> {
+  const carried: Partial<AbsenceInput> = {};
+  if (!canViewAbsenceSubdivision(existing, viewer)) {
+    carried.subdivisionKey = existing.subdivisionKey;
+  }
+  if (!canViewAbsenceTexts(existing, viewer)) {
+    carried.purpose = existing.purpose;
+    carried.note = existing.note;
+  }
+  return carried;
+}
+
 export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
   const router = Router();
   const absences = "/calendar/absences";
@@ -351,13 +374,20 @@ export function createAbsencesRouter(deps: AbsencesRouterDeps): Router {
         throw new AuthError(400, "入力が正しくありません");
       }
       const revision = parseRevision(body);
-      const input = parseAbsenceInput(withSchool({ ...body, id }, authed.claims.schoolId));
       const flags = await roleFlags(deps.authStore, authed.membership.id);
+      const existing = await deps.absenceStore.get(authed.claims.schoolId, id);
+      if (!existing) throw new AbsenceNotFoundError("absence", id);
+      // Fields this caller may not see keep their stored values —
+      // the body's word on them is not taken (see carriedFields).
+      const input = parseAbsenceInput(
+        withSchool(
+          { ...body, id, ...carriedFields(existing, viewerOf(authed.membership, flags)) },
+          authed.claims.schoolId,
+        ),
+      );
       if (!flags.isWriter) {
         // A non-writer may only edit their own absence, and may not
         // hand it to someone else in the edit either.
-        const existing = await deps.absenceStore.get(authed.claims.schoolId, id);
-        if (!existing) throw new AbsenceNotFoundError("absence", id);
         if (
           !isOwnAbsence(existing, authed.membership.teacherId) ||
           !isOwnAbsence(input, authed.membership.teacherId)
