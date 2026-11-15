@@ -1,18 +1,104 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
+import { AuthAccessError } from "@school-manage/platform-client";
+import type { ScheduleAuth } from "./auth.js";
+import { PlatformRelayError } from "./platformClient.js";
 
 /**
- * The schedule HTTP app: for now, the health check the external
- * monitoring pings (DESIGN-INTEGRATION 8-3-3). The screens and the
- * action endpoints arrive with their own issues, on top of the auth,
- * permission and tenancy foundations laid in this one.
+ * The schedule HTTP app (Issue #34): the health check the external
+ * monitoring pings (DESIGN-INTEGRATION 8-3-3), the action endpoints
+ * the screens call, and the built screens themselves, served under
+ * `/{slug}/schedule/` on the shared domain (8-3-1).
+ *
+ * The action endpoints are thin: verify the caller (the platform
+ * decides, via ScheduleAuth), hand the action the request body with
+ * the caller's cookie injected — the actions read the platform with
+ * the caller's own session, forwarded as-is (Issue #29's convention)
+ * — and answer with the result as JSON. Verdicts keep their shape
+ * end to end: an AuthAccessError is its 401 / 403, a platform relay
+ * refusal is the platform's own status and body, and the client's
+ * 401-vs-403 split (DESIGN-AUTH-TENANCY 4.8) is built on exactly
+ * that.
  */
-export function createApp() {
+export interface ScheduleActionLike {
+  run(auth: never, request: never): Promise<unknown>;
+}
+
+export interface ScheduleAppDeps {
+  /** Verifies a request into an AuthContext (or throws AuthAccessError). */
+  auth: ScheduleAuth;
+  /** Builds the read actions for one request, bound to its cookie:
+   *  the platform reads and the duty source are per-caller. */
+  createActions(cookie: string): {
+    getBootstrap: ScheduleActionLike;
+    getRange: ScheduleActionLike;
+  };
+  /** Directory of the built screens (client/dist). When it does not
+   *  exist, only the API and health check are served. */
+  clientDistDir?: string;
+}
+
+const ACTION_NAMES = ["getBootstrap", "getRange"] as const;
+
+export function createApp(deps?: ScheduleAppDeps) {
   const app = express();
   app.use(express.json());
 
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok" });
   });
+
+  if (deps) {
+    app.post("/:slug/schedule/api/:action", async (req, res) => {
+      const actionName = req.params.action as string;
+      if (!(ACTION_NAMES as readonly string[]).includes(actionName)) {
+        res.status(404).json({ error: `unknown action: ${actionName}` });
+        return;
+      }
+      try {
+        const auth = await deps.auth.verifyRequest(req);
+        const cookie = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+        const actions = deps.createActions(cookie);
+        const action = actions[actionName as (typeof ACTION_NAMES)[number]];
+        const body =
+          typeof req.body === "object" && req.body !== null
+            ? (req.body as Record<string, unknown>)
+            : {};
+        const result = await action.run(auth as never, { ...body, cookie } as never);
+        res.json(result ?? null);
+      } catch (error) {
+        if (error instanceof AuthAccessError) {
+          res.status(error.status).json({ error: error.message });
+          return;
+        }
+        if (error instanceof PlatformRelayError) {
+          // The platform's verdict travels untouched (Issue #29).
+          res.status(error.status).json(error.body ?? { error: error.message });
+          return;
+        }
+        if (error instanceof Error && error.name === "ZodError") {
+          res.status(400).json({ error: error.message });
+          return;
+        }
+        res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+      }
+    });
+
+    const distDir =
+      deps.clientDistDir ??
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../client/dist");
+    if (existsSync(path.join(distDir, "index.html"))) {
+      app.use("/:slug/schedule", express.static(distDir));
+      // SPA fallback: any path under the app that is not a file is
+      // the screen itself (the screens route by state, not by URL,
+      // so this is mostly the entry path with a trailing slash).
+      app.get("/:slug/schedule/*splat", (_req, res) => {
+        res.sendFile(path.join(distDir, "index.html"));
+      });
+    }
+  }
 
   return app;
 }

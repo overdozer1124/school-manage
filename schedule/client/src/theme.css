@@ -1,0 +1,181 @@
+/*
+ * Theme for the schedule screens (Issue #34), ported from the
+ * prototype's client/src/theme.css: the same warm paper palette and
+ * CSS variables, kept as plain CSS (the prototype's Tailwind setup
+ * is not part of this implementation). Print keeps the day colours
+ * and, with them, the weekday letters and holiday names the table
+ * always prints alongside (DESIGN schedule 9.1).
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #faf8f3;
+  --surface: #ffffff;
+  --text: #1f2937;
+  --dim: #6d675c;
+  --border: #ddd5c5;
+  --accent: #1e3a5f;
+  --sat: #2563eb;
+  --sun: #b91c1c;
+  --radius: 10px;
+  font-family:
+    "Hiragino Kaku Gothic ProN",
+    "Hiragino Sans",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --surface: #1e222b;
+    --text: #e8e6e1;
+    --dim: #a39e93;
+    --border: #3a4152;
+    --accent: #8fb4e8;
+    --sat: #7aa5ec;
+    --sun: #e88a8a;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.schedule-app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.app-header h1 {
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.period-nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.period-label {
+  font-weight: 600;
+  min-width: 6em;
+  text-align: center;
+}
+
+.rows-table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.rows-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+
+.rows-table th,
+.rows-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.rows-table thead th {
+  background: var(--bg);
+  font-weight: 600;
+}
+
+.rows-table tr.closed {
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+
+.date-cell {
+  white-space: nowrap;
+  width: 92px;
+}
+
+.date-cell .date-num {
+  font-weight: 600;
+}
+
+.date-cell.kind-sat .date-num,
+.date-cell.kind-sat .date-weekday {
+  color: var(--sat);
+}
+
+.date-cell.kind-holiday .date-num,
+.date-cell.kind-holiday .date-weekday {
+  color: var(--sun);
+}
+
+/* The non-colour signal: holiday names and day-type labels printed
+   under the date (DESIGN schedule 9.1). */
+.date-cell .date-sub {
+  display: block;
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--dim);
+  white-space: normal;
+}
+
+.undecided {
+  margin-top: 20px;
+}
+
+.undecided h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.undecided ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.undecided li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 6px 10px;
+}
+
+.undecided-kind {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.forbidden,
+.load-error {
+  font-size: 16px;
+  padding: 24px 0;
+}
+
+@media print {
+  .controls {
+    display: none;
+  }
+  .schedule-app {
+    max-width: none;
+  }
+}
