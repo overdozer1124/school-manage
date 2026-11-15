@@ -138,14 +138,16 @@ export function createHttpDutyPlatformSource(
   }
   return {
     async listStaff() {
-      const items = await getItems<NonNullable<StaffListBody["items"]>[number]>("/masters/staff");
+      const items = await getItems<NonNullable<StaffListBody["items"]>[number]>(
+        "/platform/api/v1/masters/staff",
+      );
       return items
         .filter((i) => typeof i.id === "string")
         .map((i) => ({ id: i.id as string, active: i.active !== false }));
     },
     async listCalendarDays(_schoolId, range) {
       const items = await getItems<NonNullable<DayListBody["items"]>[number]>(
-        `/calendar/days?from=${range.from}&to=${range.to}`,
+        `/platform/api/v1/calendar/days?from=${range.from}&to=${range.to}`,
       );
       return items
         .filter((i) => typeof i.date === "string" && typeof i.dayType === "string")
@@ -153,7 +155,7 @@ export function createHttpDutyPlatformSource(
     },
     async listAbsences(_schoolId, range) {
       const items = await getItems<NonNullable<AbsenceListBody["items"]>[number]>(
-        `/calendar/absences?from=${range.from}&to=${range.to}`,
+        `/platform/api/v1/calendar/absences?from=${range.from}&to=${range.to}`,
       );
       const entries: DutyAbsenceEntry[] = [];
       for (const item of items) {

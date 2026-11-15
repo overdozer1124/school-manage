@@ -5,14 +5,23 @@
     "drizzle-orm": "^0.44.7",
     "express": "^5.1.0",
     "postgres": "^3.4.7",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
     "@types/express": "^5.0.3",
     "@types/node": "^22.18.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
     "drizzle-kit": "^0.31.5",
+    "jsdom": "^31.0.1",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
+    "vite": "^7.3.7",
     "vitest": "^3.2.4"
   },
   "name": "@school-manage/schedule",
@@ -22,8 +31,10 @@
     "db:migrate": "drizzle-kit migrate",
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run && vitest run --config client/vitest.config.ts",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json",
+    "build:client": "vite build client",
+    "dev:client": "vite client"
   },
   "type": "module",
   "version": "0.0.0"
