@@ -619,6 +619,13 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
     expect(result.targetGroups.map((g) => g.id)).toEqual(["grp-club"]);
     expect(result.targetGroups[0]?.targets.map((t) => t.id)).toEqual(["tgt-soccer"]);
     expect(result.kindTemplates).toHaveLength(4);
+    // The duty definitions name the table's duty columns and
+    // drive the duty panel (Issue #38): the seeded day duty is
+    // there, with no rotation rule yet.
+    const dutyDay = result.dutyDefinitions.find((d) => d.id === "duty-day");
+    expect(dutyDay?.name).toBe("日直");
+    expect(dutyDay?.granularity).toBe("day");
+    expect(dutyDay?.rotation).toBeNull();
     expect(result.masters.staff.map((s) => s.id)).toEqual(["teacher-a1"]);
     expect(result.masters.grades.map((g) => g.id)).toEqual(["grade-1"]);
     expect(result.masters.dayPatterns.map((p) => p.id)).toEqual(["pattern-a"]);

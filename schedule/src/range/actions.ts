@@ -336,7 +336,7 @@ export function createRangeActions(
 
     getBootstrap: scheduleAction("view.read", async ({ auth, request }) => {
       const input = getBootstrapInputSchema.parse(request);
-      const [me, staff, grades, dayPatterns, views, definitionSet, kindTemplates] =
+      const [me, staff, grades, dayPatterns, views, definitionSet, kindTemplates, dutyDefinitions] =
         await Promise.all([
           unwrapPlatformResult(await platformClient.getJson(ME_PATH, input.cookie)),
           platformItems(`${MASTERS_PATH}/staff`, input.cookie),
@@ -345,6 +345,13 @@ export function createRangeActions(
           viewsStore.getViews(db, auth.schoolId),
           definitionsStore.getDefinitionSet(db, auth.schoolId),
           templatesStore.getKindTemplates(db, auth.schoolId),
+          // The duty definitions (with their rotation rules) name
+          // the table's duty columns and drive the duty panel
+          // (Issue #38). They are this database's own rows, read
+          // like the views and item definitions; duties belong to
+          // staff screens, and getBootstrap serves staff only
+          // (view.read, DESIGN-AUTH-TENANCY 4.5).
+          dutiesStore.getDutyDefinitions(db, auth.schoolId),
         ]);
       const school = (me as { school?: { name?: unknown } } | null)?.school;
       const permissions = Object.entries(schedulePermissions)
@@ -363,6 +370,7 @@ export function createRangeActions(
         itemDefinitions: definitionSet.itemDefinitions,
         targetGroups: definitionSet.targetGroups,
         kindTemplates,
+        dutyDefinitions,
         masters: { staff, grades, dayPatterns },
       };
     }),
