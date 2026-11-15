@@ -14,9 +14,10 @@ import type {
  * so the screens can be started, checked and screenshotted before
  * the platform and this server are wired together in an environment
  * (the same role the platform-client's dev auth adapter plays for
- * the server, DESIGN-AUTH-TENANCY 5). It is used only when the page
- * is opened with `?dev=1` or built with VITE_SCHEDULE_DEV_ADAPTER=1;
- * production code paths never touch it.
+ * the server, DESIGN-AUTH-TENANCY 5). It is used only when a
+ * development build is opened with `?dev=1`, or the page was built
+ * with VITE_SCHEDULE_DEV_ADAPTER=1; production code paths never
+ * touch it.
  *
  * The fixture is the elementary-with-bus preset (DESIGN schedule
  * 5.1, schedule/src/definitions/presets.ts `elementary_bus`): the
@@ -349,9 +350,17 @@ export function createDevApi(): ScheduleApi {
   };
 }
 
-/** Whether the page should use the development adapter: an explicit
- *  `?dev=1` in the URL, or a build made with the env flag. */
-export function devAdapterEnabled(search: string, envFlag: string | undefined): boolean {
+/** Whether the page should use the development adapter: a build
+ *  made with the env flag, or — in a development build only — an
+ *  explicit `?dev=1` in the URL. A production build never switches
+ *  to the fake data from the URL alone (PR #73 review): the flag is
+ *  a build-time choice, the query is not. */
+export function devAdapterEnabled(
+  search: string,
+  envFlag: string | undefined,
+  isDevBuild: boolean,
+): boolean {
   if (envFlag === "1") return true;
+  if (!isDevBuild) return false;
   return new URLSearchParams(search).get("dev") === "1";
 }

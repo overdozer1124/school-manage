@@ -79,10 +79,29 @@ export function createApp(deps?: ScheduleAppDeps) {
           return;
         }
         if (error instanceof Error && error.name === "ZodError") {
-          res.status(400).json({ error: error.message });
+          // Only which input is wrong travels: field paths and the
+          // kind of mismatch. The raw message can quote received
+          // values, so it stays out of the response.
+          const issues = (error as { issues?: unknown }).issues;
+          res.status(400).json({
+            error: "入力が正しくありません",
+            issues: Array.isArray(issues)
+              ? issues.map((issue) => {
+                  const i = issue as { path?: unknown; code?: unknown };
+                  return {
+                    path: Array.isArray(i.path) ? i.path.map(String).join(".") : "",
+                    code: typeof i.code === "string" ? i.code : "invalid",
+                  };
+                })
+              : [],
+          });
           return;
         }
-        res.status(500).json({ error: error instanceof Error ? error.message : "internal error" });
+        // A 500 never carries the exception's message: database and
+        // other internal errors name SQL and internals that must not
+        // reach the screen. The detail goes to the server log only.
+        console.error("schedule action failed:", error);
+        res.status(500).json({ error: "サーバーでエラーが起きました" });
       }
     });
 

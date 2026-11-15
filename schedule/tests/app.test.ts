@@ -2,7 +2,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { AuthAccessError, type AuthContext } from "@school-manage/platform-client";
 import { createApp, type ScheduleAppDeps } from "../src/app.js";
 
@@ -21,7 +22,7 @@ const authContext: AuthContext = {
   teacherId: null,
 };
 
-let mode: "ok" | "unauthenticated" | "forbidden" = "ok";
+let mode: "ok" | "unauthenticated" | "forbidden" | "boom" | "badInput" = "ok";
 let lastRequest: unknown = null;
 
 const deps: ScheduleAppDeps = {
@@ -36,6 +37,12 @@ const deps: ScheduleAppDeps = {
       async run(_auth: never, request: never) {
         lastRequest = request;
         if (mode === "forbidden") throw new AuthAccessError(403, "権限がありません");
+        if (mode === "boom") {
+          throw new Error('relation "secret_table" does not exist: select * from secret_table');
+        }
+        if (mode === "badInput") {
+          z.object({ from: z.string() }).parse({});
+        }
         return { school: { id: "school-1", name: "テスト学校" } };
       },
     },
@@ -98,6 +105,41 @@ describe("schedule HTTP app (Issue #34)", () => {
     });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "権限がありません" });
+    mode = "ok";
+  });
+
+  it("answers 500 with a fixed message and never leaks the exception's detail", async () => {
+    mode = "boom";
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await fetch(`${baseUrl}/test-school/schedule/api/getBootstrap`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: "platform_session=tok" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(500);
+      const text = await res.text();
+      expect(JSON.parse(text)).toEqual({ error: "サーバーでエラーが起きました" });
+      expect(text).not.toContain("secret_table");
+      // The detail is logged server-side instead.
+      expect(logged).toHaveBeenCalled();
+    } finally {
+      logged.mockRestore();
+      mode = "ok";
+    }
+  });
+
+  it("answers 400 naming only which input is wrong", async () => {
+    mode = "badInput";
+    const res = await fetch(`${baseUrl}/test-school/schedule/api/getBootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "platform_session=tok" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; issues: { path: string }[] };
+    expect(body.error).toBe("入力が正しくありません");
+    expect(body.issues.map((i) => i.path)).toEqual(["from"]);
     mode = "ok";
   });
 
