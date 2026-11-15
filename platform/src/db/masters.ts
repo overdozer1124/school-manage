@@ -17,6 +17,9 @@ import type {
 } from "@school-manage/calendar-types";
 import {
   RevisionConflictError,
+  RevisionedRowNotFoundError,
+  deleteRevisioned,
+  lockRevisioned,
   saveWithChange,
   updateRevisioned,
   type RevisionedTable,
@@ -261,14 +264,22 @@ function makeSimpleCrud<M, R>(db: Db, spec: SimpleSpec<M, R>): MasterCrud<M, R> 
             actor,
           },
           async (tx) => {
-            const row = await findRow(schoolId, id, tx);
-            if (!row) throw new MasterNotFoundError(spec.kind, id);
-            if ((row.revision as number) !== expectedRevision) {
-              throw new RevisionConflictError(spec.toRecord(row));
+            // The delete carries the revision (deleteRevisioned,
+            // Issue #59): an update committed in between is never
+            // deleted along with the stale row.
+            try {
+              await deleteRevisioned(tx, table, {
+                schoolId,
+                id,
+                expectedRevision,
+                formatLatest: (row) => spec.toRecord(row as Record<string, unknown>),
+              });
+            } catch (error) {
+              if (error instanceof RevisionedRowNotFoundError) {
+                throw new MasterNotFoundError(spec.kind, id);
+              }
+              throw error;
             }
-            await (tx as unknown as LooseDb)
-              .delete(table)
-              .where(and(eq(table.schoolId, schoolId), eq(table.id, id)));
           },
         );
       } catch (error) {
@@ -538,18 +549,28 @@ export function createMasterStore(db: Db): MasterStore {
             actor,
           },
           async (tx) => {
-            const pattern = await findPattern(tx, schoolId, id);
+            // The periods are subordinate rows whose foreign key
+            // forbids deleting the pattern first, so the pattern is
+            // locked FOR UPDATE before anything is removed
+            // (Issue #59): while this transaction holds the lock no
+            // update can slip in, and an update that got there first
+            // makes the lock wait and then shows its newer revision
+            // here, which is refused before any period is touched.
+            const pattern = (await lockRevisioned(tx, dayPatterns as unknown as RevisionedTable, {
+              schoolId,
+              id,
+            })) as DayPatternRow | undefined;
             if (!pattern) throw new MasterNotFoundError("day_pattern", id);
+            const periods = await tx
+              .select()
+              .from(dayPatternPeriods)
+              .where(
+                and(
+                  eq(dayPatternPeriods.schoolId, schoolId),
+                  eq(dayPatternPeriods.dayPatternId, id),
+                ),
+              );
             if (pattern.revision !== expectedRevision) {
-              const periods = await tx
-                .select()
-                .from(dayPatternPeriods)
-                .where(
-                  and(
-                    eq(dayPatternPeriods.schoolId, schoolId),
-                    eq(dayPatternPeriods.dayPatternId, id),
-                  ),
-                );
               throw new RevisionConflictError(toDayPatternRecord(pattern, periods));
             }
             await tx
@@ -560,9 +581,25 @@ export function createMasterStore(db: Db): MasterStore {
                   eq(dayPatternPeriods.dayPatternId, id),
                 ),
               );
-            await tx
-              .delete(dayPatterns)
-              .where(and(eq(dayPatterns.schoolId, schoolId), eq(dayPatterns.id, id)));
+            try {
+              await deleteRevisioned(tx, dayPatterns as unknown as RevisionedTable, {
+                schoolId,
+                id,
+                expectedRevision,
+              });
+            } catch (error) {
+              if (error instanceof RevisionedRowNotFoundError) {
+                throw new MasterNotFoundError("day_pattern", id);
+              }
+              if (error instanceof RevisionConflictError) {
+                // Unreachable while the lock above is held; answer
+                // with the same record shape as the check above.
+                throw new RevisionConflictError(
+                  toDayPatternRecord(error.latest as DayPatternRow, periods),
+                );
+              }
+              throw error;
+            }
           },
         );
       } catch (error) {
