@@ -16,6 +16,9 @@ import {
 } from "@school-manage/calendar-types";
 import {
   RevisionConflictError,
+  RevisionedRowNotFoundError,
+  deleteRevisioned,
+  lockRevisioned,
   saveWithChange,
   updateRevisioned,
   type RevisionedTable,
@@ -112,6 +115,24 @@ export function eventConflictLatest(record: CalendarEventRecord): EventConflictL
     visibility: record.visibility,
     updatedBy: record.updatedBy,
     updatedVia: record.updatedVia,
+  };
+}
+
+/** The same filtered summary, built from a raw events row (the shape
+ *  deleteRevisioned re-reads when a delete matches nothing). */
+function eventConflictLatestFromRow(row: EventRow): EventConflictLatest {
+  return {
+    id: row.id,
+    revision: row.revision,
+    title: row.title,
+    kind: row.kind as CalendarEventRecord["kind"],
+    datePrecision: row.datePrecision as CalendarEventRecord["datePrecision"],
+    startsOn: row.startsOn,
+    endsOn: row.endsOn,
+    certainty: row.certainty as CalendarEventRecord["certainty"],
+    visibility: row.visibility as CalendarEventRecord["visibility"],
+    updatedBy: row.updatedBy,
+    updatedVia: row.updatedVia,
   };
 }
 
@@ -611,6 +632,19 @@ export function createEventStore(db: Db): EventStore {
             actor,
           },
           async (tx) => {
+            // The children (impacts / targets / assignees) carry
+            // foreign keys to the event, so the event cannot be
+            // deleted first: lock it FOR UPDATE before anything is
+            // removed (Issue #59). While this transaction holds the
+            // lock no update can slip in; an update that got there
+            // first makes the lock wait, and the record loaded after
+            // it shows the newer revision, which is refused before
+            // any child is touched.
+            const locked = await lockRevisioned(tx, events as unknown as RevisionedTable, {
+              schoolId,
+              id,
+            });
+            if (!locked) throw new EventNotFoundError(id);
             const existing = await loadRecords(tx, schoolId, id);
             const record = existing[0];
             if (!record) throw new EventNotFoundError(id);
@@ -618,9 +652,25 @@ export function createEventStore(db: Db): EventStore {
               throw new RevisionConflictError(eventConflictLatest(record));
             }
             await deleteChildren(tx, schoolId, id);
-            await (tx as unknown as LooseSource)
-              .delete(events as unknown as PgTable)
-              .where(and(eq(events.schoolId, schoolId), eq(events.id, id)));
+            try {
+              await deleteRevisioned(tx, events as unknown as RevisionedTable, {
+                schoolId,
+                id,
+                expectedRevision,
+              });
+            } catch (error) {
+              if (error instanceof RevisionedRowNotFoundError) {
+                throw new EventNotFoundError(id);
+              }
+              if (error instanceof RevisionConflictError) {
+                // Unreachable while the lock above is held; keep the
+                // privacy filtering of the 409 body regardless.
+                throw new RevisionConflictError(
+                  eventConflictLatestFromRow(error.latest as EventRow),
+                );
+              }
+              throw error;
+            }
           },
         );
       } catch (error) {

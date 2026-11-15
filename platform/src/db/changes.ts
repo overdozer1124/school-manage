@@ -142,9 +142,32 @@ interface LooseTx {
   };
   select(): {
     from(table: PgTable): {
-      where(cond: SQL | undefined): { limit(count: number): Promise<unknown[]> };
+      where(cond: SQL | undefined): {
+        limit(count: number): Promise<unknown[]>;
+        for(action: "update"): Promise<unknown[]>;
+      };
     };
   };
+  delete(table: PgTable): {
+    where(cond: SQL | undefined): { returning(): Promise<unknown[]> };
+  };
+}
+
+/**
+ * A revisioned delete (or lock) found no row in the school at all.
+ * Callers translate this into their own not-found error (the routes
+ * answer 404 either way); it is kept apart from RevisionConflictError
+ * so a missing row is never mistaken for a stale revision.
+ */
+export class RevisionedRowNotFoundError extends Error {
+  readonly status = 404;
+  constructor(
+    readonly schoolId: string,
+    readonly entityId: string,
+  ) {
+    super(`revisioned row not found: ${entityId} in school ${schoolId}`);
+    this.name = "RevisionedRowNotFoundError";
+  }
 }
 
 /**
@@ -194,6 +217,83 @@ export async function updateRevisioned<T extends RevisionedTable>(
     .limit(1);
   if (latest.length > 0) throw new RevisionConflictError(latest[0]);
   throw new Error(`updateRevisioned: no row ${args.id} in school ${args.schoolId}`);
+}
+
+/**
+ * Deletes one revisioned row under the optimistic lock (Issue #59),
+ * the counterpart of updateRevisioned: the delete itself carries
+ * `revision = expectedRevision`, so the check and the delete are one
+ * statement. A transaction that updated the row in between cannot be
+ * deleted by accident — under READ COMMITTED the DELETE waits for
+ * that transaction, then re-evaluates the revision against the
+ * committed row and matches nothing. When nothing was deleted, the
+ * row is read again: still there means the revision moved on
+ * (RevisionConflictError carrying the latest row, passed through
+ * `formatLatest` when the caller must filter what a 409 may show);
+ * gone means RevisionedRowNotFoundError. Returns the deleted row.
+ * Runs inside the caller's transaction, so saveWithChange records
+ * the delete event with revision `expectedRevision + 1` — the
+ * revision this delete actually stamped, because the row it removed
+ * provably stood at `expectedRevision`.
+ */
+export async function deleteRevisioned<T extends RevisionedTable>(
+  tx: Transaction,
+  table: T,
+  args: {
+    schoolId: string;
+    id: string;
+    expectedRevision: number;
+    formatLatest?: (row: RevisionedRow<T>) => unknown;
+  },
+): Promise<RevisionedRow<T>> {
+  const loose = tx as unknown as LooseTx;
+  const deleted = await loose
+    .delete(table)
+    .where(
+      and(
+        eq(table.schoolId, args.schoolId),
+        eq(table.id, args.id),
+        eq(table.revision, args.expectedRevision),
+      ),
+    )
+    .returning();
+  if (deleted.length > 0) return deleted[0] as RevisionedRow<T>;
+  const latest = await loose
+    .select()
+    .from(table)
+    .where(and(eq(table.schoolId, args.schoolId), eq(table.id, args.id)))
+    .limit(1);
+  if (latest.length > 0) {
+    const row = latest[0] as RevisionedRow<T>;
+    throw new RevisionConflictError(args.formatLatest ? args.formatLatest(row) : row);
+  }
+  throw new RevisionedRowNotFoundError(args.schoolId, args.id);
+}
+
+/**
+ * Locks one revisioned row with SELECT ... FOR UPDATE and returns
+ * it, or undefined when the school has no such row. For deletes that
+ * must remove subordinate rows first (their foreign keys forbid
+ * deleting the parent first): the caller locks the parent, checks
+ * the revision itself (so it can build its own filtered 409 body),
+ * deletes the children, and finishes with deleteRevisioned — which
+ * then cannot race, because this transaction holds the row lock
+ * until it ends. A concurrent updater that got there first makes
+ * this select wait; under READ COMMITTED it then returns the
+ * committed, updated row, whose newer revision the caller refuses.
+ */
+export async function lockRevisioned<T extends RevisionedTable>(
+  tx: Transaction,
+  table: T,
+  args: { schoolId: string; id: string },
+): Promise<RevisionedRow<T> | undefined> {
+  const loose = tx as unknown as LooseTx;
+  const rows = await loose
+    .select()
+    .from(table)
+    .where(and(eq(table.schoolId, args.schoolId), eq(table.id, args.id)))
+    .for("update");
+  return rows[0] as RevisionedRow<T> | undefined;
 }
 
 /** The read side of the outbox, behind the refetch endpoint. */
