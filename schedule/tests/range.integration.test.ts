@@ -12,7 +12,7 @@ import { runMigrations } from "../src/db/migrate.js";
 import { createDefinitionActions } from "../src/definitions/actions.js";
 import { createDailyValueActions } from "../src/dailyValues/actions.js";
 import { createDutyActions } from "../src/duties/actions.js";
-import type { DutyPlatformSource } from "../src/duties/platformSource.js";
+import type { DutyAbsenceEntry, DutyPlatformSource } from "../src/duties/platformSource.js";
 import { createEventActions } from "../src/events/actions.js";
 import { createRangeActions } from "../src/range/actions.js";
 import { createViewActions } from "../src/views/actions.js";
@@ -50,6 +50,9 @@ function jsonResponse(status: number, body: unknown): Response {
 const meta = { revision: 1, updatedBy: "user-a", updatedVia: "platform" };
 
 class FakePlatform {
+  /** How many times the absences list was asked for (Issue #69:
+   *  a non-staff range must not ask at all). */
+  absenceRequests = 0;
   days: Record_[] = [
     {
       ...meta,
@@ -136,6 +139,7 @@ class FakePlatform {
       return jsonResponse(200, { items });
     }
     if (method === "GET" && path === "/platform/api/v1/calendar/absences") {
+      this.absenceRequests += 1;
       const items = [...this.absences.values()]
         .filter((a) => (a.fromDate as string) <= to && (a.toDate as string) >= from)
         .map((absence) => {
@@ -173,15 +177,26 @@ class FakePlatform {
   }
 }
 
+/** The duty source's absences, rewritten by the conflict tests
+ *  (Issue #69) as absences come and go, and how often the source
+ *  was asked for them. */
+let dutyAbsences: DutyAbsenceEntry[] = [];
+let dutyAbsenceCalls = 0;
+
 const dutySource: DutyPlatformSource = {
   async listStaff() {
-    return [{ id: "teacher-a1", active: true }];
+    return [
+      { id: "teacher-a1", active: true },
+      { id: "teacher-a2", active: true },
+      { id: "teacher-a3", active: true },
+    ];
   },
   async listCalendarDays() {
     return [];
   },
-  async listAbsences() {
-    return [];
+  async listAbsences(_schoolId, range) {
+    dutyAbsenceCalls += 1;
+    return dutyAbsences.filter((a) => a.fromDate <= range.to && a.toDate >= range.from);
   },
   async listTerms() {
     return [];
@@ -222,6 +237,10 @@ const eventPayload = (overrides: Record_): Record_ => ({
 describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
   let queryClient: ReturnType<typeof postgres>;
   let range: ReturnType<typeof createRangeActions>;
+  let dbHandle: Db;
+  let platformClient: ReturnType<typeof createPlatformApiClient>;
+  let fakePlatform: FakePlatform;
+  let dutyActions: ReturnType<typeof createDutyActions>;
 
   beforeAll(async () => {
     const admin = postgres(url as string, { max: 1 });
@@ -232,18 +251,22 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
 
     const created = createDb(url);
     const db: Db = created.db;
+    dbHandle = db;
     queryClient = created.queryClient;
     await runMigrations(db);
 
     const fake = new FakePlatform();
+    fakePlatform = fake;
     const client = createPlatformApiClient({
       baseUrl: "http://platform.test",
       fetchImpl: fake.fetch,
     });
-    range = createRangeActions(db, client);
+    platformClient = client;
+    range = createRangeActions(db, client, dutySource);
     const defs = createDefinitionActions(db);
     const daily = createDailyValueActions(db);
     const duties = createDutyActions(db, dutySource);
+    dutyActions = duties;
     const events = createEventActions(db, client);
     const views = createViewActions(db);
     const adminA = auth(A, "Admin");
@@ -433,8 +456,24 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
       { month: "2027-10", events: [expect.objectContaining({ id: "ev-month" })] },
     ]);
     expect(result.days.every((d) => !d.events.some((e) => e.id === "ev-month"))).toBe(true);
-    // The conflict slot is present and empty until Issue #31.
-    expect(result.conflicts).toEqual([]);
+    // The conflicts are derived (Issue #69): the day duty stands
+    // on the 2nd, so the 1st and the 3rd are unassigned cells.
+    expect(result.conflicts).toEqual([
+      expect.objectContaining({
+        kind: "unassigned",
+        dutyDefinitionId: "duty-day",
+        date: "2027-10-01",
+        slot: "all_day",
+        personId: null,
+      }),
+      expect.objectContaining({
+        kind: "unassigned",
+        dutyDefinitionId: "duty-day",
+        date: "2027-10-03",
+        slot: "all_day",
+        personId: null,
+      }),
+    ]);
     expect(result.view.columns).toHaveLength(3);
   });
 
@@ -494,6 +533,7 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
     expect(day.dailyValues.map((v) => v.itemDefinitionId)).toEqual(["item-lunch"]);
     expect(day.dutyAssignments).toEqual([]);
     expect(day.absences).toEqual([]);
+    expect(result.conflicts).toEqual([]);
     expect(day.events.map((e) => e.id)).toEqual(["ev-day"]);
     // The platform stripped the assignees for this audience.
     expect(day.events[0]?.assignees).toEqual([]);
@@ -582,5 +622,158 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
     expect(result.masters.staff.map((s) => s.id)).toEqual(["teacher-a1"]);
     expect(result.masters.grades.map((g) => g.id)).toEqual(["grade-1"]);
     expect(result.masters.dayPatterns.map((p) => p.id)).toEqual(["pattern-a"]);
+  });
+
+  // ---- Duty conflicts in the range (Issue #69) ------------------
+
+  it("a staff view's range carries the same conflicts as getDutyConflicts", async () => {
+    const adminA = auth(A, "Admin");
+    const editorA = auth(A, "Editor");
+    await dutyActions.upsertDutyDefinition.run(adminA, {
+      id: "duty-ampm-range",
+      name: "日番（範囲）",
+      granularity: "am_pm",
+      applicablePeriod: "all_year",
+    });
+    await dutyActions.upsertDutyDefinition.run(adminA, {
+      id: "duty-extra-range",
+      name: "臨時当番",
+      granularity: "day",
+      applicablePeriod: "all_year",
+    });
+    // 2027-11-08: teacher-a1 holds the day duty and is away;
+    // teacher-a2 holds two duties over the same morning. The
+    // afternoon cell and all of 2027-11-09 stand unassigned.
+    await dutyActions.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-day",
+      date: "2027-11-08",
+      slot: "all_day",
+      personId: "teacher-a1",
+    });
+    await dutyActions.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-ampm-range",
+      date: "2027-11-08",
+      slot: "am",
+      personId: "teacher-a2",
+    });
+    await dutyActions.setDutyAssignment.run(editorA, {
+      dutyDefinitionId: "duty-extra-range",
+      date: "2027-11-08",
+      slot: "all_day",
+      personId: "teacher-a2",
+    });
+    dutyAbsences = [
+      {
+        id: "abs-range-a1",
+        staffId: "teacher-a1",
+        kind: "leave",
+        certainty: "confirmed",
+        fromDate: "2027-11-08",
+        toDate: "2027-11-08",
+        time: { kind: "all_day" },
+      },
+    ];
+
+    const viaRange = await range.getRange.run(editorA, {
+      from: "2027-11-08",
+      to: "2027-11-09",
+      viewId: "view-staff",
+      cookie: COOKIE,
+    });
+    const viaDuties = await dutyActions.getDutyConflicts.run(editorA, {
+      from: "2027-11-08",
+      to: "2027-11-09",
+    });
+    expect(viaRange.conflicts).toEqual(viaDuties);
+    const kinds = new Set(viaRange.conflicts.map((c) => c.kind));
+    expect(kinds).toEqual(new Set(["absence", "double", "unassigned"]));
+    expect(viaRange.conflicts.filter((c) => c.kind === "absence")).toEqual([
+      expect.objectContaining({
+        dutyDefinitionId: "duty-day",
+        date: "2027-11-08",
+        personId: "teacher-a1",
+        absenceId: "abs-range-a1",
+        absenceKind: "leave",
+      }),
+    ]);
+    expect(viaRange.conflicts.filter((c) => c.kind === "double")).toEqual([
+      expect.objectContaining({ date: "2027-11-08", personId: "teacher-a2" }),
+    ]);
+    expect(
+      viaRange.conflicts.some(
+        (c) =>
+          c.kind === "unassigned" && c.date === "2027-11-09" && c.dutyDefinitionId === "duty-day",
+      ),
+    ).toBe(true);
+  });
+
+  it("a waived conflict does not appear in the range", async () => {
+    const editorA = auth(A, "Editor");
+    const before = await range.getRange.run(editorA, {
+      from: "2027-11-08",
+      to: "2027-11-09",
+      viewId: "view-staff",
+      cookie: COOKIE,
+    });
+    const target = before.conflicts.find((c) => c.kind === "absence");
+    expect(target?.absenceId).toBe("abs-range-a1");
+
+    await dutyActions.waiveConflict.run(editorA, {
+      assignmentId: target?.assignmentId as string,
+      absenceId: "abs-range-a1",
+      reason: "本人が両立できると確認",
+    });
+
+    const after = await range.getRange.run(editorA, {
+      from: "2027-11-08",
+      to: "2027-11-09",
+      viewId: "view-staff",
+      cookie: COOKIE,
+    });
+    expect(after.conflicts.filter((c) => c.kind === "absence")).toEqual([]);
+    // Only that one conflict is gone; the rest still derive.
+    expect(after.conflicts).toHaveLength(before.conflicts.length - 1);
+    const viaDuties = await dutyActions.getDutyConflicts.run(editorA, {
+      from: "2027-11-08",
+      to: "2027-11-09",
+    });
+    expect(after.conflicts).toEqual(viaDuties);
+    dutyAbsences = [];
+  });
+
+  it("a non-staff view gets no conflicts and asks for no absences", async () => {
+    dutyAbsenceCalls = 0;
+    const platformAbsenceRequests = fakePlatform.absenceRequests;
+    const result = await range.getRange.run(auth(A, "Editor"), {
+      from: "2027-11-08",
+      to: "2027-11-09",
+      viewId: "view-guardian",
+      cookie: COOKIE,
+    });
+    expect(result.conflicts).toEqual([]);
+    // Neither the duty source nor the platform's absence list is
+    // asked: conflicts are staff dynamics, derived for staff
+    // views only.
+    expect(dutyAbsenceCalls).toBe(0);
+    expect(fakePlatform.absenceRequests).toBe(platformAbsenceRequests);
+  });
+
+  it("a staff range without a duty source fails explicitly; a guardian range does not need one", async () => {
+    const rangeNoDuty = createRangeActions(dbHandle, platformClient);
+    await expect(
+      rangeNoDuty.getRange.run(auth(A, "Editor"), {
+        from: "2027-11-08",
+        to: "2027-11-09",
+        viewId: "view-staff",
+        cookie: COOKIE,
+      }),
+    ).rejects.toThrow(/conflict derivation needs the platform source/);
+    const guardian = await rangeNoDuty.getRange.run(auth(A, "Editor"), {
+      from: "2027-11-08",
+      to: "2027-11-09",
+      viewId: "view-guardian",
+      cookie: COOKIE,
+    });
+    expect(guardian.conflicts).toEqual([]);
   });
 });

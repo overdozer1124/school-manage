@@ -18,6 +18,8 @@ import * as eventValuesStore from "../db/eventValues.js";
 import * as templatesStore from "../db/kindTemplates.js";
 import * as viewsStore from "../db/views.js";
 import { tenantDb } from "../db/tenant.js";
+import { deriveDutyConflictsForRange } from "../duties/conflicts.js";
+import type { DutyPlatformSource } from "../duties/platformSource.js";
 import { scheduleAction, schedulePermissions } from "../permissions.js";
 import { unwrapPlatformResult, type PlatformApiClient } from "../platformClient.js";
 import {
@@ -104,12 +106,21 @@ function dayFor(
  * the platform left it out, not because this layer removed it —
  * and this layer then applies the view's own filter (Issue #32's
  * pure functions): the columns and daily items the view's audience
- * may see, duties and absences only for a staff view. Every date's
+ * may see, duties and absences only for a staff view. A staff
+ * view's conflicts are derived by the same shared function
+ * getDutyConflicts uses (Issue #69), reading the platform through
+ * the same duty source; without that source a staff view's range
+ * is refused with the same explicit error, never silently emptied.
+ * Every date's
  * day is filled — the platform's record, or the default day
  * synthesized by dayFor for a date with no record. A platform
  * refusal (401 / 403) is relayed as-is, as in the event relay.
  */
-export function createRangeActions(db: Db, platformClient: PlatformApiClient) {
+export function createRangeActions(
+  db: Db,
+  platformClient: PlatformApiClient,
+  dutyPlatform?: DutyPlatformSource,
+) {
   async function platformItems(path: string, cookie: string): Promise<Record<string, unknown>[]> {
     return itemsOf(unwrapPlatformResult(await platformClient.getJson(path, cookie)));
   }
@@ -132,6 +143,14 @@ export function createRangeActions(db: Db, platformClient: PlatformApiClient) {
       }
       const staffView = view.audience === "staff";
       const rank = viewAudienceRank(view.audience as Audience);
+      // Conflicts are staff dynamics, like the duties themselves:
+      // a staff view derives them, so it needs the duty platform
+      // source — and refuses explicitly without one, exactly as
+      // getDutyConflicts does (Issue #69). A non-staff view never
+      // derives them and never needs the source.
+      if (staffView && !dutyPlatform) {
+        throw new Error("conflict derivation needs the platform source, which is not configured");
+      }
 
       const range = `from=${input.from}&to=${input.to}`;
       const [
@@ -142,6 +161,7 @@ export function createRangeActions(db: Db, platformClient: PlatformApiClient) {
         absenceRecords,
         dailyValues,
         assignments,
+        conflicts,
       ] = await Promise.all([
         definitionsStore.getDefinitionSet(db, auth.schoolId),
         platformItems(`${DAYS_PATH}?${range}`, input.cookie),
@@ -159,6 +179,16 @@ export function createRangeActions(db: Db, platformClient: PlatformApiClient) {
         // (DESIGN-AUTH-TENANCY 4.5), like the duty columns below.
         staffView
           ? dutiesStore.getAssignments(db, auth.schoolId, { from: input.from, to: input.to })
+          : [],
+        // The same derivation getDutyConflicts runs, over the
+        // same range (Issue #69). For a non-staff view this is
+        // empty and the duty source is not asked for absences
+        // at all.
+        staffView
+          ? deriveDutyConflictsForRange(db, dutyPlatform, auth.schoolId, {
+              from: input.from,
+              to: input.to,
+            })
           : [],
       ]);
 
@@ -300,7 +330,7 @@ export function createRangeActions(db: Db, platformClient: PlatformApiClient) {
         days,
         undecided,
         eventValues,
-        conflicts: [],
+        conflicts,
       };
     }),
 
