@@ -9,6 +9,8 @@ import type {
 } from "@school-manage/calendar-types";
 import {
   RevisionConflictError,
+  RevisionedRowNotFoundError,
+  deleteRevisioned,
   saveWithChange,
   updateRevisioned,
   type RevisionedTable,
@@ -356,14 +358,23 @@ export function createDayStore(db: Db): DayStore {
             actor,
           },
           async (tx) => {
-            const existing = await loadRecord(tx, schoolId, id);
-            if (!existing) throw new CalendarEntryNotFoundError("day", id);
-            if (existing.revision !== expectedRevision) {
-              throw new RevisionConflictError(existing);
+            // The delete carries the revision (deleteRevisioned,
+            // Issues #59 / #72): an update committed in between is
+            // never deleted along with the stale row. Days carry no
+            // private fields, so the 409 carries the full record.
+            try {
+              await deleteRevisioned(tx, dayRecords as unknown as RevisionedTable, {
+                schoolId,
+                id,
+                expectedRevision,
+                formatLatest: (row) => dayToRecord(row as unknown as DayRecordRow),
+              });
+            } catch (error) {
+              if (error instanceof RevisionedRowNotFoundError) {
+                throw new CalendarEntryNotFoundError("day", id);
+              }
+              throw error;
             }
-            await (tx as unknown as LooseSource)
-              .delete(dayRecords as unknown as PgTable)
-              .where(and(eq(dayRecords.schoolId, schoolId), eq(dayRecords.id, id)));
           },
         );
       } catch (error) {
@@ -501,14 +512,23 @@ export function createHolidayStore(db: Db): HolidayStore {
             actor,
           },
           async (tx) => {
-            const existing = await loadRecord(tx, schoolId, id);
-            if (!existing) throw new CalendarEntryNotFoundError("holiday", id);
-            if (existing.revision !== expectedRevision) {
-              throw new RevisionConflictError(existing);
+            // The delete carries the revision (deleteRevisioned,
+            // Issues #59 / #72), as for the day records above.
+            // Holidays carry no private fields either, so the 409
+            // carries the full record.
+            try {
+              await deleteRevisioned(tx, holidays as unknown as RevisionedTable, {
+                schoolId,
+                id,
+                expectedRevision,
+                formatLatest: (row) => holidayToRecord(row as unknown as HolidayRow),
+              });
+            } catch (error) {
+              if (error instanceof RevisionedRowNotFoundError) {
+                throw new CalendarEntryNotFoundError("holiday", id);
+              }
+              throw error;
             }
-            await (tx as unknown as LooseSource)
-              .delete(holidays as unknown as PgTable)
-              .where(and(eq(holidays.schoolId, schoolId), eq(holidays.id, id)));
           },
         );
       } catch (error) {

@@ -11,6 +11,8 @@ import {
 } from "@school-manage/calendar-types";
 import {
   RevisionConflictError,
+  RevisionedRowNotFoundError,
+  deleteRevisioned,
   saveWithChange,
   updateRevisioned,
   type RevisionedTable,
@@ -110,6 +112,14 @@ export function absenceConflictLatest(record: Absence): AbsenceConflictLatest {
     updatedBy: record.updatedBy,
     updatedVia: record.updatedVia,
   };
+}
+
+/** The same filtered summary, built from a raw absences row (the
+ *  shape deleteRevisioned re-reads when a delete matches nothing):
+ *  the subdivision, the purpose and the note stay out of a delete's
+ *  409 exactly as they stay out of an update's. */
+function absenceConflictLatestFromRow(row: AbsenceRow): AbsenceConflictLatest {
+  return absenceConflictLatest(absenceToRecord(row));
 }
 
 function pgCode(error: unknown): string | undefined {
@@ -496,14 +506,24 @@ export function createAbsenceStore(db: Db): AbsenceStore {
             actor,
           },
           async (tx) => {
-            const existing = await loadRecord(tx, schoolId, id);
-            if (!existing) throw new AbsenceNotFoundError("absence", id);
-            if (existing.revision !== expectedRevision) {
-              throw new RevisionConflictError(absenceConflictLatest(existing));
+            // The delete carries the revision (deleteRevisioned,
+            // Issues #59 / #72): an update committed in between is
+            // never deleted along with the stale row. The 409 body
+            // stays filtered through absenceConflictLatest, also for
+            // the row deleteRevisioned re-reads.
+            try {
+              await deleteRevisioned(tx, absences as unknown as RevisionedTable, {
+                schoolId,
+                id,
+                expectedRevision,
+                formatLatest: (row) => absenceConflictLatestFromRow(row as unknown as AbsenceRow),
+              });
+            } catch (error) {
+              if (error instanceof RevisionedRowNotFoundError) {
+                throw new AbsenceNotFoundError("absence", id);
+              }
+              throw error;
             }
-            await (tx as unknown as LooseSource)
-              .delete(absences as unknown as PgTable)
-              .where(and(eq(absences.schoolId, schoolId), eq(absences.id, id)));
           },
         );
       } catch (error) {
@@ -640,16 +660,26 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
             actor,
           },
           async (tx) => {
-            const existing = await loadRecord(tx, schoolId, id);
-            if (!existing) throw new AbsenceNotFoundError("absence_subdivision", id);
-            if (existing.revision !== expectedRevision) {
-              throw new RevisionConflictError(existing);
+            // The delete carries the revision (deleteRevisioned,
+            // Issues #59 / #72), as for the absences above.
+            // Subdivisions carry no private fields, so the 409
+            // carries the full record. A subdivision an absence
+            // still names is refused by the foreign key (23503),
+            // mapped below exactly as before — no rows are removed
+            // ahead of the delete.
+            try {
+              await deleteRevisioned(tx, absenceSubdivisions as unknown as RevisionedTable, {
+                schoolId,
+                id,
+                expectedRevision,
+                formatLatest: (row) => subdivisionToRecord(row as unknown as AbsenceSubdivisionRow),
+              });
+            } catch (error) {
+              if (error instanceof RevisionedRowNotFoundError) {
+                throw new AbsenceNotFoundError("absence_subdivision", id);
+              }
+              throw error;
             }
-            await (tx as unknown as LooseSource)
-              .delete(absenceSubdivisions as unknown as PgTable)
-              .where(
-                and(eq(absenceSubdivisions.schoolId, schoolId), eq(absenceSubdivisions.id, id)),
-              );
           },
         );
       } catch (error) {
