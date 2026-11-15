@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { DailyCell, EntryCell, type CellEditorContext } from "./cells";
 import {
   columnLabel,
   dailyCellText,
@@ -7,20 +9,70 @@ import {
   eventCellLines,
   weekdayLabel,
 } from "./lib";
-import type { BootstrapData, RangeData } from "./types";
+import type { BootstrapData, RangeData, RangeDayData, ViewColumnData } from "./types";
 
 /**
  * The rows table shared by L1 (month_rows) and L2 (week_rows) —
- * ported from the prototype's RowsTable (client/src/App.tsx) and
- * rewritten read-only for this implementation's getRange shape:
- * one row per day, the view's columns across, input left to the
- * following issues. Saturdays are blue and Sundays / holidays red,
+ * ported from the prototype's RowsTable (client/src/App.tsx) for
+ * this implementation's getRange shape: one row per day, the view's
+ * columns across. Saturdays are blue and Sundays / holidays red,
  * and the weekday letter plus the holiday / day-type name are
  * always printed with the date, so colour is never the only signal
  * (DESIGN schedule 9.1).
+ *
+ * With an editor context (Issue #35), entry and daily-value cells
+ * are selectable: a click — or a key press on the focused cell —
+ * starts input in place, with the typed character seeding the
+ * draft, and Enter saves (DESIGN schedule 6.1 / 6.2). Without one
+ * the table is the read-only table of Issue #34.
  */
-export function RowsTable({ bootstrap, range }: { bootstrap: BootstrapData; range: RangeData }) {
+export function RowsTable({
+  bootstrap,
+  range,
+  editor,
+}: {
+  bootstrap: BootstrapData;
+  range: RangeData;
+  editor?: CellEditorContext;
+}) {
   const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [seed, setSeed] = useState<{ key: string; text: string } | null>(null);
+
+  const renderCell = (day: RangeDayData, column: ViewColumnData) => {
+    if (!editor) {
+      return (
+        <>
+          {column.sourceKind === "event_category" &&
+            eventCellLines(day).map((line, i) => <div key={i}>{line}</div>)}
+          {column.sourceKind === "daily_item" && dailyCellText(day, column, bootstrap)}
+          {column.sourceKind === "duty" && dutyCellText(day, column, bootstrap)}
+          {column.sourceKind === "day_attribute" && dayAttributeText(day)}
+        </>
+      );
+    }
+    const key = `${day.date}|${column.id}`;
+    const cellProps = {
+      day,
+      column,
+      bootstrap,
+      editor,
+      active: activeKey === key,
+      seedText: seed?.key === key ? seed.text : null,
+      onActivate: () => setActiveKey(key),
+    };
+    if (column.sourceKind === "event_category") return <EntryCell {...cellProps} />;
+    if (column.sourceKind === "daily_item") {
+      const item = bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
+      return item?.valueType === "event_list" ? (
+        <EntryCell {...cellProps} />
+      ) : (
+        <DailyCell {...cellProps} />
+      );
+    }
+    if (column.sourceKind === "duty") return <>{dutyCellText(day, column, bootstrap)}</>;
+    return <>{dayAttributeText(day)}</>;
+  };
   return (
     <div className="rows-table-wrap">
       <table className="rows-table">
@@ -54,15 +106,41 @@ export function RowsTable({ bootstrap, range }: { bootstrap: BootstrapData; rang
                   <span className="date-weekday">（{weekdayLabel(day.date)}）</span>
                   {mark.sub && <span className="date-sub">{mark.sub}</span>}
                 </th>
-                {columns.map((column) => (
-                  <td key={column.id}>
-                    {column.sourceKind === "event_category" &&
-                      eventCellLines(day).map((line, i) => <div key={i}>{line}</div>)}
-                    {column.sourceKind === "daily_item" && dailyCellText(day, column, bootstrap)}
-                    {column.sourceKind === "duty" && dutyCellText(day, column, bootstrap)}
-                    {column.sourceKind === "day_attribute" && dayAttributeText(day)}
-                  </td>
-                ))}
+                {columns.map((column) => {
+                  const key = `${day.date}|${column.id}`;
+                  const editable =
+                    editor !== undefined &&
+                    (column.sourceKind === "event_category" || column.sourceKind === "daily_item");
+                  return (
+                    <td
+                      key={column.id}
+                      className={editable && activeKey === key ? "cell-active" : undefined}
+                      tabIndex={editable ? 0 : undefined}
+                      onClick={editable ? () => setActiveKey(key) : undefined}
+                      onKeyDown={
+                        editable
+                          ? (e) => {
+                              // Typing on the focused cell starts
+                              // input with that character (6.1).
+                              if (
+                                e.target === e.currentTarget &&
+                                activeKey !== key &&
+                                e.key.length === 1 &&
+                                !e.ctrlKey &&
+                                !e.metaKey &&
+                                !e.altKey
+                              ) {
+                                setActiveKey(key);
+                                setSeed({ key, text: e.key });
+                              }
+                            }
+                          : undefined
+                      }
+                    >
+                      {renderCell(day, column)}
+                    </td>
+                  );
+                })}
               </tr>
             );
           })}

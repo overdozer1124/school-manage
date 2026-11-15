@@ -1,4 +1,6 @@
+import { createDailyValueActions } from "./dailyValues/actions.js";
 import { createHttpDutyPlatformSource } from "./duties/platformSource.js";
+import { createEventActions } from "./events/actions.js";
 import type { PlatformApiClient } from "./platformClient.js";
 import { createRangeActions } from "./range/actions.js";
 
@@ -7,7 +9,7 @@ import { createRangeActions } from "./range/actions.js";
 type Db = Parameters<typeof createRangeActions>[0];
 
 /**
- * The production assembly of the read actions (Issue #34): the
+ * The production assembly of the actions (Issue #34): the
  * range actions over the real platform client, with the duty
  * platform source reading through that same client under the
  * caller's cookie. The entry point (index.ts) builds the per-request
@@ -16,9 +18,13 @@ type Db = Parameters<typeof createRangeActions>[0];
  * server actually uses.
  */
 export function createScheduleActions(db: Db, platformClient: PlatformApiClient, cookie: string) {
-  return createRangeActions(
-    db,
-    platformClient,
-    createHttpDutyPlatformSource(platformClient, cookie),
-  );
+  return {
+    ...createRangeActions(db, platformClient, createHttpDutyPlatformSource(platformClient, cookie)),
+    // Issue #35: the cell editors' writes — the event relay (the
+    // platform judges; Issue #29) and schedule's own daily values
+    // (Issue #28), assembled the same way as the reads so the HTTP
+    // layer and the wiring tests exercise one assembly.
+    ...createEventActions(db, platformClient),
+    ...createDailyValueActions(db),
+  };
 }

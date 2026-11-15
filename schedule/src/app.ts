@@ -29,18 +29,29 @@ export interface ScheduleActionLike {
 export interface ScheduleAppDeps {
   /** Verifies a request into an AuthContext (or throws AuthAccessError). */
   auth: ScheduleAuth;
-  /** Builds the read actions for one request, bound to its cookie:
+  /** Builds the actions for one request, bound to its cookie:
    *  the platform reads and the duty source are per-caller. */
-  createActions(cookie: string): {
-    getBootstrap: ScheduleActionLike;
-    getRange: ScheduleActionLike;
-  };
+  createActions(cookie: string): { [actionName: string]: ScheduleActionLike };
   /** Directory of the built screens (client/dist). When it does not
    *  exist, only the API and health check are served. */
   clientDistDir?: string;
 }
 
-const ACTION_NAMES = ["getBootstrap", "getRange"] as const;
+const ACTION_NAMES = [
+  "getBootstrap",
+  "getRange",
+  // Issue #35: the cell editors' writes. Events and absences go
+  // through the platform relay (Issue #29); daily values are
+  // schedule's own writes (Issue #28).
+  "createEvent",
+  "updateEvent",
+  "deleteEvent",
+  "createAbsence",
+  "updateAbsence",
+  "deleteAbsence",
+  "setDailyValue",
+  "deleteDailyValue",
+] as const;
 
 export function createApp(deps?: ScheduleAppDeps) {
   const app = express();
@@ -62,6 +73,10 @@ export function createApp(deps?: ScheduleAppDeps) {
         const cookie = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
         const actions = deps.createActions(cookie);
         const action = actions[actionName as (typeof ACTION_NAMES)[number]];
+        if (!action) {
+          res.status(404).json({ error: `unknown action: ${actionName}` });
+          return;
+        }
         const body =
           typeof req.body === "object" && req.body !== null
             ? (req.body as Record<string, unknown>)

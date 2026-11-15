@@ -6,6 +6,7 @@ import {
   platformLoginUrl,
   type ScheduleApi,
 } from "./api";
+import type { CellEditorContext } from "./cells";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import type { BootstrapData, RangeData } from "./types";
@@ -15,8 +16,9 @@ import type { BootstrapData, RangeData } from "./types";
  * months or weeks, and read the L1 / L2 rows table. Only layouts
  * month_rows and week_rows are drawn; a view naming a Phase 2 layout
  * can be selected but shows a notice instead of a table (those
- * layouts arrive with their own issues). Input is not part of this
- * issue.
+ * layouts arrive with their own issues). Cells take direct input
+ * (Issue #35): a saved write re-reads the range, so what the table
+ * shows is always what the server holds.
  *
  * A 401 from the API sends the person to the platform's login
  * (DESIGN-AUTH-TENANCY 4.8); a 403 shows 「権限がありません」.
@@ -36,6 +38,7 @@ export function App({
   const [range, setRange] = useState<RangeData | null>(null);
   const [viewId, setViewId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<string>(initialAnchor ?? todayText());
+  const [reloadTick, setReloadTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
 
@@ -100,7 +103,16 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [api, bootstrap, view, anchor, handleError]);
+  }, [api, bootstrap, view, anchor, reloadTick, handleError]);
+
+  const editor = useMemo<CellEditorContext>(
+    () => ({
+      api,
+      onSaved: () => setReloadTick((t) => t + 1),
+      onUnauthorizedError: () => handleError(new UnauthorizedError()),
+    }),
+    [api, handleError],
+  );
 
   if (forbidden) {
     return (
@@ -174,7 +186,7 @@ export function App({
       )}
       {supported && range && (
         <>
-          <RowsTable bootstrap={bootstrap} range={range} />
+          <RowsTable bootstrap={bootstrap} range={range} editor={editor} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />
         </>
       )}

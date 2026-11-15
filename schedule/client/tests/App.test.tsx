@@ -61,14 +61,23 @@ describe("schedule screen with the development adapter", () => {
 });
 
 describe("401 / 403 handling", () => {
-  const failingApi = (error: Error): ScheduleApi => ({
-    getBootstrap: async () => {
+  const failingApi = (error: Error): ScheduleApi => {
+    const fail = async (): Promise<never> => {
       throw error;
-    },
-    getRange: async () => {
-      throw error;
-    },
-  });
+    };
+    return {
+      getBootstrap: fail,
+      getRange: fail,
+      createEvent: fail,
+      updateEvent: fail,
+      deleteEvent: fail,
+      createAbsence: fail,
+      updateAbsence: fail,
+      deleteAbsence: fail,
+      setDailyValue: fail,
+      deleteDailyValue: fail,
+    };
+  };
 
   it("a 401 hands off to the platform login instead of showing the table", async () => {
     const onUnauthorized = vi.fn();

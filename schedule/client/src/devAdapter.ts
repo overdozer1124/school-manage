@@ -1,5 +1,5 @@
 import { datesInRange, weekdayOf } from "@school-manage/calendar-types";
-import type { ScheduleApi } from "./api";
+import type { RelaySaveResult, ScheduleApi } from "./api";
 import type {
   BootstrapData,
   DailyValueData,
@@ -27,6 +27,13 @@ import type {
  * times, a duty rotation, one national holiday on a weekday, and
  * undecided events. The shapes are exactly the server actions'
  * result shapes (src/types.ts).
+ *
+ * Issue #35: the adapter is stateful — each createDevApi() keeps
+ * its own events, absences and daily values in memory, and the
+ * write actions change them, so the cell editors can be exercised
+ * by hand and in tests exactly as against the real server (a saved
+ * write is what the next getRange shows). The bootstrap carries
+ * the shipped default kind templates and an Admin's permissions.
  */
 
 const GRADES = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `grade-${n}`, name: `${n}年` }));
@@ -67,7 +74,16 @@ export const DEV_BOOTSTRAP: BootstrapData = {
   userId: "dev-user",
   teacherId: "teacher-1",
   role: "Admin",
-  permissions: ["view.read"],
+  permissions: [
+    "view.read",
+    "daily.write",
+    "event.write",
+    "duty.write",
+    "definition.write",
+    "publish",
+    "view.layout",
+    "master.write",
+  ],
   views: [], // filled below (needs the column helper)
   itemDefinitions: [
     item("item-events", "events", "行事", "event_list", 1),
@@ -107,7 +123,57 @@ export const DEV_BOOTSTRAP: BootstrapData = {
       })),
     },
   ],
-  kindTemplates: [],
+  // The shipped defaults of schedule/src/events/templates.ts.
+  kindTemplates: [
+    {
+      id: "tpl-event",
+      key: "event",
+      name: "行事",
+      subjectKind: "event",
+      kindCode: "event",
+      personLabel: "担当者",
+      displaySource: "title",
+      steps: [{ kind: "person" }, { kind: "location" }, { kind: "time" }],
+      itemDefinitionIds: [],
+      sort: 1,
+    },
+    {
+      id: "tpl-business-trip",
+      key: "business_trip",
+      name: "出張",
+      subjectKind: "absence",
+      kindCode: "business_trip",
+      personLabel: "出張者",
+      displaySource: "person_title",
+      steps: [{ kind: "person" }, { kind: "location" }, { kind: "time" }],
+      itemDefinitionIds: [],
+      sort: 2,
+    },
+    {
+      id: "tpl-deadline",
+      key: "deadline",
+      name: "〆切",
+      subjectKind: "event",
+      kindCode: "deadline",
+      personLabel: "担当者",
+      displaySource: "title",
+      steps: [{ kind: "person" }, { kind: "item", itemDefinitionId: null }, { kind: "time" }],
+      itemDefinitionIds: [],
+      sort: 3,
+    },
+    {
+      id: "tpl-leave",
+      key: "leave",
+      name: "休暇",
+      subjectKind: "absence",
+      kindCode: "leave",
+      personLabel: "取得者",
+      displaySource: "person",
+      steps: [{ kind: "person" }, { kind: "subdivision" }, { kind: "time" }],
+      itemDefinitionIds: [],
+      sort: 4,
+    },
+  ],
   masters: {
     staff: STAFF,
     grades: GRADES,
@@ -268,16 +334,10 @@ function devDay(date: string, index: number): RangeDayData {
       source: "default",
     },
     holidays: holiday ? [{ id: `hol-${date}`, date, name: holiday, kind: "national_holiday" }] : [],
-    events: (EVENTS[date] ?? []).map((title, i) => ({
-      id: `ev-${date}-${i}`,
-      kind: "event",
-      title,
-      datePrecision: "day",
-      startsOn: date,
-      endsOn: date,
-      certainty: "confirmed",
-      visibility: "guardian",
-    })),
+    // Events and absences live in the adapter's state (below), so
+    // writes show up on the next read; devDay itself stays the
+    // pure per-day fixture for days, holidays, values and duties.
+    events: [],
     absences: [],
     dailyValues,
     dutyAssignments: classDay
@@ -295,7 +355,121 @@ function devDay(date: string, index: number): RangeDayData {
   };
 }
 
+/** One fixture event as a full platform record (the writes of
+ *  Issue #35 need the revision to offer re-edit and delete). */
+function fixtureEvent(date: string, title: string, i: number): Record<string, unknown> {
+  return {
+    id: `ev-${date}-${i}`,
+    kind: "event",
+    kindLabel: null,
+    title,
+    datePrecision: "day",
+    startsOn: date,
+    endsOn: date,
+    time: null,
+    locationId: null,
+    locationText: null,
+    description: null,
+    certainty: "confirmed",
+    visibility: "guardian",
+    targets: [],
+    impacts: [],
+    assignees: [],
+    revision: 1,
+  };
+}
+
+/** The fixture absences: one leave (shown holder-led, 6.3.1) and
+ *  one business trip with its purpose. */
+function fixtureAbsences(): Record<string, unknown>[] {
+  const base = {
+    time: { kind: "all_day" },
+    certainty: "confirmed",
+    note: null,
+    revision: 1,
+    createdBy: "dev-user",
+    confirmedBy: "dev-user",
+    confirmedAt: null,
+  };
+  return [
+    {
+      ...base,
+      id: "abs-1",
+      staffId: "teacher-2",
+      fromDate: "2026-11-13",
+      toDate: "2026-11-13",
+      kind: "leave",
+      purpose: null,
+      subdivisionKey: "年休",
+    },
+    {
+      ...base,
+      id: "abs-2",
+      staffId: "teacher-1",
+      fromDate: "2026-11-20",
+      toDate: "2026-11-20",
+      kind: "business_trip",
+      purpose: "県教研大会",
+      subdivisionKey: null,
+    },
+  ];
+}
+
 export function createDevApi(): ScheduleApi {
+  const state = {
+    events: Object.entries(EVENTS).flatMap(([date, titles]) =>
+      titles.map((title, i) => fixtureEvent(date, title, i)),
+    ),
+    absences: fixtureAbsences(),
+    daily: new Map<string, DailyValueData[]>(),
+  };
+
+  /** The day's stored daily values, seeded from the fixture on
+   *  first write (reads alone never copy them into the state). */
+  const storedDaily = (date: string): DailyValueData[] => {
+    let values = state.daily.get(date);
+    if (!values) {
+      values = devDay(date, 0).dailyValues.map((v) => ({ ...v }));
+      state.daily.set(date, values);
+    }
+    return values;
+  };
+
+  /** A stored value's target identity (target ids are unique
+   *  across the fixture's groups and axes). */
+  const targetKeyOf = (v: DailyValueData): string | null => v.targetId ?? v.targetRef?.id ?? null;
+
+  /** The stored columns a written value lands in, per value type —
+   *  the fixture's loose mirror of the server's validator. */
+  const columnsFor = (
+    itemDef: BootstrapData["itemDefinitions"][number],
+    written: unknown,
+  ): Partial<DailyValueData> => {
+    switch (itemDef.valueType) {
+      case "symbol":
+      case "code":
+        return {
+          valueOptionId: itemDef.options.find((o) => o.code === written)?.id ?? null,
+        };
+      case "time":
+        return { valueTime: written as string };
+      case "time_range": {
+        const range = written as { startsAt: string; endsAt: string };
+        return { valueTime: range.startsAt, valueTimeEnd: range.endsAt };
+      }
+      case "text":
+        return { valueText: written as string };
+      case "number":
+        return { valueNumber: written as number };
+      case "boolean":
+        return { valueBoolean: written as boolean };
+      case "person":
+        return { valuePersonId: written as string };
+      default:
+        return {};
+    }
+  };
+
   return {
     async getBootstrap() {
       return structuredClone(DEV_BOOTSTRAP);
@@ -310,7 +484,27 @@ export function createDevApi(): ScheduleApi {
         view: structuredClone(view),
         from: input.from,
         to: input.to,
-        days: dates.map((date, i) => devDay(date, i)),
+        days: dates.map((date, i) => {
+          const base = devDay(date, i);
+          return {
+            ...base,
+            events: state.events.filter(
+              (e) =>
+                typeof e["startsOn"] === "string" &&
+                typeof e["endsOn"] === "string" &&
+                (e["startsOn"] as string) <= date &&
+                date <= (e["endsOn"] as string),
+            ),
+            absences: state.absences.filter(
+              (a) =>
+                typeof a["fromDate"] === "string" &&
+                typeof a["toDate"] === "string" &&
+                (a["fromDate"] as string) <= date &&
+                date <= (a["toDate"] as string),
+            ),
+            dailyValues: state.daily.get(date) ?? base.dailyValues,
+          };
+        }),
         undecided: [
           {
             month: "2026-11",
@@ -346,6 +540,89 @@ export function createDevApi(): ScheduleApi {
         eventValues: [],
         conflicts: [],
       } satisfies RangeData;
+    },
+    async createEvent(input): Promise<RelaySaveResult> {
+      const record = { ...input.event, revision: 1 };
+      state.events.push(record);
+      return { record, values: [] };
+    },
+    async updateEvent(input): Promise<RelaySaveResult> {
+      const index = state.events.findIndex((e) => e["id"] === input.id);
+      if (index < 0) throw new Error(`event not found: ${input.id}`);
+      const record = { ...input.event, id: input.id, revision: input.revision + 1 };
+      state.events[index] = record;
+      return { record, values: null };
+    },
+    async deleteEvent(input) {
+      state.events = state.events.filter((e) => e["id"] !== input.id);
+      return { deleted: true as const };
+    },
+    async createAbsence(input): Promise<RelaySaveResult> {
+      const record = {
+        ...input.absence,
+        revision: 1,
+        createdBy: "dev-user",
+        confirmedBy: null,
+        confirmedAt: null,
+      };
+      state.absences.push(record);
+      return { record, values: [] };
+    },
+    async updateAbsence(input): Promise<RelaySaveResult> {
+      const index = state.absences.findIndex((a) => a["id"] === input.id);
+      if (index < 0) throw new Error(`absence not found: ${input.id}`);
+      const record = { ...input.absence, id: input.id, revision: input.revision + 1 };
+      state.absences[index] = record;
+      return { record, values: null };
+    },
+    async deleteAbsence(input) {
+      state.absences = state.absences.filter((a) => a["id"] !== input.id);
+      return { deleted: true as const };
+    },
+    async setDailyValue(input) {
+      const itemDef = DEV_BOOTSTRAP.itemDefinitions.find((i) => i.id === input.itemDefinitionId);
+      if (!itemDef) throw new Error(`item definition not found: ${input.itemDefinitionId}`);
+      const values = storedDaily(input.date);
+      const targetKey = input.target?.id ?? null;
+      const columns = columnsFor(itemDef, input.value);
+      const existing = values.find(
+        (v) => v.itemDefinitionId === itemDef.id && targetKeyOf(v) === targetKey,
+      );
+      if (existing) {
+        Object.assign(existing, {
+          valueText: null,
+          valueTime: null,
+          valueTimeEnd: null,
+          valueNumber: null,
+          valueBoolean: null,
+          valueOptionId: null,
+          valuePersonId: null,
+          ...columns,
+        });
+        return existing;
+      }
+      const stored = value({
+        date: input.date,
+        itemDefinitionId: itemDef.id,
+        targetId: input.target?.axis === "app" ? input.target.id : null,
+        targetRef:
+          input.target && input.target.axis !== "app"
+            ? { axis: input.target.axis, id: input.target.id }
+            : null,
+        ...columns,
+      });
+      values.push(stored);
+      return stored;
+    },
+    async deleteDailyValue(input) {
+      const values = storedDaily(input.date);
+      const targetKey = input.target?.id ?? null;
+      const index = values.findIndex(
+        (v) => v.itemDefinitionId === input.itemDefinitionId && targetKeyOf(v) === targetKey,
+      );
+      if (index < 0) throw new Error("daily value not found");
+      values.splice(index, 1);
+      return { deleted: true as const };
     },
   };
 }
