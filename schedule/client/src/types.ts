@@ -77,6 +77,23 @@ export interface MasterEntry {
   [key: string]: unknown;
 }
 
+/**
+ * One duty definition with its rotation rule, as getBootstrap
+ * returns it (Issue #38): the name labels the table's duty columns,
+ * and the rotation's roster is what the panel's preview offers.
+ */
+export interface DutyDefinitionData {
+  id: string;
+  name: string;
+  granularity: string;
+  applicablePeriod: string;
+  applicableStartsOn: string | null;
+  applicableEndsOn: string | null;
+  targetGroupId: string | null;
+  sort: number;
+  rotation: { personIds: string[]; changeWeekdays: string[] | null } | null;
+}
+
 export interface BootstrapData {
   school: { id: string; name: string | null };
   userId: string;
@@ -87,6 +104,7 @@ export interface BootstrapData {
   itemDefinitions: ItemDefinitionData[];
   targetGroups: TargetGroupData[];
   kindTemplates: unknown[];
+  dutyDefinitions: DutyDefinitionData[];
   masters: {
     staff: MasterEntry[];
     grades: MasterEntry[];
@@ -127,7 +145,68 @@ export interface DutyAssignmentData {
   date: string;
   slot: string;
   personId: string | null;
+  targetId: string | null;
+  /** How the row came to be: "auto" (rotation), "manual", or
+   *  "swap" (a change was applied — the table's swapped mark). */
+  origin: string;
   note: string | null;
+}
+
+/**
+ * One derived duty conflict, in the shared shape of
+ * @school-manage/calendar-types' DutyConflict (Issue #31 / #69):
+ * an assignment overlapping an absence (certainty "tentative"
+ * marks a not-yet-confirmed absence), one person holding two
+ * duties in one slot, or an applicable cell standing unassigned.
+ */
+export interface DutyConflictData {
+  kind: "absence" | "double" | "unassigned";
+  assignmentId: string | null;
+  otherAssignmentId: string | null;
+  dutyDefinitionId: string;
+  dutyName: string;
+  date: string;
+  slot: string;
+  personId: string | null;
+  absenceId: string | null;
+  absenceKind: string | null;
+  certainty: string | null;
+}
+
+/** One recorded duty change (Issue #31), as getDutyChanges returns
+ *  the row: a proposal until an Editor or Admin applies or
+ *  declines it. */
+export interface DutyChangeData {
+  id: string;
+  dutyDefinitionId: string;
+  kind: "swap" | "substitute" | "reassign";
+  assignmentAId: string;
+  assignmentBId: string | null;
+  fromPersonId: string | null;
+  toPersonId: string | null;
+  reason: string;
+  requestedBy: string;
+  approvedBy: string | null;
+  status: "proposed" | "applied" | "declined";
+  createdAt: string;
+  appliedAt: string | null;
+}
+
+/** One cell of a rotation preview (Issue #30): who the rotation
+ *  would put there, and what applying would do to the cell. */
+export interface RotationPlanCellData {
+  date: string;
+  slot: string;
+  personId: string;
+  action: "create" | "replace" | "keep";
+  existing: DutyAssignmentData | null;
+}
+
+export interface ApplyRotationResultData {
+  created: number;
+  updated: number;
+  skipped: number;
+  assignments: DutyAssignmentData[];
 }
 
 export interface RangeData {
@@ -137,5 +216,5 @@ export interface RangeData {
   days: RangeDayData[];
   undecided: { month: string | null; events: Record<string, unknown>[] }[];
   eventValues: unknown[];
-  conflicts: unknown[];
+  conflicts: DutyConflictData[];
 }

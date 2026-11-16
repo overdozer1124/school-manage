@@ -51,6 +51,12 @@ const deps: ScheduleAppDeps = {
         return { days: [] };
       },
     },
+    waiveConflict: {
+      async run(_auth: never, request: never) {
+        lastRequest = request;
+        return { waived: true };
+      },
+    },
   }),
 };
 
@@ -141,6 +147,23 @@ describe("schedule HTTP app (Issue #34)", () => {
     expect(body.error).toBe("入力が正しくありません");
     expect(body.issues.map((i) => i.path)).toEqual(["from"]);
     mode = "ok";
+  });
+
+  it("routes a duty action (Issue #38) the same way, with the caller's cookie", async () => {
+    mode = "ok";
+    const res = await fetch(`${baseUrl}/test-school/schedule/api/waiveConflict`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "platform_session=tok" },
+      body: JSON.stringify({ assignmentId: "as-1", absenceId: "abs-1", reason: "両立できる" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ waived: true });
+    expect(lastRequest).toEqual({
+      assignmentId: "as-1",
+      absenceId: "abs-1",
+      reason: "両立できる",
+      cookie: "platform_session=tok",
+    });
   });
 
   it("answers 404 for an action the screens do not have", async () => {

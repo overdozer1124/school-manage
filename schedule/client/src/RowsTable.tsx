@@ -3,7 +3,7 @@ import {
   dailyCellText,
   dayAttributeText,
   dayMark,
-  dutyCellText,
+  dutyCellLines,
   eventCellLines,
   weekdayLabel,
 } from "./lib";
@@ -12,12 +12,14 @@ import type { BootstrapData, RangeData } from "./types";
 /**
  * The rows table shared by L1 (month_rows) and L2 (week_rows) —
  * ported from the prototype's RowsTable (client/src/App.tsx) and
- * rewritten read-only for this implementation's getRange shape:
- * one row per day, the view's columns across, input left to the
- * following issues. Saturdays are blue and Sundays / holidays red,
- * and the weekday letter plus the holiday / day-type name are
- * always printed with the date, so colour is never the only signal
- * (DESIGN schedule 9.1).
+ * rewritten for this implementation's getRange shape: one row per
+ * day, the view's columns across. Saturdays are blue and Sundays /
+ * holidays red, and the weekday letter plus the holiday / day-type
+ * name are always printed with the date, so colour is never the
+ * only signal (DESIGN schedule 9.1). Duty cells carry the marks of
+ * Issue #38: （交代） for an assignment a change was applied to,
+ * and a ⚠ warning naming the overlap for a conflicted one —
+ * again text, not colour alone.
  */
 export function RowsTable({ bootstrap, range }: { bootstrap: BootstrapData; range: RangeData }) {
   const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
@@ -59,7 +61,23 @@ export function RowsTable({ bootstrap, range }: { bootstrap: BootstrapData; rang
                     {column.sourceKind === "event_category" &&
                       eventCellLines(day).map((line, i) => <div key={i}>{line}</div>)}
                     {column.sourceKind === "daily_item" && dailyCellText(day, column, bootstrap)}
-                    {column.sourceKind === "duty" && dutyCellText(day, column, bootstrap)}
+                    {column.sourceKind === "duty" &&
+                      dutyCellLines(day, column, bootstrap, range.conflicts).map((line, i) => (
+                        <div key={line.assignmentId ?? `unassigned-${line.slot}-${i}`}>
+                          {line.text}
+                          {line.swapped && (
+                            <span className="duty-swapped" title="交代済み">
+                              （交代）
+                            </span>
+                          )}
+                          {line.warning && (
+                            <span className="duty-warning" title={line.warning}>
+                              {" "}
+                              ⚠ {line.warning}
+                            </span>
+                          )}
+                        </div>
+                      ))}
                     {column.sourceKind === "day_attribute" && dayAttributeText(day)}
                   </td>
                 ))}

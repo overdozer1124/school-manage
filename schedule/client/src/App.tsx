@@ -6,6 +6,7 @@ import {
   platformLoginUrl,
   type ScheduleApi,
 } from "./api";
+import { DutyPanel } from "./DutyPanel";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import type { BootstrapData, RangeData } from "./types";
@@ -38,6 +39,10 @@ export function App({
   const [anchor, setAnchor] = useState<string>(initialAnchor ?? todayText());
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  // Bumped by the duty panel after a change lands, so the table
+  // (and its conflict marks) is read again.
+  const [reloadTick, setReloadTick] = useState(0);
 
   const handleError = useCallback(
     (cause: unknown) => {
@@ -100,7 +105,7 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [api, bootstrap, view, anchor, handleError]);
+  }, [api, bootstrap, view, anchor, handleError, reloadTick]);
 
   if (forbidden) {
     return (
@@ -166,6 +171,12 @@ export function App({
               次 →
             </button>
           </div>
+          {supported && range && view.audience === "staff" && (
+            <button type="button" onClick={() => setPanelOpen(true)}>
+              当番・競合
+              {range.conflicts.length > 0 && `（警告${range.conflicts.length}件）`}
+            </button>
+          )}
         </div>
       </header>
 
@@ -179,6 +190,15 @@ export function App({
         </>
       )}
       {supported && !range && <p>読み込み中…</p>}
+      {panelOpen && range && (
+        <DutyPanel
+          bootstrap={bootstrap}
+          range={range}
+          api={api}
+          onClose={() => setPanelOpen(false)}
+          onChanged={() => setReloadTick((t) => t + 1)}
+        />
+      )}
     </main>
   );
 }
