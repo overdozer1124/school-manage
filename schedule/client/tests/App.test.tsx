@@ -113,6 +113,9 @@ describe("401 / 403 handling", () => {
       confirmAbsence: fail,
       getPendingEvents: fail,
       confirmEvent: fail,
+      createPublication: fail,
+      getPublications: fail,
+      getPublication: fail,
     };
   };
 

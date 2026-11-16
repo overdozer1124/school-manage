@@ -504,6 +504,15 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
     confirmEvent: async (): Promise<never> => {
       throw new Error("not used");
     },
+    createPublication: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getPublications: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getPublication: async (): Promise<never> => {
+      throw new Error("not used");
+    },
   };
   return { api, calls, control, state };
 }

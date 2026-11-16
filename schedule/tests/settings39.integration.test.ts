@@ -177,6 +177,9 @@ const EXPECTED_ACTIONS = [
   "createMaster",
   "updateMaster",
   "deleteMaster",
+  "createPublication",
+  "getPublications",
+  "getPublication",
 ];
 
 describe.skipIf(!url)("settings screens' server side (Issue #39)", () => {

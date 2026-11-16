@@ -5,6 +5,7 @@ import { createHttpDutyPlatformSource } from "./duties/platformSource.js";
 import { createEventActions } from "./events/actions.js";
 import { createMasterRelayActions } from "./masters/actions.js";
 import type { PlatformApiClient } from "./platformClient.js";
+import { createPublicationActions } from "./publications/actions.js";
 import { createRangeActions } from "./range/actions.js";
 import { createViewActions } from "./views/actions.js";
 
@@ -43,5 +44,9 @@ export function createScheduleActions(db: Db, platformClient: PlatformApiClient,
     ...createDefinitionActions(db),
     ...createViewActions(db),
     ...createMasterRelayActions(platformClient),
+    // Issue #40: issuing a month table as a versioned document.
+    // Publishing renders through computeRange, so it takes the
+    // duty platform source like the range actions do.
+    ...createPublicationActions(db, platformClient, dutyPlatform),
   };
 }

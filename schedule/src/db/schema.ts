@@ -623,6 +623,69 @@ export const viewColumns = pgTable(
 
 export type ViewColumnRow = typeof viewColumns.$inferSelect;
 
+/** The effective print settings of one publication (DESIGN
+ *  schedule 9.1): paper, orientation, margin and the font-size
+ *  step. The view definition carries the school's defaults in its
+ *  own print_settings JSON; a publication records the settings it
+ *  was actually generated with, so the settings are part of the
+ *  snapshot, not a pointer back at a definition that may change. */
+export interface PublicationPrintSettings {
+  paper: "A4" | "A3";
+  orientation: "landscape" | "portrait";
+  marginMm: number;
+  fontScale: "small" | "medium" | "large";
+}
+
+/**
+ * One issued version of a view's month table (DESIGN schedule
+ * 4.8 `publications`, 9.1): who issued which view's which month,
+ * under what version label, and the document that was handed out.
+ *
+ * The document is generated on the server at publish time — from
+ * the same getRange bundle the screen draws, so paper and screen
+ * cannot drift apart — and stored verbatim in document_html. An
+ * issued document never changes: editing the underlying data
+ * afterwards leaves this row untouched, and handing the document
+ * out again is a re-read of this row, never a regeneration (the
+ * immutability DESIGN-AUTH-TENANCY 4.5 assigns to the PDF: 公開
+ * URL は最新の内容、PDF は配った時点の版）. The stored format is
+ * a self-contained print HTML document (document_format "html"):
+ * it carries its own @page rules (paper, orientation, margins,
+ * page-number footer) and prints to PDF from any browser, which
+ * keeps the snapshot free of a binary generator and a bundled
+ * Japanese font. The view foreign key is a plain restrict: a
+ * view that has publications cannot be deleted, so the issue
+ * history cannot vanish with its definition.
+ */
+export const publications = pgTable(
+  "publications",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    viewDefinitionId: text("view_definition_id").notNull(),
+    targetMonth: text("target_month").notNull(),
+    versionLabel: text("version_label").notNull(),
+    publishedAt: timestamp("published_at", { withTimezone: true }).defaultNow().notNull(),
+    publishedBy: text("published_by").notNull(),
+    snapshotNote: text("snapshot_note"),
+    printSettings: jsonb("print_settings").$type<PublicationPrintSettings>().notNull(),
+    documentFormat: text("document_format").default("html").notNull(),
+    documentHtml: text("document_html").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    foreignKey({
+      name: "publications_view_fk",
+      columns: [t.schoolId, t.viewDefinitionId],
+      foreignColumns: [viewDefinitions.schoolId, viewDefinitions.id],
+    }),
+    check("publications_target_month_check", sql`${t.targetMonth} ~ '^[0-9]{4}-[0-9]{2}$'`),
+    check("publications_document_format_check", sql`${t.documentFormat} in ('html')`),
+  ],
+);
+
+export type PublicationRow = typeof publications.$inferSelect;
+
 /**
  * An additional item value attached to a platform record (DESIGN
  * schedule 4.5 `event_values`, DESIGN-INTEGRATION 10 implementation

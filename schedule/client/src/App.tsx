@@ -10,6 +10,7 @@ import type { CellEditorContext } from "./cells";
 import { DutyPanel } from "./DutyPanel";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
 import { PendingPanel } from "./PendingPanel";
+import { PublishPanel } from "./PublishPanel";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import { SettingsPanel } from "./SettingsPanel";
 import type { BootstrapData, RangeData } from "./types";
@@ -45,6 +46,7 @@ export function App({
   const [forbidden, setForbidden] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Bumped after a saved write (a cell edit, or a change landed
   // from the duty panel), so the table (and its conflict marks)
@@ -212,6 +214,16 @@ export function App({
               設定
             </button>
           )}
+          {/* Issuing and the version list (Issue #40): the list
+              and the preview are view.read, open to every role;
+              the publish form inside is offered only to holders
+              of the publish permission, and the server checks
+              it again on the action. */}
+          {supported && (
+            <button type="button" onClick={() => setPublishOpen(true)}>
+              発行・印刷
+            </button>
+          )}
         </div>
       </header>
 
@@ -240,6 +252,15 @@ export function App({
           api={api}
           onClose={() => setPendingOpen(false)}
           onChanged={() => setReloadTick((t) => t + 1)}
+        />
+      )}
+      {publishOpen && (
+        <PublishPanel
+          bootstrap={bootstrap}
+          api={api}
+          view={view}
+          anchor={anchor}
+          onClose={() => setPublishOpen(false)}
         />
       )}
       {settingsOpen && (
