@@ -7,6 +7,7 @@ import {
   type ScheduleApi,
 } from "./api";
 import type { CellEditorContext } from "./cells";
+import { DutyPanel } from "./DutyPanel";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import type { BootstrapData, RangeData } from "./types";
@@ -38,9 +39,13 @@ export function App({
   const [range, setRange] = useState<RangeData | null>(null);
   const [viewId, setViewId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<string>(initialAnchor ?? todayText());
-  const [reloadTick, setReloadTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  // Bumped after a saved write (a cell edit, or a change landed
+  // from the duty panel), so the table (and its conflict marks)
+  // is read again.
+  const [reloadTick, setReloadTick] = useState(0);
 
   const handleError = useCallback(
     (cause: unknown) => {
@@ -178,6 +183,12 @@ export function App({
               次 →
             </button>
           </div>
+          {supported && range && view.audience === "staff" && (
+            <button type="button" onClick={() => setPanelOpen(true)}>
+              当番・競合
+              {range.conflicts.length > 0 && `（警告${range.conflicts.length}件）`}
+            </button>
+          )}
         </div>
       </header>
 
@@ -191,6 +202,15 @@ export function App({
         </>
       )}
       {supported && !range && <p>読み込み中…</p>}
+      {panelOpen && range && (
+        <DutyPanel
+          bootstrap={bootstrap}
+          range={range}
+          api={api}
+          onClose={() => setPanelOpen(false)}
+          onChanged={() => setReloadTick((t) => t + 1)}
+        />
+      )}
     </main>
   );
 }

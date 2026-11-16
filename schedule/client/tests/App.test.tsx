@@ -76,6 +76,15 @@ describe("401 / 403 handling", () => {
       deleteAbsence: fail,
       setDailyValue: fail,
       deleteDailyValue: fail,
+      previewRotation: fail,
+      applyRotation: fail,
+      proposeDutyChange: fail,
+      applyDutyChange: fail,
+      declineDutyChange: fail,
+      getDutyChanges: fail,
+      getDutyConflicts: fail,
+      waiveConflict: fail,
+      getDutyChangeCandidates: fail,
     };
   };
 

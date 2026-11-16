@@ -59,6 +59,10 @@ import type {
  * keeps showing in the event column, as it did before. Rewriting
  * a provisional entry with a roster name turns it into a real
  * absence (PR #75 review, 推奨 3; Araki's cases, 2026-11-16).
+ * If the absence is registered but the provisional event cannot
+ * be removed, the cell says so, closes the editor and re-reads,
+ * leaving the provisional entry to be deleted by hand rather
+ * than risking a duplicate absence (PR #75 re-review).
  */
 export interface CellEditorContext {
   api: ScheduleApi;
@@ -453,7 +457,25 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
                 : null,
             ),
           });
-          await editor.api.deleteEvent({ id, revision });
+          try {
+            await editor.api.deleteEvent({ id, revision });
+          } catch (cause) {
+            if (cause instanceof UnauthorizedError) {
+              fail(cause);
+              return;
+            }
+            // The absence stands; only removing the provisional
+            // event failed. Say so plainly, close the editor and
+            // re-read, leaving the provisional entry to be deleted
+            // by hand — with the editor left open, one more Enter
+            // would register the same absence a second time
+            // (PR #75 re-review; the same shape as PR #76's
+            // propose / apply split).
+            setNotice("不在は登録しました。仮の予定は消せなかったので、削除してください");
+            setEditingId(null);
+            editor.onSaved();
+            return;
+          }
           setEditingId(null);
           editor.onSaved();
         } catch (cause) {

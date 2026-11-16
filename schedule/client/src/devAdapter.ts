@@ -3,6 +3,9 @@ import type { RelaySaveResult, ScheduleApi } from "./api";
 import type {
   BootstrapData,
   DailyValueData,
+  DutyAssignmentData,
+  DutyChangeData,
+  DutyConflictData,
   RangeData,
   RangeDayData,
   ViewDefinitionData,
@@ -34,6 +37,14 @@ import type {
  * by hand and in tests exactly as against the real server (a saved
  * write is what the next getRange shows). The bootstrap carries
  * the shipped default kind templates and an Admin's permissions.
+ * Since Issue #38 the duty side is stateful, like the real
+ * server: assignments, changes and waivers live in the adapter
+ * instance, the panel's operations rewrite them, and the
+ * conflicts getRange returns are derived from them — so applying
+ * a substitute in the panel clears the table's warning mark here
+ * exactly as it does against the server. Two fixture absences
+ * overlap the rotation: a confirmed business trip on 2026-11-12
+ * (鈴木先生) and a tentative leave on 2026-11-16 (田中先生).
  */
 
 const GRADES = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `grade-${n}`, name: `${n}年` }));
@@ -174,6 +185,19 @@ export const DEV_BOOTSTRAP: BootstrapData = {
       sort: 4,
     },
   ],
+  dutyDefinitions: [
+    {
+      id: "duty-day",
+      name: "日番",
+      granularity: "day",
+      applicablePeriod: "all_year",
+      applicableStartsOn: null,
+      applicableEndsOn: null,
+      targetGroupId: null,
+      sort: 1,
+      rotation: { personIds: STAFF.map((s) => s.id), changeWeekdays: null },
+    },
+  ],
   masters: {
     staff: STAFF,
     grades: GRADES,
@@ -270,6 +294,42 @@ const EVENTS: Record<string, string[]> = {
   "2026-11-30": ["委員会活動"],
 };
 
+/** The fixture absences (platform-shaped records): who is away,
+ *  when, and whether the absence is confirmed yet. They overlap
+ *  the rotation on purpose — see the file header. */
+const ABSENCES = [
+  {
+    id: "abs-trip-1112",
+    staffId: "teacher-3",
+    kind: "business_trip",
+    fromDate: "2026-11-12",
+    toDate: "2026-11-12",
+    certainty: "confirmed",
+  },
+  {
+    id: "abs-leave-1116",
+    staffId: "teacher-1",
+    kind: "leave",
+    fromDate: "2026-11-16",
+    toDate: "2026-11-16",
+    certainty: "tentative",
+  },
+];
+
+function isClassDay(date: string): boolean {
+  const weekday = weekdayOf(date);
+  return weekday !== "sat" && weekday !== "sun" && !HOLIDAYS[date];
+}
+
+/** The rotation's holder for a date: a stable per-date rule (the
+ *  roster in order, one step per day from 2026-11-01), so the
+ *  same date names the same teacher whatever range is asked. */
+function rotationHolder(date: string): string {
+  const days = Math.round((Date.parse(date) - Date.parse("2026-11-01")) / 86_400_000);
+  const index = ((days % STAFF.length) + STAFF.length) % STAFF.length;
+  return (STAFF[index] as (typeof STAFF)[number]).id;
+}
+
 let valueSeq = 0;
 function value(
   partial: Partial<DailyValueData> & { date: string; itemDefinitionId: string },
@@ -288,73 +348,6 @@ function value(
     valueOptionId: null,
     valuePersonId: null,
     ...partial,
-  };
-}
-
-function devDay(date: string, index: number): RangeDayData {
-  const weekday = weekdayOf(date);
-  const holiday = HOLIDAYS[date];
-  const isWeekend = weekday === "sat" || weekday === "sun";
-  const classDay = !isWeekend && !holiday;
-  const dailyValues: DailyValueData[] = [];
-  dailyValues.push(
-    value({
-      date,
-      itemDefinitionId: "item-lunch",
-      valueOptionId: classDay ? "opt-lunch-yes" : "opt-lunch-no",
-    }),
-  );
-  if (classDay) {
-    // Dismissal: Mon/Wed/Fri split by grade band, Tue/Thu one time
-    // for everyone — the two grouping shapes of DESIGN 4.8.2.
-    const split = weekday === "mon" || weekday === "wed" || weekday === "fri";
-    for (const grade of GRADES) {
-      const n = Number(grade.id.slice(-1));
-      dailyValues.push(
-        value({
-          date,
-          itemDefinitionId: "item-dismissal",
-          targetRef: { axis: "grade", id: grade.id },
-          valueTime: split && n >= 4 ? "15:20" : "14:30",
-        }),
-      );
-    }
-    dailyValues.push(
-      value({ date, itemDefinitionId: "item-bus", targetId: "tgt-bus-1", valueTime: "14:40" }),
-      value({ date, itemDefinitionId: "item-bus", targetId: "tgt-bus-2", valueTime: "15:30" }),
-      value({ date, itemDefinitionId: "item-cleaning", valueOptionId: "opt-cleaning-yes" }),
-    );
-  }
-  return {
-    date,
-    day: {
-      date,
-      dayType: classDay ? "class_day" : "closed_day",
-      dayTypeLabel: null,
-      dayScheduleId: classDay ? "pattern-a" : null,
-      weekdaySwap: null,
-      note: null,
-      source: "default",
-    },
-    holidays: holiday ? [{ id: `hol-${date}`, date, name: holiday, kind: "national_holiday" }] : [],
-    // Events and absences live in the adapter's state (below), so
-    // writes show up on the next read; devDay itself stays the
-    // pure per-day fixture for days, holidays, values and duties.
-    events: [],
-    absences: [],
-    dailyValues,
-    dutyAssignments: classDay
-      ? [
-          {
-            id: `duty-${date}`,
-            dutyDefinitionId: "duty-day",
-            date,
-            slot: "all_day",
-            personId: (STAFF[index % STAFF.length] as (typeof STAFF)[number]).id,
-            note: null,
-          },
-        ]
-      : [],
   };
 }
 
@@ -459,6 +452,142 @@ function fixtureProvisionals(): Record<string, unknown>[] {
 }
 
 export function createDevApi(): ScheduleApi {
+  // The duty state of this adapter instance (Issue #38): the
+  // rotation's assignments by date, the recorded changes, and the
+  // waived (assignment, absence) pairs. Panel operations rewrite
+  // them, and every later read derives from them.
+  const assignments = new Map<string, DutyAssignmentData>();
+  const changes: DutyChangeData[] = [];
+  const waivers = new Set<string>();
+  let changeSeq = 0;
+
+  const ensureAssignment = (date: string): DutyAssignmentData | null => {
+    if (!isClassDay(date)) return null;
+    const existing = assignments.get(date);
+    if (existing) return existing;
+    const created: DutyAssignmentData = {
+      id: `duty-${date}`,
+      dutyDefinitionId: "duty-day",
+      date,
+      slot: "all_day",
+      personId: rotationHolder(date),
+      targetId: null,
+      origin: "auto",
+      note: null,
+    };
+    assignments.set(date, created);
+    return created;
+  };
+
+  const deriveConflicts = (from: string, to: string): DutyConflictData[] => {
+    const conflicts: DutyConflictData[] = [];
+    for (const date of datesInRange(from, to)) {
+      const assignment = ensureAssignment(date);
+      if (isClassDay(date) && !assignment) {
+        conflicts.push({
+          kind: "unassigned",
+          assignmentId: null,
+          otherAssignmentId: null,
+          dutyDefinitionId: "duty-day",
+          dutyName: "日番",
+          date,
+          slot: "all_day",
+          personId: null,
+          absenceId: null,
+          absenceKind: null,
+          certainty: null,
+        });
+        continue;
+      }
+      if (!assignment) continue;
+      for (const absence of ABSENCES) {
+        if (absence.fromDate > date || absence.toDate < date) continue;
+        if (assignment.personId !== absence.staffId) continue;
+        if (waivers.has(`${assignment.id}|${absence.id}`)) continue;
+        conflicts.push({
+          kind: "absence",
+          assignmentId: assignment.id,
+          otherAssignmentId: null,
+          dutyDefinitionId: "duty-day",
+          dutyName: "日番",
+          date,
+          slot: "all_day",
+          personId: assignment.personId,
+          absenceId: absence.id,
+          absenceKind: absence.kind,
+          certainty: absence.certainty,
+        });
+      }
+    }
+    return conflicts;
+  };
+
+  const findAssignment = (id: string): DutyAssignmentData => {
+    for (const assignment of assignments.values()) {
+      if (assignment.id === id) return assignment;
+    }
+    throw new Error(`duty assignment not found: ${id}`);
+  };
+
+  function devDay(date: string): RangeDayData {
+    const weekday = weekdayOf(date);
+    const holiday = HOLIDAYS[date];
+    const isWeekend = weekday === "sat" || weekday === "sun";
+    const classDay = !isWeekend && !holiday;
+    const dailyValues: DailyValueData[] = [];
+    dailyValues.push(
+      value({
+        date,
+        itemDefinitionId: "item-lunch",
+        valueOptionId: classDay ? "opt-lunch-yes" : "opt-lunch-no",
+      }),
+    );
+    if (classDay) {
+      // Dismissal: Mon/Wed/Fri split by grade band, Tue/Thu one time
+      // for everyone — the two grouping shapes of DESIGN 4.8.2.
+      const split = weekday === "mon" || weekday === "wed" || weekday === "fri";
+      for (const grade of GRADES) {
+        const n = Number(grade.id.slice(-1));
+        dailyValues.push(
+          value({
+            date,
+            itemDefinitionId: "item-dismissal",
+            targetRef: { axis: "grade", id: grade.id },
+            valueTime: split && n >= 4 ? "15:20" : "14:30",
+          }),
+        );
+      }
+      dailyValues.push(
+        value({ date, itemDefinitionId: "item-bus", targetId: "tgt-bus-1", valueTime: "14:40" }),
+        value({ date, itemDefinitionId: "item-bus", targetId: "tgt-bus-2", valueTime: "15:30" }),
+        value({ date, itemDefinitionId: "item-cleaning", valueOptionId: "opt-cleaning-yes" }),
+      );
+    }
+    const assignment = ensureAssignment(date);
+    return {
+      date,
+      day: {
+        date,
+        dayType: classDay ? "class_day" : "closed_day",
+        dayTypeLabel: null,
+        dayScheduleId: classDay ? "pattern-a" : null,
+        weekdaySwap: null,
+        note: null,
+        source: "default",
+      },
+      holidays: holiday
+        ? [{ id: `hol-${date}`, date, name: holiday, kind: "national_holiday" }]
+        : [],
+      // Events and absences live in the adapter's state (below), so
+      // writes show up on the next read; devDay itself stays the
+      // pure per-day fixture for days, holidays, values and duties.
+      events: [],
+      absences: [],
+      dailyValues,
+      dutyAssignments: assignment ? [structuredClone(assignment)] : [],
+    };
+  }
+
   const state = {
     events: [
       ...Object.entries(EVENTS).flatMap(([date, titles]) =>
@@ -475,7 +604,7 @@ export function createDevApi(): ScheduleApi {
   const storedDaily = (date: string): DailyValueData[] => {
     let values = state.daily.get(date);
     if (!values) {
-      values = devDay(date, 0).dailyValues.map((v) => ({ ...v }));
+      values = devDay(date).dailyValues.map((v) => ({ ...v }));
       state.daily.set(date, values);
     }
     return values;
@@ -515,7 +644,6 @@ export function createDevApi(): ScheduleApi {
         return {};
     }
   };
-
   return {
     async getBootstrap() {
       return structuredClone(DEV_BOOTSTRAP);
@@ -530,8 +658,8 @@ export function createDevApi(): ScheduleApi {
         view: structuredClone(view),
         from: input.from,
         to: input.to,
-        days: dates.map((date, i) => {
-          const base = devDay(date, i);
+        days: dates.map((date) => {
+          const base = devDay(date);
           return {
             ...base,
             events: state.events.filter(
@@ -584,7 +712,7 @@ export function createDevApi(): ScheduleApi {
           },
         ],
         eventValues: [],
-        conflicts: [],
+        conflicts: view.audience === "staff" ? deriveConflicts(input.from, input.to) : [],
       } satisfies RangeData;
     },
     async createEvent(input): Promise<RelaySaveResult> {
@@ -669,6 +797,134 @@ export function createDevApi(): ScheduleApi {
       if (index < 0) throw new Error("daily value not found");
       values.splice(index, 1);
       return { deleted: true as const };
+    },
+
+    async previewRotation(input) {
+      return datesInRange(input.from, input.to)
+        .filter((date) => isClassDay(date))
+        .map((date) => {
+          const existing = ensureAssignment(date);
+          const personId = rotationHolder(date);
+          const action =
+            !existing || existing.personId === null
+              ? ("create" as const)
+              : existing.origin === "auto" && existing.personId !== personId
+                ? ("replace" as const)
+                : ("keep" as const);
+          return {
+            date,
+            slot: "all_day",
+            personId,
+            action: existing ? action : ("create" as const),
+            existing: existing ? structuredClone(existing) : null,
+          };
+        });
+    },
+
+    async applyRotation(input) {
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+      const result: DutyAssignmentData[] = [];
+      for (const date of datesInRange(input.from, input.to)) {
+        if (!isClassDay(date)) continue;
+        const personId = rotationHolder(date);
+        const existing = assignments.get(date);
+        if (!existing) {
+          const assignment = ensureAssignment(date) as DutyAssignmentData;
+          created += 1;
+          result.push(structuredClone(assignment));
+          continue;
+        }
+        if (existing.origin === "auto" && existing.personId !== personId) {
+          existing.personId = personId;
+          updated += 1;
+        } else {
+          skipped += 1;
+        }
+        result.push(structuredClone(existing));
+      }
+      return { created, updated, skipped, assignments: result };
+    },
+
+    async proposeDutyChange(input) {
+      const a = findAssignment(input.assignmentAId);
+      const b = input.assignmentBId ? findAssignment(input.assignmentBId) : null;
+      changeSeq += 1;
+      const change: DutyChangeData = {
+        id: `change-${changeSeq}`,
+        dutyDefinitionId: a.dutyDefinitionId,
+        kind: input.kind,
+        assignmentAId: a.id,
+        assignmentBId: b?.id ?? null,
+        fromPersonId: a.personId,
+        toPersonId: input.kind === "swap" ? (b?.personId ?? null) : (input.toPersonId ?? null),
+        reason: input.reason ?? "",
+        requestedBy: "dev-user",
+        approvedBy: null,
+        status: "proposed",
+        createdAt: new Date().toISOString(),
+        appliedAt: null,
+      };
+      changes.push(change);
+      return structuredClone(change);
+    },
+
+    async applyDutyChange(input) {
+      const change = changes.find((c) => c.id === input.id);
+      if (!change) throw new Error(`duty change not found: ${input.id}`);
+      const a = findAssignment(change.assignmentAId);
+      if (change.kind === "swap" && change.assignmentBId) {
+        const b = findAssignment(change.assignmentBId);
+        const holder = a.personId;
+        a.personId = b.personId;
+        b.personId = holder;
+        a.origin = "swap";
+        b.origin = "swap";
+      } else {
+        a.personId = change.toPersonId;
+        a.origin = "swap";
+      }
+      change.status = "applied";
+      change.approvedBy = "dev-user";
+      change.appliedAt = new Date().toISOString();
+      return structuredClone(change);
+    },
+
+    async declineDutyChange(input) {
+      const change = changes.find((c) => c.id === input.id);
+      if (!change) throw new Error(`duty change not found: ${input.id}`);
+      change.status = "declined";
+      change.approvedBy = "dev-user";
+      return structuredClone(change);
+    },
+
+    async getDutyChanges() {
+      return structuredClone([...changes].reverse());
+    },
+
+    async getDutyConflicts(input) {
+      return deriveConflicts(input.from, input.to);
+    },
+
+    async waiveConflict(input) {
+      waivers.add(`${input.assignmentId}|${input.absenceId}`);
+      return { waived: true };
+    },
+
+    async getDutyChangeCandidates(input) {
+      const a = findAssignment(input.assignmentId);
+      const absent = new Set(
+        ABSENCES.filter((x) => x.fromDate <= a.date && a.date <= x.toDate).map((x) => x.staffId),
+      );
+      const roster = STAFF.map((s) => s.id);
+      const start = a.personId ? roster.indexOf(a.personId) : -1;
+      const ordered: string[] = [];
+      for (let step = 1; step <= roster.length; step += 1) {
+        const id = roster[(start + step) % roster.length] as string;
+        if (id !== a.personId && !absent.has(id)) ordered.push(id);
+      }
+      return ordered;
     },
   };
 }

@@ -5,7 +5,7 @@ import {
   dailyCellText,
   dayAttributeText,
   dayMark,
-  dutyCellText,
+  dutyCellLines,
   eventCellLines,
   weekdayLabel,
 } from "./lib";
@@ -18,7 +18,10 @@ import type { BootstrapData, RangeData, RangeDayData, ViewColumnData } from "./t
  * columns across. Saturdays are blue and Sundays / holidays red,
  * and the weekday letter plus the holiday / day-type name are
  * always printed with the date, so colour is never the only signal
- * (DESIGN schedule 9.1).
+ * (DESIGN schedule 9.1). Duty cells carry the marks of Issue #38:
+ * （交代） for an assignment a change was applied to, and a ⚠
+ * warning naming the overlap for a conflicted one — again text,
+ * not colour alone.
  *
  * With an editor context (Issue #35), entry and daily-value cells
  * are selectable: a click — or a key press on the focused cell —
@@ -39,6 +42,27 @@ export function RowsTable({
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [seed, setSeed] = useState<{ key: string; text: string } | null>(null);
 
+  // Duty cells are lines, not one text (Issue #38): each
+  // assignment a line, with the （交代） mark and the ⚠ overlap
+  // warning as text next to it.
+  const renderDutyCell = (day: RangeDayData, column: ViewColumnData) =>
+    dutyCellLines(day, column, bootstrap, range.conflicts).map((line, i) => (
+      <div key={line.assignmentId ?? `unassigned-${line.slot}-${i}`}>
+        {line.text}
+        {line.swapped && (
+          <span className="duty-swapped" title="交代済み">
+            （交代）
+          </span>
+        )}
+        {line.warning && (
+          <span className="duty-warning" title={line.warning}>
+            {" "}
+            ⚠ {line.warning}
+          </span>
+        )}
+      </div>
+    ));
+
   const renderCell = (day: RangeDayData, column: ViewColumnData) => {
     if (!editor) {
       return (
@@ -46,7 +70,7 @@ export function RowsTable({
           {column.sourceKind === "event_category" &&
             eventCellLines(day).map((line, i) => <div key={i}>{line}</div>)}
           {column.sourceKind === "daily_item" && dailyCellText(day, column, bootstrap)}
-          {column.sourceKind === "duty" && dutyCellText(day, column, bootstrap)}
+          {column.sourceKind === "duty" && renderDutyCell(day, column)}
           {column.sourceKind === "day_attribute" && dayAttributeText(day)}
         </>
       );
@@ -70,7 +94,7 @@ export function RowsTable({
         <DailyCell {...cellProps} />
       );
     }
-    if (column.sourceKind === "duty") return <>{dutyCellText(day, column, bootstrap)}</>;
+    if (column.sourceKind === "duty") return <>{renderDutyCell(day, column)}</>;
     return <>{dayAttributeText(day)}</>;
   };
   return (

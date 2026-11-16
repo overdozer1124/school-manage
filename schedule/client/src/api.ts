@@ -1,4 +1,12 @@
-import type { BootstrapData, RangeData, TargetRefData } from "./types";
+import type {
+  ApplyRotationResultData,
+  BootstrapData,
+  DutyChangeData,
+  DutyConflictData,
+  RangeData,
+  RotationPlanCellData,
+  TargetRefData,
+} from "./types";
 
 /**
  * The screens' API口 (Issue #34): the only place the client talks to
@@ -43,6 +51,14 @@ export interface RelaySaveResult {
   values: unknown[] | null;
 }
 
+export interface DutyChangeProposal {
+  kind: "swap" | "substitute" | "reassign";
+  assignmentAId: string;
+  assignmentBId?: string | null;
+  toPersonId?: string | null;
+  reason?: string;
+}
+
 export interface ScheduleApi {
   getBootstrap(): Promise<BootstrapData>;
   getRange(input: { from: string; to: string; viewId: string }): Promise<RangeData>;
@@ -74,6 +90,36 @@ export interface ScheduleApi {
     itemDefinitionId: string;
     target?: TargetRefData | null;
   }): Promise<{ deleted: true }>;
+  // The duty panel's actions (Issue #38), served by the same
+  // endpoints: the rotation preview / apply of Issue #30 and the
+  // change / conflict operations of Issue #31.
+  previewRotation(input: {
+    dutyDefinitionId: string;
+    from: string;
+    to: string;
+    slots?: string[];
+  }): Promise<RotationPlanCellData[]>;
+  applyRotation(input: {
+    dutyDefinitionId: string;
+    from: string;
+    to: string;
+    slots?: string[];
+  }): Promise<ApplyRotationResultData>;
+  proposeDutyChange(input: DutyChangeProposal): Promise<DutyChangeData>;
+  applyDutyChange(input: { id: string }): Promise<DutyChangeData>;
+  declineDutyChange(input: { id: string }): Promise<DutyChangeData>;
+  getDutyChanges(input?: { dutyDefinitionId?: string }): Promise<DutyChangeData[]>;
+  getDutyConflicts(input: {
+    from: string;
+    to: string;
+    dutyDefinitionId?: string;
+  }): Promise<DutyConflictData[]>;
+  waiveConflict(input: {
+    assignmentId: string;
+    absenceId: string;
+    reason?: string;
+  }): Promise<unknown>;
+  getDutyChangeCandidates(input: { assignmentId: string }): Promise<string[]>;
 }
 
 export interface ScheduleApiOptions {
@@ -135,6 +181,15 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     deleteAbsence: (input) => call<{ deleted: true }>("deleteAbsence", input),
     setDailyValue: (input) => call<unknown>("setDailyValue", input),
     deleteDailyValue: (input) => call<{ deleted: true }>("deleteDailyValue", input),
+    previewRotation: (input) => call<RotationPlanCellData[]>("previewRotation", input),
+    applyRotation: (input) => call<ApplyRotationResultData>("applyRotation", input),
+    proposeDutyChange: (input) => call<DutyChangeData>("proposeDutyChange", input),
+    applyDutyChange: (input) => call<DutyChangeData>("applyDutyChange", input),
+    declineDutyChange: (input) => call<DutyChangeData>("declineDutyChange", input),
+    getDutyChanges: (input) => call<DutyChangeData[]>("getDutyChanges", input ?? {}),
+    getDutyConflicts: (input) => call<DutyConflictData[]>("getDutyConflicts", input),
+    waiveConflict: (input) => call<unknown>("waiveConflict", input),
+    getDutyChangeCandidates: (input) => call<string[]>("getDutyChangeCandidates", input),
   };
 }
 

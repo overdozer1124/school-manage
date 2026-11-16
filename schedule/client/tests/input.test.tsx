@@ -158,6 +158,7 @@ function makeBootstrap(
       template("deadline", "〆切", "event", "担当者", "title", 3),
       template("leave", "休暇", "absence", "取得者", "person", 4),
     ],
+    dutyDefinitions: [],
     masters: { staff: STAFF, grades: GRADES, dayPatterns: [] },
   };
 }
@@ -230,6 +231,7 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
   };
   const control = {
     failCreateEvent: false,
+    failDeleteEvent: false,
     failSetDailyValue: null as Error | null,
   };
   const itemsById = new Map(bootstrap.itemDefinitions.map((i) => [i.id, i]));
@@ -285,6 +287,9 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
     },
     deleteEvent: async (input) => {
       calls.deleteEvent.push(input);
+      if (control.failDeleteEvent) {
+        throw new ApiError(409, "他の人が変更しました");
+      }
       state.events = state.events.filter((e) => e["id"] !== input.id);
       return { deleted: true };
     },
@@ -343,6 +348,35 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
     deleteDailyValue: async (input) => {
       calls.deleteDailyValue.push(input);
       return { deleted: true };
+    },
+    // The duty panel's actions (Issue #38) are not exercised by
+    // these tests; the fake refuses them like an unused endpoint.
+    previewRotation: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    applyRotation: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    proposeDutyChange: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    applyDutyChange: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    declineDutyChange: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getDutyChanges: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getDutyConflicts: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    waiveConflict: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getDutyChangeCandidates: async (): Promise<never> => {
+      throw new Error("not used");
     },
   };
   return { api, calls, control, state };
@@ -555,6 +589,46 @@ describe("provisional entries in absence columns (PR #75 review, 推奨 3)", () 
     // The provisional is gone; the absence stands in its place.
     await waitFor(() => expect(within(cell(DATE, 3)).getByText("田中一郎")).toBeInTheDocument());
     expect(within(cell(DATE, 3)).queryByText("生徒指導担当")).not.toBeInTheDocument();
+  });
+
+  it("when only removing the provisional fails, the absence stands and the leftover waits for hand deletion", async () => {
+    const { calls, control } = await renderApp("Admin", "staff-9", {
+      withMovement: true,
+      seedEvents: [provisionalName],
+    });
+    control.failDeleteEvent = true;
+    const moveCell = cell(DATE, 3);
+    await waitFor(() => expect(within(moveCell).getByText("生徒指導担当")).toBeInTheDocument());
+    fireEvent.click(within(moveCell).getByRole("button", { name: "生徒指導担当を編集" }));
+    const edit = within(moveCell).getByLabelText("予定の再編集");
+    fireEvent.change(edit, { target: { value: "田中一郎" } });
+    fireEvent.keyDown(edit, { key: "Enter" });
+    // The absence was registered; only the provisional's removal
+    // failed (PR #75 re-review).
+    await waitFor(() => expect(calls.createAbsence).toHaveLength(1));
+    expect(calls.deleteEvent).toEqual([{ id: "ev-provisional", revision: 2 }]);
+    // The dedicated notice shows instead of the generic failure,
+    // and the editor is closed, so another Enter cannot register
+    // the same absence again.
+    await waitFor(() =>
+      expect(within(cell(DATE, 3)).getByRole("alert")).toHaveTextContent(
+        "不在は登録しました。仮の予定は消せなかったので、削除してください",
+      ),
+    );
+    expect(within(cell(DATE, 3)).queryByLabelText("予定の再編集")).not.toBeInTheDocument();
+    // After the re-read both stand: the new absence and the
+    // leftover provisional next to it.
+    await waitFor(() => expect(within(cell(DATE, 3)).getByText("田中一郎")).toBeInTheDocument());
+    expect(within(cell(DATE, 3)).getByText("生徒指導担当")).toBeInTheDocument();
+    // The leftover can still be deleted by hand, and doing so
+    // registers nothing new.
+    control.failDeleteEvent = false;
+    fireEvent.click(within(cell(DATE, 3)).getByRole("button", { name: "生徒指導担当を削除" }));
+    await waitFor(() => expect(calls.deleteEvent).toHaveLength(2));
+    await waitFor(() =>
+      expect(within(cell(DATE, 3)).queryByText("生徒指導担当")).not.toBeInTheDocument(),
+    );
+    expect(calls.createAbsence).toHaveLength(1);
   });
 
   it("a title-only trip entered in the staff-movement column shows by its title", async () => {

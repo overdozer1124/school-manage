@@ -7,6 +7,7 @@ import {
 import type {
   BootstrapData,
   DailyValueData,
+  DutyConflictData,
   ItemDefinitionData,
   KindTemplateData,
   MasterEntry,
@@ -295,22 +296,117 @@ export function dutyCellText(
     (a) => a.dutyDefinitionId === column.dutyDefinitionId,
   );
   if (assignments.length === 0) return "";
-  const nameOf = (personId: string | null): string => {
-    if (!personId) return "（未定）";
-    return bootstrap.masters.staff.find((s) => s.id === personId)?.name ?? personId;
-  };
   const slotOrder = ["am", "pm", "all_day", "week"];
   const sorted = [...assignments].sort(
     (a, b) => slotOrder.indexOf(a.slot) - slotOrder.indexOf(b.slot),
   );
   return sorted
     .map((a) => {
-      const name = nameOf(a.personId);
+      const name = staffName(bootstrap, a.personId);
       if (a.slot === "am") return `午前 ${name}`;
       if (a.slot === "pm") return `午後 ${name}`;
       return name;
     })
     .join("／");
+}
+
+/** A staff member's display name; an empty cell reads （未定）. */
+export function staffName(bootstrap: BootstrapData, personId: string | null): string {
+  if (!personId) return "（未定）";
+  return bootstrap.masters.staff.find((s) => s.id === personId)?.name ?? personId;
+}
+
+const ABSENCE_KIND_LABELS: Record<string, string> = {
+  business_trip: "出張",
+  training: "研修",
+  leave: "休暇",
+  other: "不在",
+};
+
+/** The display label of an absence kind (出張 / 研修 / 休暇). */
+export function absenceKindLabel(kind: string | null): string {
+  return (kind && ABSENCE_KIND_LABELS[kind]) || "不在";
+}
+
+/** The display label of a duty slot: 午前 / 午後 / 週 / ○限. An
+ *  all-day slot carries no label — it is the unmarked case. */
+export function slotLabel(slot: string): string {
+  if (slot === "am") return "午前";
+  if (slot === "pm") return "午後";
+  if (slot === "week") return "週";
+  if (slot === "all_day") return "";
+  return `${slot}限`;
+}
+
+/**
+ * One line of a duty cell (Issue #38): the holder's name, the
+ * swapped mark when a change was applied to the row (origin
+ * "swap" — the table shows that a change happened, never the
+ * history itself, DESIGN schedule 4.7.1), and the warning text
+ * when a derived conflict touches the assignment. A conflict from
+ * a not-yet-confirmed absence says so （仮の…), so a tentative
+ * absence is told apart from a confirmed one (DESIGN-AUTH-TENANCY
+ * 4.6). An applicable cell with no assignment stands as its own
+ * line, marked 未割当.
+ */
+export interface DutyCellLine {
+  assignmentId: string | null;
+  slot: string;
+  text: string;
+  swapped: boolean;
+  warning: string | null;
+}
+
+export function dutyCellLines(
+  day: RangeDayData,
+  column: ViewColumnData,
+  bootstrap: BootstrapData,
+  conflicts: DutyConflictData[],
+): DutyCellLine[] {
+  const cellConflicts = conflicts.filter(
+    (c) => c.dutyDefinitionId === column.dutyDefinitionId && c.date === day.date,
+  );
+  const warningFor = (assignmentId: string): string | null => {
+    const conflict = cellConflicts.find(
+      (c) => c.assignmentId === assignmentId || c.otherAssignmentId === assignmentId,
+    );
+    if (!conflict) return null;
+    if (conflict.kind === "double") return "当番が二重です";
+    if (conflict.kind === "absence") {
+      const label = absenceKindLabel(conflict.absenceKind);
+      return conflict.certainty === "tentative"
+        ? `仮の${label}と重なっています`
+        : `${label}と重なっています`;
+    }
+    return null;
+  };
+  const slotOrder = ["am", "pm", "all_day", "week"];
+  const assignments = [...day.dutyAssignments]
+    .filter((a) => a.dutyDefinitionId === column.dutyDefinitionId)
+    .sort((a, b) => slotOrder.indexOf(a.slot) - slotOrder.indexOf(b.slot));
+  const lines: DutyCellLine[] = assignments.map((a) => {
+    const prefix = a.slot === "am" ? "午前 " : a.slot === "pm" ? "午後 " : "";
+    return {
+      assignmentId: a.id,
+      slot: a.slot,
+      text: `${prefix}${staffName(bootstrap, a.personId)}`,
+      swapped: a.origin === "swap",
+      warning: warningFor(a.id),
+    };
+  });
+  for (const conflict of cellConflicts) {
+    if (conflict.kind !== "unassigned") continue;
+    if (lines.some((line) => line.slot === conflict.slot)) continue;
+    const label = slotLabel(conflict.slot);
+    lines.push({
+      assignmentId: null,
+      slot: conflict.slot,
+      text: label,
+      swapped: false,
+      warning: "未割当です",
+    });
+  }
+  return lines;
 }
 
 /** The text of one event_category cell: the day's events, in the
@@ -341,7 +437,12 @@ export function columnLabel(column: ViewColumnData, bootstrap: BootstrapData): s
   }
   if (column.sourceKind === "event_category") return "行事";
   if (column.sourceKind === "day_attribute") return "日の種別";
-  return "当番";
+  // A duty column is headed by its definition's own name — the
+  // school's word for the duty (日番 / 日直 / 週番…, DESIGN
+  // schedule 4.7) — now that getBootstrap returns the definitions
+  // (Issue #38). The generic 当番 remains the fallback for a
+  // column whose definition is not in the bootstrap.
+  return bootstrap.dutyDefinitions.find((d) => d.id === column.dutyDefinitionId)?.name ?? "当番";
 }
 
 /** This month's undecided / month-precision events (scenario 9):

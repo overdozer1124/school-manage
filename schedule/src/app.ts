@@ -30,8 +30,11 @@ export interface ScheduleAppDeps {
   /** Verifies a request into an AuthContext (or throws AuthAccessError). */
   auth: ScheduleAuth;
   /** Builds the actions for one request, bound to its cookie:
-   *  the platform reads and the duty source are per-caller. */
-  createActions(cookie: string): { [actionName: string]: ScheduleActionLike };
+   *  the platform reads and the duty source are per-caller. The
+   *  record is keyed by action name; a name in ACTION_NAMES that
+   *  the assembly does not provide answers 404, like an unknown
+   *  name. */
+  createActions(cookie: string): Record<string, ScheduleActionLike>;
   /** Directory of the built screens (client/dist). When it does not
    *  exist, only the API and health check are served. */
   clientDistDir?: string;
@@ -51,6 +54,19 @@ const ACTION_NAMES = [
   "deleteAbsence",
   "setDailyValue",
   "deleteDailyValue",
+  // The duty panel's actions (Issue #38): the rotation preview and
+  // apply, and the change / conflict operations of Issue #31. The
+  // actions themselves carry the permission checks (duty.write,
+  // with the Viewer's own-assignment rule enforced per row).
+  "previewRotation",
+  "applyRotation",
+  "proposeDutyChange",
+  "applyDutyChange",
+  "declineDutyChange",
+  "getDutyChanges",
+  "getDutyConflicts",
+  "waiveConflict",
+  "getDutyChangeCandidates",
 ] as const;
 
 export function createApp(deps?: ScheduleAppDeps) {
@@ -72,7 +88,7 @@ export function createApp(deps?: ScheduleAppDeps) {
         const auth = await deps.auth.verifyRequest(req);
         const cookie = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
         const actions = deps.createActions(cookie);
-        const action = actions[actionName as (typeof ACTION_NAMES)[number]];
+        const action = actions[actionName];
         if (!action) {
           res.status(404).json({ error: `unknown action: ${actionName}` });
           return;
