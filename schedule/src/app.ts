@@ -54,6 +54,11 @@ const ACTION_NAMES = [
   "deleteAbsence",
   "setDailyValue",
   "deleteDailyValue",
+  // Issue #36: the quick-entry popover's item step reads and
+  // rewrites a record's additional items (Issue #29's actions,
+  // assembled with the event relay in composition).
+  "getEventValues",
+  "setEventValues",
   // The duty panel's actions (Issue #38): the rotation preview and
   // apply, and the change / conflict operations of Issue #31. The
   // actions themselves carry the permission checks (duty.write,

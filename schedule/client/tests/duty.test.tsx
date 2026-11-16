@@ -37,6 +37,12 @@ const unusedWrites = {
   deleteDailyValue: async (): Promise<never> => {
     throw new Error("not used");
   },
+  getEventValues: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  setEventValues: async (): Promise<never> => {
+    throw new Error("not used");
+  },
 };
 
 // Duty marks and the duty panel (Issue #38): a conflicted

@@ -4,7 +4,13 @@ import { datesInRange } from "@school-manage/calendar-types";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../src/App";
 import { ApiError, ForbiddenError, type ScheduleApi } from "../src/api";
-import type { BootstrapData, DailyValueData, RangeData, RangeDayData } from "../src/types";
+import type {
+  BootstrapData,
+  DailyValueData,
+  EventValueData,
+  RangeData,
+  RangeDayData,
+} from "../src/types";
 
 afterEach(cleanup);
 
@@ -159,6 +165,12 @@ function makeBootstrap(
       template("leave", "休暇", "absence", "取得者", "person", 4),
     ],
     dutyDefinitions: [],
+    // The quick-entry popover's raw materials (Issue #36): these
+    // fixtures predate it — no places, no subdivisions, and the
+    // default behaviour, the popover.
+    locations: [],
+    absenceSubdivisions: [],
+    inputOpener: "popover",
     masters: { staff: STAFF, grades: GRADES, dayPatterns: [] },
   };
 }
@@ -167,6 +179,7 @@ interface FakeState {
   events: Record<string, unknown>[];
   absences: Record<string, unknown>[];
   daily: Map<string, DailyValueData[]>;
+  eventValues: Map<string, EventValueData[]>;
 }
 
 function dailyValue(partial: Partial<DailyValueData> & { date: string }): DailyValueData {
@@ -213,6 +226,7 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
     ],
     absences: [],
     daily: new Map([[DATE, [dailyValue({ date: DATE, valueOptionId: "opt-lunch-no" })]]]),
+    eventValues: new Map(),
   };
   const calls = {
     createEvent: [] as { event: Record<string, unknown> }[],
@@ -228,6 +242,11 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
       value: unknown;
     }[],
     deleteDailyValue: [] as unknown[],
+    setEventValues: [] as {
+      subjectKind: "event" | "absence";
+      subjectId: string;
+      values: { itemDefinitionId: string; target?: unknown; value: unknown }[];
+    }[],
   };
   const control = {
     failCreateEvent: false,
@@ -349,6 +368,33 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
       calls.deleteDailyValue.push(input);
       return { deleted: true };
     },
+    // A record's additional items (Issue #36): held per subject
+    // and rewritten as one set, as the server's action does.
+    getEventValues: async (input) => state.eventValues.get(input.subjectId) ?? [],
+    setEventValues: async (input) => {
+      calls.setEventValues.push(input);
+      const rows = input.values.map((entry, i) => {
+        const itemDef = itemsById.get(entry.itemDefinitionId);
+        return {
+          id: `evv-${input.subjectId}-${i}`,
+          itemDefinitionId: entry.itemDefinitionId,
+          targetId: null,
+          targetRef: null,
+          valueText: itemDef?.valueType === "text" ? (entry.value as string) : null,
+          valueTime: null,
+          valueTimeEnd: null,
+          valueNumber: null,
+          valueBoolean: null,
+          valueOptionId:
+            itemDef?.valueType === "symbol" || itemDef?.valueType === "code"
+              ? (itemDef.options.find((o) => o.code === entry.value)?.id ?? null)
+              : null,
+          valuePersonId: null,
+        };
+      });
+      state.eventValues.set(input.subjectId, rows);
+      return rows;
+    },
     // The duty panel's actions (Issue #38) are not exercised by
     // these tests; the fake refuses them like an unused endpoint.
     previewRotation: async (): Promise<never> => {
@@ -425,13 +471,17 @@ describe("entry cells (Issue #35)", () => {
       endsOn: DATE,
     });
     // The saved entry shows, and the same cell takes the next one.
-    await waitFor(() => expect(within(cell(DATE, 0)).getByText("運動会")).toBeInTheDocument());
+    // (The entry lines are looked for in the list itself: the
+    // quick-entry popover that Enter now opens also carries the
+    // title, Issue #36.)
+    const entryList = () => cell(DATE, 0).querySelector(".entry-list") as HTMLElement;
+    await waitFor(() => expect(within(entryList()).getByText("運動会")).toBeInTheDocument());
     const next = within(cell(DATE, 0)).getByLabelText(/行事の入力/);
     fireEvent.change(next, { target: { value: "避難訓練" } });
     fireEvent.keyDown(next, { key: "Enter" });
     await waitFor(() => expect(calls.createEvent).toHaveLength(2));
-    await waitFor(() => expect(within(cell(DATE, 0)).getByText("避難訓練")).toBeInTheDocument());
-    expect(within(cell(DATE, 0)).getByText("運動会")).toBeInTheDocument();
+    await waitFor(() => expect(within(entryList()).getByText("避難訓練")).toBeInTheDocument());
+    expect(within(entryList()).getByText("運動会")).toBeInTheDocument();
   });
 
   it("in a leave entry, the typed name becomes the holder", async () => {

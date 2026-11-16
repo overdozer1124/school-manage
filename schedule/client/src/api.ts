@@ -3,6 +3,7 @@ import type {
   BootstrapData,
   DutyChangeData,
   DutyConflictData,
+  EventValueData,
   RangeData,
   RotationPlanCellData,
   TargetRefData,
@@ -90,6 +91,19 @@ export interface ScheduleApi {
     itemDefinitionId: string;
     target?: TargetRefData | null;
   }): Promise<{ deleted: true }>;
+  // Issue #36: the quick-entry popover's item step. A record's
+  // additional items (Issue #29) are read as one set and rewritten
+  // as one set — the write replaces the whole set, so the popover
+  // reads first and sends the set back with its one item changed.
+  getEventValues(input: {
+    subjectKind: "event" | "absence";
+    subjectId: string;
+  }): Promise<EventValueData[]>;
+  setEventValues(input: {
+    subjectKind: "event" | "absence";
+    subjectId: string;
+    values: { itemDefinitionId: string; target?: TargetRefData | null; value: unknown }[];
+  }): Promise<unknown>;
   // The duty panel's actions (Issue #38), served by the same
   // endpoints: the rotation preview / apply of Issue #30 and the
   // change / conflict operations of Issue #31.
@@ -181,6 +195,8 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     deleteAbsence: (input) => call<{ deleted: true }>("deleteAbsence", input),
     setDailyValue: (input) => call<unknown>("setDailyValue", input),
     deleteDailyValue: (input) => call<{ deleted: true }>("deleteDailyValue", input),
+    getEventValues: (input) => call<EventValueData[]>("getEventValues", input),
+    setEventValues: (input) => call<unknown>("setEventValues", input),
     previewRotation: (input) => call<RotationPlanCellData[]>("previewRotation", input),
     applyRotation: (input) => call<ApplyRotationResultData>("applyRotation", input),
     proposeDutyChange: (input) => call<DutyChangeData>("proposeDutyChange", input),

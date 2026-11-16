@@ -86,6 +86,13 @@ class FakePlatform {
     grades: [{ id: "grade-1", name: "1年" }],
     "day-patterns": [{ id: "pattern-a", code: "A", name: "A日課" }],
   };
+  /** The school's absence subdivisions, as the platform keeps
+   *  them (Issue #25): the quick-entry popover's leave step reads
+   *  them through the bootstrap (Issue #36). */
+  subdivisions: Record_[] = [
+    { id: "subdiv-annual", code: "leave", key: "annual", label: "年休" },
+    { id: "subdiv-sick", code: "leave", key: "sick", label: "病休" },
+  ];
 
   fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const raw = String(input).replace("http://platform.test", "");
@@ -168,6 +175,9 @@ class FakePlatform {
         school: { schoolId: A, name: "テスト学校", slug: "test" },
         teacherId: "teacher-a1",
       });
+    }
+    if (method === "GET" && path === "/platform/api/v1/calendar/absence-subdivisions") {
+      return jsonResponse(200, { items: this.subdivisions });
     }
     const masters = /^\/platform\/api\/v1\/masters\/(.+)$/.exec(path);
     if (method === "GET" && masters) {
@@ -293,6 +303,9 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
       granularity: "day",
       defaultVisibility: "staff_only",
     });
+    // One registered place, for the quick-entry popover's
+    // location step (Issue #36).
+    await defs.upsertLocation.run(adminA, { id: "loc-gym", name: "体育館" });
     await defs.upsertTargetGroup.run(adminA, { id: "grp-club", key: "club", name: "部活動" });
     await defs.upsertTarget.run(adminA, {
       id: "tgt-soccer",
@@ -629,6 +642,22 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
     expect(result.masters.staff.map((s) => s.id)).toEqual(["teacher-a1"]);
     expect(result.masters.grades.map((g) => g.id)).toEqual(["grade-1"]);
     expect(result.masters.dayPatterns.map((p) => p.id)).toEqual(["pattern-a"]);
+    // The quick-entry popover's raw materials (Issue #36): the
+    // school's places from its own definitions, the platform's
+    // subdivision definitions, and the default input behaviour —
+    // the popover, for a school with no settings row yet.
+    expect(result.locations.map((l) => l.id)).toEqual(["loc-gym"]);
+    expect(result.absenceSubdivisions.map((s) => s.key)).toEqual(["annual", "sick"]);
+    expect(result.inputOpener).toBe("popover");
+  });
+
+  it("bootstrap reports the modal for a school that chose it (Issue #36)", async () => {
+    const defs = createDefinitionActions(dbHandle);
+    await defs.saveSettings.run(auth(B, "Admin"), { inputOpener: "modal" });
+    const result = await range.getBootstrap.run(auth(B, "Editor", "teacher-a1"), {
+      cookie: COOKIE,
+    });
+    expect(result.inputOpener).toBe("modal");
   });
 
   // ---- Duty conflicts in the range (Issue #69) ------------------
