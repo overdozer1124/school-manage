@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
-import { buildFreeTextEntry, buildTitleOnlyEntry } from "./cells";
+import { buildFreeTextEntry, buildTitleOnlyEntry, isImeKeyEvent } from "./cells";
 import { eventValueInputOf } from "./QuickPopover";
 import { freeTextNameOf, normalizeName, provisionalLineText, schoolYearOf } from "./lib";
 import type { BootstrapData, EventValueData, TargetRefData } from "./types";
@@ -559,7 +559,7 @@ export function DetailModal({
         aria-label={heading}
         tabIndex={-1}
         onKeyDown={(e) => {
-          if (e.key === "Escape") {
+          if (e.key === "Escape" && !isImeKeyEvent(e)) {
             e.stopPropagation();
             onClose();
           }

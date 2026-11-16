@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
-import { isCommitEnter } from "./cells";
+import { isCommitEnter, isImeKeyEvent } from "./cells";
 import { ClockPicker } from "./ClockPicker";
 import { absenceLineText, eventTitle, matchStaffByName, normalizeName } from "./lib";
 import type {
@@ -621,7 +621,7 @@ export function QuickPopover({
       role="dialog"
       aria-label={`${title}のクイック入力`}
       onKeyDown={(e) => {
-        if (e.key === "Escape") {
+        if (e.key === "Escape" && !isImeKeyEvent(e)) {
           e.stopPropagation();
           onClose();
         }
