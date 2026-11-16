@@ -7,6 +7,7 @@ import {
   type ViewDefinitionRow,
 } from "./schema.js";
 import type { UpdateColumnWidthInput, ViewDefinitionInput } from "../views/types.js";
+import { PlatformRelayError } from "../platformClient.js";
 
 /**
  * The view store (Issue #32): view definitions and their columns.
@@ -123,11 +124,30 @@ export async function upsertViewDefinition(
 }
 
 export async function deleteViewDefinition(db: Db, schoolId: string, id: string): Promise<boolean> {
-  const rows = await db
-    .delete(viewDefinitions)
-    .where(and(eq(viewDefinitions.schoolId, schoolId), eq(viewDefinitions.id, id)))
-    .returning();
-  return rows.length > 0;
+  try {
+    const rows = await db
+      .delete(viewDefinitions)
+      .where(and(eq(viewDefinitions.schoolId, schoolId), eq(viewDefinitions.id, id)))
+      .returning();
+    return rows.length > 0;
+  } catch (error) {
+    if (pgErrorCode(error) === "23503") {
+      // A view that has publications cannot be deleted — the
+      // publications foreign key is restrict by design (DESIGN
+      // schedule 4.8: an issued version must keep naming the view
+      // it was issued from). The refusal is a 409 carrying the
+      // reason and the alternative, in the same shape as the
+      // platform's 409s, so it reaches the screen as-is instead of
+      // surfacing as an opaque 500 (PR #79 review).
+      throw new PlatformRelayError({
+        status: 409,
+        body: {
+          error: "発行した版があるビューは削除できません。使わないビューは一覧から外してください",
+        },
+      });
+    }
+    throw error;
+  }
 }
 
 /**

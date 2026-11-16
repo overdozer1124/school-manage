@@ -10,7 +10,7 @@ import {
 import { createScheduleActions } from "../src/composition.js";
 import { createDb, type Db } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { createPlatformApiClient } from "../src/platformClient.js";
+import { createPlatformApiClient, PlatformRelayError } from "../src/platformClient.js";
 
 // Publication tests (Issue #40): issuing a view's month table
 // renders the document on the server from the same getRange
@@ -503,5 +503,68 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
     await expect(actions.getPublication.run(auth("Viewer"), { id: "pub-nope" })).rejects.toThrow(
       /publication not found/,
     );
+  });
+
+  it("a stored document never carries a script element, even from typed text", async () => {
+    // The stored document is shown as HTML (the sandboxed preview
+    // now, a public page later), so whatever a person typed must
+    // arrive escaped — never as a live script element (PR #79
+    // review, recommendation 1).
+    await actions.createEvent.run(auth("Editor"), {
+      cookie: COOKIE,
+      event: eventPayload({
+        id: "ev-script",
+        title: "点検<script>alert(1)</script>",
+      }),
+    });
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: MONTH,
+      versionLabel: "スクリプト検査版",
+    })) as Record<string, unknown>;
+    const doc = (await actions.getPublication.run(auth("Editor"), {
+      id: meta["id"] as string,
+    })) as Record<string, unknown>;
+    const html = doc["documentHtml"] as string;
+    expect(html.toLowerCase()).not.toContain("<script");
+    expect(html).toContain("&lt;script&gt;");
+  });
+
+  it("a view with publications cannot be deleted, and both stay", async () => {
+    // The publications foreign key is restrict: the refusal is a
+    // 409 carrying the reason and the alternative, not a 500
+    // (PR #79 review, recommendation 2).
+    const error: unknown = await actions.deleteViewDefinition
+      .run(auth("Admin"), { id: "view-staff" })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(PlatformRelayError);
+    expect(error).toMatchObject({ status: 409 });
+    expect((error as PlatformRelayError).body).toEqual({
+      error: "発行した版があるビューは削除できません。使わないビューは一覧から外してください",
+    });
+
+    // The view and its publications are untouched.
+    const views = await actions.getViews.run(auth("Admin"), {});
+    expect(views.map((v) => v.id)).toContain("view-staff");
+    const list = (await actions.getPublications.run(auth("Viewer"), {
+      viewId: "view-staff",
+    })) as Record<string, unknown>[];
+    expect(list.length).toBeGreaterThan(0);
+
+    // A view with no publications still deletes as before.
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-disposable",
+      name: "使い捨てビュー",
+      layout: "month_rows",
+      audience: "staff",
+      periodScope: "month",
+      columns: [],
+    });
+    await expect(
+      actions.deleteViewDefinition.run(auth("Admin"), { id: "view-disposable" }),
+    ).resolves.toEqual({ deleted: true });
+    const after = await actions.getViews.run(auth("Admin"), {});
+    expect(after.map((v) => v.id)).not.toContain("view-disposable");
   });
 });

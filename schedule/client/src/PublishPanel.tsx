@@ -277,6 +277,7 @@ export function PublishPanel({
             <iframe
               className="publish-preview"
               title="印刷プレビュー"
+              sandbox=""
               srcDoc={preview.documentHtml}
             />
           </section>

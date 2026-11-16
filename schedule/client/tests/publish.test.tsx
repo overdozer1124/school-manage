@@ -36,6 +36,10 @@ describe("publishing panel (Issue #40)", () => {
     fireEvent.click(within(item).getByRole("button", { name: "プレビュー" }));
 
     const frame = (await inDialog.findByTitle("印刷プレビュー")) as HTMLIFrameElement;
+    // The preview is display-only: the frame is sandboxed, so
+    // nothing in the stored document can run a script or reach
+    // the app's origin (PR #79 review, recommendation 1).
+    expect(frame.getAttribute("sandbox")).toBe("");
     await waitFor(() => expect(frame.srcdoc).toContain("授業参観"));
     expect(frame.srcdoc).toContain("版：11月18日修正");
     expect(frame.srcdoc).toContain("size: A4 landscape");
