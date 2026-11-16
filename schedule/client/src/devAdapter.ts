@@ -208,6 +208,9 @@ const staffColumns = (viewId: string): ViewDefinitionData["columns"] => [
   col(`${viewId}-cleaning`, viewId, "daily_item", 5, { itemDefinitionId: "item-cleaning" }),
   col(`${viewId}-duty`, viewId, "duty", 6, { dutyDefinitionId: "duty-day" }),
   col(`${viewId}-deadline`, viewId, "daily_item", 7, { itemDefinitionId: "item-deadline" }),
+  col(`${viewId}-staff-movement`, viewId, "daily_item", 8, {
+    itemDefinitionId: "item-staff-movement",
+  }),
 ];
 
 DEV_BOOTSTRAP.views = [
@@ -415,11 +418,54 @@ function fixtureAbsences(): Record<string, unknown>[] {
   ];
 }
 
+/** The provisional entries (PR #75 review, 推奨 3): a business
+ *  trip whose person is a placeholder name, and one known only
+ *  by its title. Both are events of kind "other" carrying the
+ *  absence template's name as kindLabel, and both read in the
+ *  職員動静 column exactly as typed. */
+function fixtureProvisionals(): Record<string, unknown>[] {
+  const base = {
+    kind: "other",
+    kindLabel: "出張",
+    datePrecision: "day",
+    time: null,
+    locationId: null,
+    locationText: null,
+    description: null,
+    certainty: "tentative",
+    visibility: "staff_only",
+    targets: [],
+    impacts: [],
+    revision: 1,
+  };
+  return [
+    {
+      ...base,
+      id: "ev-provisional-name",
+      title: "生徒指導担当（出張）",
+      startsOn: "2026-11-19",
+      endsOn: "2026-11-19",
+      assignees: [{ kind: "free_text", name: "生徒指導担当", role: "出張者" }],
+    },
+    {
+      ...base,
+      id: "ev-provisional-title",
+      title: "生徒指導担当者部会",
+      startsOn: "2026-11-26",
+      endsOn: "2026-11-26",
+      assignees: [],
+    },
+  ];
+}
+
 export function createDevApi(): ScheduleApi {
   const state = {
-    events: Object.entries(EVENTS).flatMap(([date, titles]) =>
-      titles.map((title, i) => fixtureEvent(date, title, i)),
-    ),
+    events: [
+      ...Object.entries(EVENTS).flatMap(([date, titles]) =>
+        titles.map((title, i) => fixtureEvent(date, title, i)),
+      ),
+      ...fixtureProvisionals(),
+    ],
     absences: fixtureAbsences(),
     daily: new Map<string, DailyValueData[]>(),
   };

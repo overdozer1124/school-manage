@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
 import {
@@ -10,8 +10,11 @@ import {
   dailyValueText,
   eventTimeText,
   eventTitle,
+  freeTextNameOf,
   matchStaffByName,
   plainDailyValue,
+  provisionalLineText,
+  provisionalTemplateOf,
   staffNameOf,
   targetRefForTarget,
   templateForKind,
@@ -46,6 +49,16 @@ import type {
  * column is bound to the kind template of the item's own key (the
  * 〆切 column to the deadline template, the 職員動静 column to the
  * absence kinds), which is how the presets already name them.
+ *
+ * A trip or leave whose person is not settled yet — a placeholder
+ * name, or a trip known only by its title — is a provisional
+ * entry: an event carrying the absence template's name as its
+ * kindLabel (lib's provisionalTemplateOf). It lives in its kind's
+ * column, read exactly as typed, and the event column leaves it
+ * there when the view has that column; in a view without one it
+ * keeps showing in the event column, as it did before. Rewriting
+ * a provisional entry with a roster name turns it into a real
+ * absence (PR #75 review, 推奨 3; Araki's cases, 2026-11-16).
  */
 export interface CellEditorContext {
   api: ScheduleApi;
@@ -86,6 +99,25 @@ function newEntryId(): string {
   return `entry-${Date.now()}-${fallbackSeq}`;
 }
 
+/**
+ * Whether a keydown belongs to an IME rather than to the cell: a
+ * conversion in progress reports key "Process", isComposing, or
+ * the legacy keyCode 229. Such a keystroke must not seed a draft —
+ * the romaji would stick as its first character while the rest
+ * converts in the input — and its Enter confirms the conversion
+ * instead of saving (PR #75 review).
+ */
+export function isImeKeyEvent(e: ReactKeyboardEvent): boolean {
+  return e.key === "Process" || e.nativeEvent.isComposing || e.keyCode === 229;
+}
+
+/** Enter saves a cell's input only when it is a plain Enter, not
+ *  the Enter that confirms an IME conversion. Every Enter handler
+ *  in the cells goes through this one check. */
+export function isCommitEnter(e: ReactKeyboardEvent): boolean {
+  return e.key === "Enter" && !isImeKeyEvent(e);
+}
+
 /** The notice a failed save leaves in the cell. A 403 means the
  *  display goes back to what the server holds (Issue #35). */
 function saveFailureNotice(cause: unknown): string {
@@ -101,6 +133,37 @@ interface EntryPlan {
   primary: KindTemplateData | null;
   events: Record<string, unknown>[];
   absences: Record<string, unknown>[];
+  /** An absence-family column （職員動静, or a column bound to a
+   *  trip / leave template): its provisional entries read as
+   *  typed, without the event title's kind suffix. */
+  absenceFamily: boolean;
+}
+
+/** The absence templates whose provisional entries a sibling
+ *  column of the same view claims as its own: a 職員動静 column
+ *  claims every absence kind, a column bound to one absence
+ *  template claims that kind. The event column leaves a claimed
+ *  provisional to its own column — no double display — and keeps
+ *  showing it when no column of the view claims it. */
+function claimedProvisionalLabels(column: ViewColumnData, bootstrap: BootstrapData): Set<string> {
+  const claimed = new Set<string>();
+  const view = bootstrap.views.find((v) => v.id === column.viewDefinitionId);
+  if (!view) return claimed;
+  for (const sibling of view.columns) {
+    if (sibling.id === column.id || sibling.sourceKind !== "daily_item") continue;
+    const item = bootstrap.itemDefinitions.find((i) => i.id === sibling.itemDefinitionId);
+    if (!item || item.valueType !== "event_list") continue;
+    if (item.key === "staff_movement") {
+      for (const t of bootstrap.kindTemplates) {
+        if (t.subjectKind === "absence") claimed.add(t.name);
+      }
+      continue;
+    }
+    const bound =
+      bootstrap.kindTemplates.find((t) => t.key === item.key || t.kindCode === item.key) ?? null;
+    if (bound?.subjectKind === "absence") claimed.add(bound.name);
+  }
+  return claimed;
 }
 
 /** Which entries a column shows and which kinds can be added, per
@@ -113,25 +176,32 @@ function entryPlan(
 ): EntryPlan | null {
   const templates = bootstrap.kindTemplates;
   if (column.sourceKind === "event_category") {
+    const claimed = claimedProvisionalLabels(column, bootstrap);
     return {
       templates,
       primary: templateForKind(bootstrap, "event", "event") ?? templates[0] ?? null,
-      events: day.events,
+      events: day.events.filter((e) => {
+        const provisional = provisionalTemplateOf(e, bootstrap);
+        return !provisional || !claimed.has(provisional.name);
+      }),
       absences: day.absences,
+      absenceFamily: false,
     };
   }
   const item = bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
   if (!item || item.valueType !== "event_list") return null;
   if (item.key === "staff_movement") {
     // 職員動静 is the staff-only bundle of trips, training and leave
-    // (DESIGN schedule 5.2 scenario 8): its entries are absences.
+    // (DESIGN schedule 5.2 scenario 8): its entries are absences,
+    // together with the provisional entries of every absence kind.
     const absenceTemplates = templates.filter((t) => t.subjectKind === "absence");
     return {
       templates: absenceTemplates,
       primary:
         templateForKind(bootstrap, "absence", "business_trip") ?? absenceTemplates[0] ?? null,
-      events: [],
+      events: day.events.filter((e) => provisionalTemplateOf(e, bootstrap) !== null),
       absences: day.absences,
+      absenceFamily: true,
     };
   }
   const bound = templates.find((t) => t.key === item.key || t.kindCode === item.key) ?? null;
@@ -140,11 +210,14 @@ function entryPlan(
       templates: [bound],
       primary: bound,
       events:
-        bound.subjectKind === "event" ? day.events.filter((e) => e["kind"] === bound.kindCode) : [],
+        bound.subjectKind === "event"
+          ? day.events.filter((e) => e["kind"] === bound.kindCode)
+          : day.events.filter((e) => provisionalTemplateOf(e, bootstrap)?.key === bound.key),
       absences:
         bound.subjectKind === "absence"
           ? day.absences.filter((a) => a["kind"] === bound.kindCode)
           : [],
+      absenceFamily: bound.subjectKind === "absence",
     };
   }
   const eventTemplate = templateForKind(bootstrap, "event", "event");
@@ -153,6 +226,7 @@ function entryPlan(
     primary: eventTemplate,
     events: day.events.filter((e) => e["kind"] === "event"),
     absences: [],
+    absenceFamily: false,
   };
 }
 
@@ -186,6 +260,7 @@ function buildAbsenceRecord(
   template: KindTemplateData,
   date: string,
   role: string,
+  purpose: string | null = null,
 ): Record<string, unknown> {
   return {
     id: newEntryId(),
@@ -197,7 +272,7 @@ function buildAbsenceRecord(
     // A Viewer's own trip / leave is saved as tentative; the
     // platform enforces the same rule on its side (連携5).
     certainty: role === "Viewer" ? "tentative" : "confirmed",
-    purpose: null,
+    purpose,
     note: null,
     subdivisionKey: null,
   };
@@ -225,6 +300,31 @@ function buildFreeTextEntry(
   };
 }
 
+/**
+ * A trip known only by its title — the person is not decided
+ * yet, or the trip involves nearly the whole staff and the names
+ * are not written out (Araki's cases, 2026-11-16): the same
+ * provisional shape as a placeholder name, but with no free-text
+ * person, so the title itself is what its column shows. The kind
+ * templates have no title step (their steps are the person, the
+ * location, the time and the kind's own step), so the title
+ * stays the event's own title field, and the cell's absence
+ * input offers it as the 「件名のみ」 mode beside the person's
+ * name.
+ */
+function buildTitleOnlyEntry(
+  title: string,
+  template: KindTemplateData,
+  date: string,
+): Record<string, unknown> {
+  return {
+    ...buildEventRecord(title, { ...template, kindCode: "other" }, date),
+    kindLabel: template.name,
+    certainty: "tentative",
+    assignees: [],
+  };
+}
+
 export function EntryCell({ day, column, bootstrap, editor, active, seedText }: CellProps) {
   const plan = entryPlan(day, column, bootstrap);
   const isViewer = bootstrap.role === "Viewer";
@@ -238,6 +338,10 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
 
   const [kindKey, setKindKey] = useState<string | null>(null);
   const template = templates.find((t) => t.key === kindKey) ?? primary;
+  // An absence kind takes either the person's name (the usual
+  // reading of the typed text) or, in the 「件名のみ」 mode, a
+  // title with nobody attached yet (buildTitleOnlyEntry).
+  const [inputMode, setInputMode] = useState<"person" | "title">("person");
   const [draft, setDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
@@ -252,11 +356,17 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
 
   useEffect(() => {
     // A Viewer's absence input is their own name from the start.
-    if (active && isViewer && template?.subjectKind === "absence" && draft === "") {
+    if (
+      active &&
+      isViewer &&
+      inputMode === "person" &&
+      template?.subjectKind === "absence" &&
+      draft === ""
+    ) {
       const own = bootstrap.masters.staff.find((s) => s.id === bootstrap.teacherId);
       if (own?.name) setDraft(own.name);
     }
-  }, [active, template?.key]);
+  }, [active, template?.key, inputMode]);
 
   if (!plan) return <>{dailyCellText(day, column, bootstrap)}</>;
 
@@ -276,6 +386,14 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
     try {
       if (template.subjectKind === "event") {
         await editor.api.createEvent({ event: buildEventRecord(text, template, day.date) });
+      } else if (inputMode === "title") {
+        // A title-only entry is held as an event, which a Viewer
+        // may not create: their absence input is their own name.
+        if (isViewer) {
+          setNotice("自分の出張・休暇だけ登録できます");
+          return;
+        }
+        await editor.api.createEvent({ event: buildTitleOnlyEntry(text, template, day.date) });
       } else {
         const matched = matchStaffByName(text, bootstrap.masters.staff);
         if (isViewer && (!matched || matched.id !== bootstrap.teacherId)) {
@@ -306,6 +424,71 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
     const revision = revisionOf(event);
     const title = editDraft.trim();
     if (!id || revision === null || !title || busy) return;
+    const provisional = provisionalTemplateOf(event, bootstrap);
+    if (provisional) {
+      const matched = matchStaffByName(title, bootstrap.masters.staff);
+      if (matched) {
+        if (isViewer && matched.id !== bootstrap.teacherId) {
+          setNotice("自分の出張・休暇だけ変更できます");
+          return;
+        }
+        // The placeholder gives way to the real person: the
+        // entry is registered as a platform absence — and so
+        // joins duty-conflict derivation — and the provisional
+        // event goes away. A title-only trip keeps its title as
+        // the absence's purpose where the kind reads person and
+        // title together (a placeholder name was never a title,
+        // so it leaves no purpose).
+        setBusy(true);
+        setNotice(null);
+        try {
+          await editor.api.createAbsence({
+            absence: buildAbsenceRecord(
+              matched.id,
+              provisional,
+              stringField(event, "startsOn") ?? day.date,
+              bootstrap.role,
+              freeTextNameOf(event) === null && provisional.displaySource === "person_title"
+                ? eventTitle(event)
+                : null,
+            ),
+          });
+          await editor.api.deleteEvent({ id, revision });
+          setEditingId(null);
+          editor.onSaved();
+        } catch (cause) {
+          fail(cause);
+        } finally {
+          setBusy(false);
+        }
+        return;
+      }
+      // Still provisional: a placeholder name is rewritten under
+      // the new name; a title-only entry takes the new title.
+      setBusy(true);
+      setNotice(null);
+      try {
+        const next =
+          freeTextNameOf(event) !== null
+            ? {
+                ...buildFreeTextEntry(
+                  title,
+                  provisional,
+                  stringField(event, "startsOn") ?? day.date,
+                ),
+                id,
+              }
+            : { ...event, title };
+        await editor.api.updateEvent({ id, revision, event: next });
+        setEditingId(null);
+        editor.onSaved();
+      } catch (cause) {
+        fail(cause);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setBusy(true);
     setNotice(null);
     try {
@@ -406,9 +589,10 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
             aria-label="予定の再編集"
             value={editDraft}
             disabled={busy}
+            autoFocus
             onChange={(e) => setEditDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (isCommitEnter(e)) {
                 e.preventDefault();
                 void (subjectKind === "event"
                   ? submitEditEvent(record)
@@ -437,7 +621,9 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
                   setEditingId(id);
                   setEditDraft(
                     subjectKind === "event"
-                      ? eventTitle(record)
+                      ? provisionalTemplateOf(record, bootstrap)
+                        ? provisionalLineText(record)
+                        : eventTitle(record)
                       : staffNameOf(bootstrap, stringField(record, "staffId") ?? ""),
                   );
                 }}
@@ -462,7 +648,15 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
     <div className="entry-cell">
       <ul className="entry-list">
         {plan.events.map((event) =>
-          renderLine("event", event, `${eventTimeText(event)}${eventTitle(event)}`),
+          renderLine(
+            "event",
+            event,
+            `${eventTimeText(event)}${
+              plan.absenceFamily && provisionalTemplateOf(event, bootstrap)
+                ? provisionalLineText(event)
+                : eventTitle(event)
+            }`,
+          ),
         )}
         {plan.absences.map((absence) =>
           renderLine("absence", absence, absenceLineText(absence, bootstrap)),
@@ -478,23 +672,51 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
                   type="button"
                   aria-pressed={t.key === template.key}
                   className={t.key === template.key ? "chip selected" : "chip"}
-                  onClick={() => setKindKey(t.key)}
+                  onClick={() => {
+                    setKindKey(t.key);
+                    setInputMode("person");
+                  }}
                 >
                   {t.name}
                 </button>
               ))}
             </div>
           )}
+          {template.subjectKind === "absence" && (
+            <div className="kind-chips" role="group" aria-label="入力の種類">
+              <button
+                type="button"
+                aria-pressed={inputMode === "person"}
+                className={inputMode === "person" ? "chip selected" : "chip"}
+                onClick={() => setInputMode("person")}
+              >
+                {template.personLabel}の名前
+              </button>
+              <button
+                type="button"
+                aria-pressed={inputMode === "title"}
+                className={inputMode === "title" ? "chip selected" : "chip"}
+                onClick={() => setInputMode("title")}
+              >
+                件名のみ
+              </button>
+            </div>
+          )}
           <input
             aria-label={`${columnLabel(column, bootstrap)}の入力（${day.date}）`}
             value={draft}
             disabled={busy}
+            autoFocus
             placeholder={
-              template.subjectKind === "absence" ? `${template.personLabel}の名前` : "件名"
+              template.subjectKind === "absence"
+                ? inputMode === "title"
+                  ? "件名"
+                  : `${template.personLabel}の名前`
+                : "件名"
             }
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (isCommitEnter(e)) {
                 e.preventDefault();
                 void submitNew();
               }
@@ -558,13 +780,14 @@ export function DailyCell({ day, column, bootstrap, editor, active, seedText }: 
   return (
     <div className="daily-cell">
       {hasAxis ? (
-        entries.map((entry) => (
+        entries.map((entry, index) => (
           <div key={entry.id} className="daily-editor-row">
             <span className="daily-target-name">{entry.name}</span>
             <DailyValueControl
               item={item}
               value={dailyValueForTarget(day, item, entry.id)}
               label={`${item.name}（${entry.name}）`}
+              autoFocus={index === 0}
               people={bootstrap.masters.staff}
               save={(value) => save(targetRefForTarget(item, bootstrap, entry.id), value)}
               clear={() => clear(targetRefForTarget(item, bootstrap, entry.id))}
@@ -578,6 +801,7 @@ export function DailyCell({ day, column, bootstrap, editor, active, seedText }: 
           value={plainDailyValue(day, item)}
           label={item.name}
           seedText={seedText}
+          autoFocus
           people={bootstrap.masters.staff}
           save={(value) => save(null, value)}
           clear={() => clear(null)}
@@ -598,6 +822,9 @@ interface ControlProps {
   value: DailyValueData | undefined;
   label: string;
   seedText?: string | null;
+  /** Focus this control when the cell opens, so typing after the
+   *  click or the seeding keystroke lands in it (PR #75 review). */
+  autoFocus?: boolean;
   /** The staff roster, for person values. */
   people: BootstrapData["masters"]["staff"];
   save(value: unknown): Promise<boolean>;
@@ -617,6 +844,7 @@ function DailyValueControl({
   value,
   label,
   seedText,
+  autoFocus,
   people,
   save,
   clear,
@@ -654,6 +882,7 @@ function DailyValueControl({
       <select
         aria-label={label}
         value={selectValue}
+        autoFocus={autoFocus}
         onChange={(e) => void onSelect(e.target.value)}
       >
         <option value="">（なし）</option>
@@ -670,6 +899,7 @@ function DailyValueControl({
       <select
         aria-label={label}
         value={selectValue}
+        autoFocus={autoFocus}
         onChange={(e) => void onSelect(e.target.value)}
       >
         <option value="">（なし）</option>
@@ -683,6 +913,7 @@ function DailyValueControl({
       <select
         aria-label={label}
         value={selectValue}
+        autoFocus={autoFocus}
         onChange={(e) => void onSelect(e.target.value)}
       >
         <option value="">（なし）</option>
@@ -707,18 +938,21 @@ function DailyValueControl({
       : "") ??
     "";
 
+  // A landed write hands the display back to the server value:
+  // the draft clears, so a value another person saves later is
+  // what the next read shows, not this stale text (PR #75 review).
   const commitText = async () => {
     const next = text.trim();
     if (next === "") {
-      if (value) await clear();
+      if (value && (await clear())) setDraft(null);
       return;
     }
-    await save(next);
+    if (await save(next)) setDraft(null);
   };
   const commitTime = async () => {
     const next = time.trim();
     if (next === "") {
-      if (value) await clear();
+      if (value && (await clear())) setDraft(null);
       return;
     }
     if (!isValidTimeString(next)) {
@@ -726,7 +960,7 @@ function DailyValueControl({
       return;
     }
     onNotice(null);
-    await save(next);
+    if (await save(next)) setDraft(null);
   };
   const commitRange = async () => {
     const startsAt = time.trim();
@@ -740,12 +974,15 @@ function DailyValueControl({
       return;
     }
     onNotice(null);
-    await save({ startsAt, endsAt });
+    if (await save({ startsAt, endsAt })) {
+      setDraft(null);
+      setDraftEnd(null);
+    }
   };
   const commitNumber = async () => {
     const next = number.trim();
     if (next === "") {
-      if (value) await clear();
+      if (value && (await clear())) setDraft(null);
       return;
     }
     const parsed = Number(next);
@@ -754,7 +991,7 @@ function DailyValueControl({
       return;
     }
     onNotice(null);
-    await save(parsed);
+    if (await save(parsed)) setDraft(null);
   };
 
   if (item.valueType === "time") {
@@ -763,9 +1000,10 @@ function DailyValueControl({
         aria-label={label}
         value={time}
         placeholder="HH:MM"
+        autoFocus={autoFocus}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
+          if (isCommitEnter(e)) {
             e.preventDefault();
             void commitTime();
           }
@@ -780,9 +1018,10 @@ function DailyValueControl({
           aria-label={`${label} 開始`}
           value={time}
           placeholder="HH:MM"
+          autoFocus={autoFocus}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (isCommitEnter(e)) {
               e.preventDefault();
               void commitRange();
             }
@@ -795,7 +1034,7 @@ function DailyValueControl({
           placeholder="HH:MM"
           onChange={(e) => setDraftEnd(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
+            if (isCommitEnter(e)) {
               e.preventDefault();
               void commitRange();
             }
@@ -810,9 +1049,10 @@ function DailyValueControl({
         aria-label={label}
         value={number}
         inputMode="decimal"
+        autoFocus={autoFocus}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
+          if (isCommitEnter(e)) {
             e.preventDefault();
             void commitNumber();
           }
@@ -825,9 +1065,10 @@ function DailyValueControl({
       <input
         aria-label={label}
         value={text}
+        autoFocus={autoFocus}
         onChange={(e) => setDraft(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter") {
+          if (isCommitEnter(e)) {
             e.preventDefault();
             void commitText();
           }

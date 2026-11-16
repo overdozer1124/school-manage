@@ -26,7 +26,11 @@ const GRADES = [
 ];
 const DATE = "2026-11-16"; // a Monday
 
-function makeBootstrap(role: string, teacherId: string | null): BootstrapData {
+function makeBootstrap(
+  role: string,
+  teacherId: string | null,
+  withMovement = false,
+): BootstrapData {
   const item = (
     id: string,
     key: string,
@@ -115,6 +119,21 @@ function makeBootstrap(role: string, teacherId: string | null): BootstrapData {
             widthHint: null,
             sort: 3,
           },
+          ...(withMovement
+            ? [
+                {
+                  id: "col-staff-movement",
+                  viewDefinitionId: "view-month",
+                  sourceKind: "daily_item" as const,
+                  itemDefinitionId: "item-staff-movement",
+                  dutyDefinitionId: null,
+                  targetGroupId: null,
+                  groupSameValues: true,
+                  widthHint: null,
+                  sort: 4,
+                },
+              ]
+            : []),
         ],
       },
     ],
@@ -128,6 +147,9 @@ function makeBootstrap(role: string, teacherId: string | null): BootstrapData {
       item("item-dismissal", "dismissal", "下校", "time", 2, {
         targetPlatformAxis: "grade",
       }),
+      ...(withMovement
+        ? [item("item-staff-movement", "staff_movement", "職員動静", "event_list", 3)]
+        : []),
     ],
     targetGroups: [],
     kindTemplates: [
@@ -164,7 +186,7 @@ function dailyValue(partial: Partial<DailyValueData> & { date: string }): DailyV
   };
 }
 
-function makeFakeApi(bootstrap: BootstrapData) {
+function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknown>[] = []) {
   const state: FakeState = {
     events: [
       {
@@ -186,6 +208,7 @@ function makeFakeApi(bootstrap: BootstrapData) {
         assignees: [],
         revision: 3,
       },
+      ...seedEvents,
     ],
     absences: [],
     daily: new Map([[DATE, [dailyValue({ date: DATE, valueOptionId: "opt-lunch-no" })]]]),
@@ -333,9 +356,13 @@ function cell(date: string, columnIndex: number): HTMLElement {
   return td as HTMLElement;
 }
 
-async function renderApp(role = "Admin", teacherId: string | null = "staff-9") {
-  const bootstrap = makeBootstrap(role, teacherId);
-  const fake = makeFakeApi(bootstrap);
+async function renderApp(
+  role = "Admin",
+  teacherId: string | null = "staff-9",
+  options: { seedEvents?: Record<string, unknown>[]; withMovement?: boolean } = {},
+) {
+  const bootstrap = makeBootstrap(role, teacherId, options.withMovement ?? false);
+  const fake = makeFakeApi(bootstrap, options.seedEvents ?? []);
   render(<App api={fake.api} initialAnchor={DATE} />);
   await screen.findByText("テスト学校");
   await waitFor(() => expect(document.querySelectorAll("tbody tr")).toHaveLength(30));
@@ -346,8 +373,14 @@ describe("entry cells (Issue #35)", () => {
   it("typing and Enter saves one event, and a second follows in the same cell", async () => {
     const { calls } = await renderApp();
     const eventsCell = cell(DATE, 0);
-    fireEvent.click(eventsCell);
+    // Typing on the focused cell seeds the draft with the first
+    // character, and focus moves into the input so the rest of
+    // the typing lands there (PR #75 review, 必須 1).
+    eventsCell.focus();
+    fireEvent.keyDown(eventsCell, { key: "運" });
     const input = within(eventsCell).getByLabelText(/行事の入力/);
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue("運");
     fireEvent.change(input, { target: { value: "運動会" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(calls.createEvent).toHaveLength(1));
@@ -371,6 +404,8 @@ describe("entry cells (Issue #35)", () => {
     const { calls } = await renderApp();
     const eventsCell = cell(DATE, 0);
     fireEvent.click(eventsCell);
+    // Clicking the cell moves focus into its input (必須 1).
+    expect(document.activeElement).toBe(within(eventsCell).getByLabelText(/行事の入力/));
     fireEvent.click(within(eventsCell).getByRole("button", { name: "休暇" }));
     const input = within(eventsCell).getByLabelText(/行事の入力/);
     fireEvent.change(input, { target: { value: "田中一郎" } });
@@ -441,6 +476,176 @@ describe("entry cells (Issue #35)", () => {
   });
 });
 
+describe("provisional entries in absence columns (PR #75 review, 推奨 3)", () => {
+  // A trip whose person is not settled yet: a placeholder name,
+  // or a trip known only by its title (Araki's cases, 2026-11-16).
+  // Both are held as events of kind "other" carrying the absence
+  // template's name as kindLabel, and both belong to the column
+  // of their kind — here the 職員動静 column (cell index 3).
+  const provisionalName = {
+    id: "ev-provisional",
+    kind: "other",
+    kindLabel: "出張",
+    title: "生徒指導担当（出張）",
+    datePrecision: "day",
+    startsOn: DATE,
+    endsOn: DATE,
+    time: null,
+    locationId: null,
+    locationText: null,
+    description: null,
+    certainty: "tentative",
+    visibility: "staff_only",
+    targets: [],
+    impacts: [],
+    assignees: [{ kind: "free_text", name: "生徒指導担当", role: "出張者" }],
+    revision: 2,
+  };
+  const provisionalTitle = {
+    ...provisionalName,
+    id: "ev-title-only",
+    title: "生徒指導担当者部会",
+    assignees: [],
+    revision: 1,
+  };
+
+  it("a placeholder name typed in the staff-movement column stays in that column, without a kind suffix", async () => {
+    const { calls } = await renderApp("Admin", "staff-9", { withMovement: true });
+    const moveCell = cell(DATE, 3);
+    fireEvent.click(moveCell);
+    const input = within(moveCell).getByLabelText(/職員動静の入力/);
+    fireEvent.change(input, { target: { value: "生徒指導担当" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(calls.createEvent).toHaveLength(1));
+    expect(calls.createAbsence).toHaveLength(0);
+    expect(calls.createEvent[0]?.event).toMatchObject({
+      kindLabel: "出張",
+      assignees: [{ kind: "free_text", name: "生徒指導担当", role: "出張者" }],
+    });
+    // Shown in the column it was typed in, exactly as typed —
+    // no 「（出張）」 suffix — and not moved into the event column.
+    await waitFor(() =>
+      expect(within(cell(DATE, 3)).getByText("生徒指導担当")).toBeInTheDocument(),
+    );
+    expect(within(cell(DATE, 0)).queryByText(/生徒指導担当/)).not.toBeInTheDocument();
+  });
+
+  it("rewriting a placeholder with a roster name registers it as a real absence", async () => {
+    const { calls } = await renderApp("Admin", "staff-9", {
+      withMovement: true,
+      seedEvents: [provisionalName],
+    });
+    const moveCell = cell(DATE, 3);
+    await waitFor(() => expect(within(moveCell).getByText("生徒指導担当")).toBeInTheDocument());
+    fireEvent.click(within(moveCell).getByRole("button", { name: "生徒指導担当を編集" }));
+    const edit = within(moveCell).getByLabelText("予定の再編集");
+    // The draft starts from the name as typed, not the stored
+    // title with its kind suffix.
+    expect(edit).toHaveValue("生徒指導担当");
+    fireEvent.change(edit, { target: { value: "田中一郎" } });
+    fireEvent.keyDown(edit, { key: "Enter" });
+    await waitFor(() => expect(calls.createAbsence).toHaveLength(1));
+    expect(calls.createAbsence[0]?.absence).toMatchObject({
+      staffId: "staff-1",
+      kind: "business_trip",
+      fromDate: DATE,
+      toDate: DATE,
+    });
+    expect(calls.deleteEvent).toEqual([{ id: "ev-provisional", revision: 2 }]);
+    // The provisional is gone; the absence stands in its place.
+    await waitFor(() => expect(within(cell(DATE, 3)).getByText("田中一郎")).toBeInTheDocument());
+    expect(within(cell(DATE, 3)).queryByText("生徒指導担当")).not.toBeInTheDocument();
+  });
+
+  it("a title-only trip entered in the staff-movement column shows by its title", async () => {
+    const { calls } = await renderApp("Admin", "staff-9", { withMovement: true });
+    const moveCell = cell(DATE, 3);
+    fireEvent.click(moveCell);
+    fireEvent.click(within(moveCell).getByRole("button", { name: "件名のみ" }));
+    const input = within(moveCell).getByLabelText(/職員動静の入力/);
+    fireEvent.change(input, { target: { value: "生徒指導担当者部会" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(calls.createEvent).toHaveLength(1));
+    expect(calls.createAbsence).toHaveLength(0);
+    expect(calls.createEvent[0]?.event).toMatchObject({
+      title: "生徒指導担当者部会",
+      kindLabel: "出張",
+      assignees: [],
+    });
+    await waitFor(() =>
+      expect(within(cell(DATE, 3)).getByText("生徒指導担当者部会")).toBeInTheDocument(),
+    );
+    expect(within(cell(DATE, 0)).queryByText(/生徒指導担当者部会/)).not.toBeInTheDocument();
+  });
+
+  it("giving a title-only trip its person keeps the title as the purpose", async () => {
+    const { calls } = await renderApp("Admin", "staff-9", {
+      withMovement: true,
+      seedEvents: [provisionalTitle],
+    });
+    const moveCell = cell(DATE, 3);
+    await waitFor(() =>
+      expect(within(moveCell).getByText("生徒指導担当者部会")).toBeInTheDocument(),
+    );
+    fireEvent.click(within(moveCell).getByRole("button", { name: "生徒指導担当者部会を編集" }));
+    const edit = within(moveCell).getByLabelText("予定の再編集");
+    expect(edit).toHaveValue("生徒指導担当者部会");
+    fireEvent.change(edit, { target: { value: "佐藤花" } });
+    fireEvent.keyDown(edit, { key: "Enter" });
+    await waitFor(() => expect(calls.createAbsence).toHaveLength(1));
+    expect(calls.createAbsence[0]?.absence).toMatchObject({
+      staffId: "staff-2",
+      kind: "business_trip",
+      purpose: "生徒指導担当者部会",
+    });
+    expect(calls.deleteEvent).toEqual([{ id: "ev-title-only", revision: 1 }]);
+    await waitFor(() =>
+      expect(within(cell(DATE, 3)).getByText("佐藤花 生徒指導担当者部会")).toBeInTheDocument(),
+    );
+  });
+});
+
+describe("Japanese input (IME) in cells (PR #75 review)", () => {
+  it("an Enter that confirms a conversion does not save the entry", async () => {
+    const { calls } = await renderApp();
+    const eventsCell = cell(DATE, 0);
+    fireEvent.click(eventsCell);
+    const input = within(eventsCell).getByLabelText(/行事の入力/);
+    fireEvent.change(input, { target: { value: "修学旅行" } });
+    // The Enter that confirms the conversion is the IME's, not
+    // the cell's: nothing is saved and the text stays.
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(calls.createEvent).toHaveLength(0);
+    expect(input).toHaveValue("修学旅行");
+    // A plain Enter afterwards saves as usual.
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(calls.createEvent).toHaveLength(1));
+    expect(calls.createEvent[0]?.event).toMatchObject({ title: "修学旅行" });
+  });
+
+  it("an IME keystroke on the cell opens the input without seeding romaji", async () => {
+    await renderApp();
+    const eventsCell = cell(DATE, 0);
+    eventsCell.focus();
+    fireEvent.keyDown(eventsCell, { key: "Process" });
+    const input = within(eventsCell).getByLabelText(/行事の入力/);
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue("");
+  });
+
+  it("an Enter that confirms a conversion does not save a daily time either", async () => {
+    const { calls } = await renderApp();
+    const dismissalCell = cell(DATE, 2);
+    fireEvent.click(dismissalCell);
+    const input = within(dismissalCell).getByLabelText("下校（1年）");
+    fireEvent.change(input, { target: { value: "15:20" } });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(calls.setDailyValue).toHaveLength(0);
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(calls.setDailyValue).toHaveLength(1));
+  });
+});
+
 describe("daily-value cells (Issue #35)", () => {
   it("a symbol column takes a choice", async () => {
     const { calls } = await renderApp();
@@ -472,6 +677,31 @@ describe("daily-value cells (Issue #35)", () => {
       value: "15:20",
       target: { axis: "grade", id: "grade-1" },
     });
+  });
+
+  it("a saved time does not shadow a newer value on the next read", async () => {
+    const { calls, state } = await renderApp();
+    const dismissalCell = cell(DATE, 2);
+    fireEvent.click(dismissalCell);
+    const first = within(dismissalCell).getByLabelText("下校（1年）");
+    fireEvent.change(first, { target: { value: "15:20" } });
+    fireEvent.keyDown(first, { key: "Enter" });
+    await waitFor(() => expect(calls.setDailyValue).toHaveLength(1));
+    // Another person's write lands before the next save re-reads
+    // the range: the cell must show that value, not the draft
+    // this person typed earlier (PR #75 review, 推奨 4).
+    const stored = state.daily
+      .get(DATE)
+      ?.find((v) => v.itemDefinitionId === "item-dismissal" && v.targetRef?.id === "grade-1");
+    if (!stored) throw new Error("stored dismissal value not found");
+    stored.valueTime = "16:00";
+    const second = within(cell(DATE, 2)).getByLabelText("下校（2年）");
+    fireEvent.change(second, { target: { value: "15:30" } });
+    fireEvent.keyDown(second, { key: "Enter" });
+    await waitFor(() => expect(calls.setDailyValue).toHaveLength(2));
+    await waitFor(() =>
+      expect(within(cell(DATE, 2)).getByLabelText("下校（1年）")).toHaveValue("16:00"),
+    );
   });
 
   it("a 403 on a daily write puts the choice back and says so", async () => {

@@ -399,6 +399,53 @@ export function staffNameOf(bootstrap: BootstrapData, staffId: string): string {
 }
 
 /**
+ * The absence kind template a provisional entry belongs to, if
+ * the record is one (PR #75 review, 推奨 3): an entry typed into
+ * a trip / leave column that is not (yet) a real absence — a
+ * placeholder name standing in for the person, or a trip known
+ * only by its title — is held as an event of kind "other" whose
+ * kindLabel names the absence template it was typed under (see
+ * buildFreeTextEntry / buildTitleOnlyEntry in cells.tsx). It is
+ * not an absence, so it never takes part in duty-conflict
+ * derivation (#31); it becomes one only when the placeholder is
+ * rewritten with a roster name.
+ */
+export function provisionalTemplateOf(
+  event: Record<string, unknown>,
+  bootstrap: BootstrapData,
+): KindTemplateData | null {
+  if (stringField(event, "kind") !== "other") return null;
+  const label = stringField(event, "kindLabel");
+  if (!label) return null;
+  return (
+    bootstrap.kindTemplates.find((t) => t.subjectKind === "absence" && t.name === label) ?? null
+  );
+}
+
+/** The free-text person name a provisional entry carries, if it
+ *  carries one (the placeholder-name shape); a title-only entry
+ *  has no free-text assignee. */
+export function freeTextNameOf(event: Record<string, unknown>): string | null {
+  const assignees = event["assignees"];
+  if (!Array.isArray(assignees)) return null;
+  for (const assignee of assignees) {
+    if (typeof assignee !== "object" || assignee === null) continue;
+    const record = assignee as Record<string, unknown>;
+    if (record["kind"] === "free_text" && typeof record["name"] === "string") {
+      return record["name"];
+    }
+  }
+  return null;
+}
+
+/** How a provisional entry reads in its own column: the
+ *  placeholder name exactly as typed — no kind suffix — or, for
+ *  a title-only entry, the title itself. */
+export function provisionalLineText(event: Record<string, unknown>): string {
+  return freeTextNameOf(event) ?? eventTitle(event);
+}
+
+/**
  * The cell line of one absence record, led the way its kind
  * template prescribes (DESIGN schedule 6.3.1): a leave is led by
  * the holder's name with its classification in brackets — 「取得者名

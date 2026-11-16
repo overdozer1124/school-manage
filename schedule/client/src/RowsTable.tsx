@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DailyCell, EntryCell, type CellEditorContext } from "./cells";
+import { DailyCell, EntryCell, isImeKeyEvent, type CellEditorContext } from "./cells";
 import {
   columnLabel,
   dailyCellText,
@@ -120,16 +120,28 @@ export function RowsTable({
                       onKeyDown={
                         editable
                           ? (e) => {
+                              if (
+                                e.target !== e.currentTarget ||
+                                activeKey === key ||
+                                e.ctrlKey ||
+                                e.metaKey ||
+                                e.altKey
+                              ) {
+                                return;
+                              }
+                              // An IME keystroke opens the cell
+                              // without seeding: the romaji would
+                              // otherwise stick as the draft's
+                              // first character while the rest
+                              // converts in the input, which takes
+                              // focus as it opens (PR #75 review).
+                              if (isImeKeyEvent(e)) {
+                                setActiveKey(key);
+                                return;
+                              }
                               // Typing on the focused cell starts
                               // input with that character (6.1).
-                              if (
-                                e.target === e.currentTarget &&
-                                activeKey !== key &&
-                                e.key.length === 1 &&
-                                !e.ctrlKey &&
-                                !e.metaKey &&
-                                !e.altKey
-                              ) {
+                              if (e.key.length === 1) {
                                 setActiveKey(key);
                                 setSeed({ key, text: e.key });
                               }
