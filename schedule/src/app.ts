@@ -32,7 +32,10 @@ import { createRequestRateLimiter } from "./rateLimit.js";
  * answers with no session and each call fans out to several
  * reads; and the path's slug, injected into the request the way
  * the secure route injects the cookie, so the action can check
- * the URL's school against the token's own.
+ * the URL's school against the token's own. The limit's "source"
+ * is the forwarded source only when the deployment sets
+ * TRUST_PROXY (Issue #41 re-review); until then every request
+ * behind the proxy counts as the proxy itself.
  */
 export interface ScheduleActionLike {
   run(auth: never, request: never): Promise<unknown>;
@@ -68,6 +71,15 @@ export interface ScheduleAppDeps {
    *  minute is far above a person's pace and far below a load
    *  attack's. Tests shrink it to reach the 429 in a few calls. */
   publicRateLimit?: { maxRequests: number; windowMs: number };
+  /** Express's "trust proxy" setting (TRUST_PROXY, read by the
+   *  server config). The rate limit above counts by req.ip, and
+   *  behind the reverse proxy of DESIGN 8-3-1 req.ip is the
+   *  proxy's own address unless the deployment says which
+   *  proxies to trust — without this, every reader of every
+   *  school would share the one allowance and legitimate readers
+   *  would be refused together (Issue #41 re-review). The
+   *  platform sets the same value the same way. */
+  trustProxy?: string | undefined;
   /** Directory of the built screens (client/dist). When it does not
    *  exist, only the API and health check are served. */
   clientDistDir?: string;
@@ -208,6 +220,13 @@ function sendActionError(res: express.Response, error: unknown): void {
 
 export function createApp(deps?: ScheduleAppDeps) {
   const app = express();
+  // Behind the reverse proxy (DESIGN 8-3-1), req.ip is the proxy's
+  // address unless the deployment says which proxies to trust; the
+  // public route's rate limit counts by req.ip, so this decides
+  // whose requests are counted together (Issue #41 re-review).
+  if (deps?.trustProxy) {
+    app.set("trust proxy", deps.trustProxy);
+  }
   app.use(express.json());
 
   app.get("/healthz", (_req, res) => {

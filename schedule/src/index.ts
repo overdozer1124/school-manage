@@ -28,6 +28,10 @@ const auth = await createScheduleAuth({
 
 createApp({
   auth,
+  // TRUST_PROXY (Issue #41 re-review): behind the reverse proxy
+  // this is what makes req.ip — and with it the public route's
+  // per-source rate limit — name the real reader.
+  trustProxy: config.trustProxy,
   // The actions are built per request: their platform reads and the
   // duty source forward the caller's own cookie (Issue #34).
   createActions: (cookie) => createScheduleActions(db, platformClient, cookie),

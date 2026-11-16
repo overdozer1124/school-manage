@@ -21,6 +21,17 @@ export interface ScheduleConfig {
    * never invents a default for it.
    */
   publicReadServiceToken: string | undefined;
+  /**
+   * Express's "trust proxy" setting, from TRUST_PROXY (for example
+   * "loopback"). Unset by default: without it Express ignores
+   * X-Forwarded-For, and behind the reverse proxy of DESIGN 8-3-1
+   * every request would carry the proxy's own address — the public
+   * route's per-source rate limit would then count every reader
+   * as one source and refuse legitimate readers together (Issue
+   * #41 re-review). The platform reads the same variable the same
+   * way (platform/src/auth/config.ts).
+   */
+  trustProxy: string | undefined;
 }
 
 export function loadScheduleConfig(env: NodeJS.ProcessEnv = process.env): ScheduleConfig {
@@ -43,5 +54,6 @@ export function loadScheduleConfig(env: NodeJS.ProcessEnv = process.env): Schedu
     databaseUrl,
     devAuth: env.PLATFORM_DEV_AUTH === "1",
     publicReadServiceToken: env.PUBLIC_READ_SERVICE_TOKEN || undefined,
+    trustProxy: env.TRUST_PROXY || undefined,
   };
 }

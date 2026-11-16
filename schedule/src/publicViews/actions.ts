@@ -72,10 +72,50 @@ const PUBLIC_AUDIENCES: readonly string[] = ["guardian", "student", "public"];
  * route resolves the URL's slug through that cache, so the
  * school's slug must be on record here before its URLs can
  * answer, and issuance is the first moment a school needs it
- * to be. The sync is best-effort — the cache is a cache, and a
- * platform that does not answer never blocks an issuance; the
- * next issuance retries it.
+ * to be. The sync itself is best-effort — but issuance stands
+ * or falls on the cache row being there afterwards (Issue #41
+ * re-review): a school with no row would hand the admin a URL
+ * that answers 404 forever, with nothing on the settings screen
+ * saying so, so when the sync failed and no row is on record,
+ * issuance refuses with the reason instead. A row already on
+ * record (an earlier sync put it there) makes the URL
+ * answerable, so a failed refresh never blocks.
  */
+
+/**
+ * Syncs one school's cache row from the platform's /auth/me,
+ * with the caller's own cookie. Best-effort by design: a
+ * platform that does not answer, or answers about another
+ * school, leaves the cache as it was — the caller judges the
+ * row that is, or is not, on record afterwards.
+ */
+async function syncSchoolCache(
+  db: Db,
+  platformClient: PlatformApiClient,
+  cookie: string,
+  schoolId: string,
+): Promise<void> {
+  try {
+    const me = unwrapPlatformResult(await platformClient.getJson(ME_PATH, cookie));
+    const school = (
+      me as { school?: { schoolId?: unknown; name?: unknown; slug?: unknown } } | null
+    )?.school;
+    if (
+      school?.schoolId === schoolId &&
+      typeof school.name === "string" &&
+      typeof school.slug === "string"
+    ) {
+      await schoolCacheStore.upsertSchoolCache(db, {
+        schoolId,
+        name: school.name,
+        slug: school.slug,
+      });
+    }
+  } catch {
+    // Best-effort (see the note above): the cache keeps whatever
+    // state it had, and issuance checks the row itself.
+  }
+}
 export function createPublicTokenAdminActions(db: Db, platformClient: PlatformApiClient) {
   return defineActions({
     createPublicViewToken: scheduleAction("school.admin", async ({ auth, request }) => {
@@ -101,6 +141,23 @@ export function createPublicTokenAdminActions(db: Db, platformClient: PlatformAp
           body: { error: "職員用ビューには公開URLを発行できません" },
         });
       }
+      // The cache sync runs before the token exists (Issue #41
+      // re-review): the refusal below must leave nothing stored,
+      // so a refused issuance is no issuance at all.
+      if (input.cookie) {
+        await syncSchoolCache(db, platformClient, input.cookie, auth.schoolId);
+      }
+      if (!(await schoolCacheStore.findSchoolCacheById(db, auth.schoolId))) {
+        // Neither this sync nor any earlier one put the school
+        // on record: the URL this token would mint could never
+        // resolve its slug and would answer 404 forever. Refuse
+        // in the platform's 4xx shape, with the reason the
+        // settings screen shows (the PR #79 convention).
+        throw new PlatformRelayError({
+          status: 400,
+          body: { error: "学校の情報を確認できませんでした。もう一度お試しください" },
+        });
+      }
       const { token, tokenHash } = newPublicToken();
       const row = await tokensStore.insertPublicViewToken(db, auth.schoolId, {
         id: randomUUID(),
@@ -108,29 +165,6 @@ export function createPublicTokenAdminActions(db: Db, platformClient: PlatformAp
         tokenHash,
         createdBy: auth.userId,
       });
-      if (input.cookie) {
-        try {
-          const me = unwrapPlatformResult(await platformClient.getJson(ME_PATH, input.cookie));
-          const school = (
-            me as { school?: { schoolId?: unknown; name?: unknown; slug?: unknown } } | null
-          )?.school;
-          if (
-            school?.schoolId === auth.schoolId &&
-            typeof school.name === "string" &&
-            typeof school.slug === "string"
-          ) {
-            await schoolCacheStore.upsertSchoolCache(db, {
-              schoolId: auth.schoolId,
-              name: school.name,
-              slug: school.slug,
-            });
-          }
-        } catch {
-          // Best-effort, by design (see the note above): a failed
-          // sync leaves the cache as it was and the issuance
-          // standing; nothing about the token depends on it.
-        }
-      }
       return { ...row, token };
     }),
 

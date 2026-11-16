@@ -296,6 +296,80 @@ describe("schedule HTTP app (Issue #34)", () => {
     }
   });
 
+  // Builds a second app on its own port, with the given deps
+  // laid over the shared ones (the trust-proxy tests below each
+  // need their own app, and their own limiter).
+  async function startSecondApp(
+    extra: Partial<ScheduleAppDeps>,
+  ): Promise<{ second: Server; base: string }> {
+    const distDir = mkdtempSync(path.join(tmpdir(), "schedule-client-tp-"));
+    writeFileSync(path.join(distDir, "index.html"), "<!doctype html><title>行事予定</title>");
+    const second = await new Promise<Server>((resolve) => {
+      const s = createApp({ ...deps, clientDistDir: distDir, ...extra }).listen(0, () =>
+        resolve(s),
+      );
+    });
+    const address = second.address();
+    if (!address || typeof address === "string") throw new Error("no server address");
+    return { second, base: `http://127.0.0.1:${address.port}` };
+  }
+
+  it("counts forwarded sources separately when trust proxy is set (Issue #41 re-review)", async () => {
+    // With TRUST_PROXY set, req.ip is the forwarded source: two
+    // readers behind the one proxy each hold their own allowance
+    // of two, and the refusal lands per reader, not across
+    // readers — the school newsletter's URL opened by every
+    // guardian at once must not spend one shared budget.
+    const { second, base } = await startSecondApp({
+      trustProxy: "loopback",
+      publicRateLimit: { maxRequests: 2, windowMs: 60_000 },
+    });
+    try {
+      const call = (forwardedFor: string) =>
+        fetch(`${base}/test-school/schedule/public/getPublicBootstrap`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": forwardedFor },
+          body: JSON.stringify({ token: "good-token" }),
+        });
+      expect((await call("198.51.100.1")).status).toBe(200);
+      expect((await call("198.51.100.1")).status).toBe(200);
+      // The second reader's allowance is untouched by the first's.
+      expect((await call("198.51.100.2")).status).toBe(200);
+      expect((await call("198.51.100.2")).status).toBe(200);
+      // Each reader's third call is the refused one.
+      expect((await call("198.51.100.1")).status).toBe(429);
+      expect((await call("198.51.100.2")).status).toBe(429);
+    } finally {
+      second.close();
+    }
+  });
+
+  it("counts every forwarded source as one when trust proxy is not set (Issue #41 re-review)", async () => {
+    // Without TRUST_PROXY, Express ignores X-Forwarded-For:
+    // every call carries the proxy's own address (here, the
+    // test's direct peer), so differently-headed calls share the
+    // one allowance. This is the behaviour the setting exists to
+    // change, pinned so the two configurations cannot drift
+    // into each other.
+    const { second, base } = await startSecondApp({
+      publicRateLimit: { maxRequests: 3, windowMs: 60_000 },
+    });
+    try {
+      const call = (forwardedFor: string) =>
+        fetch(`${base}/test-school/schedule/public/getPublicBootstrap`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-forwarded-for": forwardedFor },
+          body: JSON.stringify({ token: "good-token" }),
+        });
+      expect((await call("198.51.100.1")).status).toBe(200);
+      expect((await call("198.51.100.2")).status).toBe(200);
+      expect((await call("198.51.100.3")).status).toBe(200);
+      expect((await call("198.51.100.4")).status).toBe(429);
+    } finally {
+      second.close();
+    }
+  });
+
   it("maps the public token verdicts: a revoked token is 401, an unknown one 404", async () => {
     const revoked = await fetch(`${baseUrl}/test-school/schedule/public/getPublicBootstrap`, {
       method: "POST",
