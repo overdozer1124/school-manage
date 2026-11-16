@@ -11,6 +11,7 @@ import {
 } from "@school-manage/calendar-types";
 import * as definitionsStore from "../db/definitions.js";
 import * as tokensStore from "../db/publicTokens.js";
+import * as schoolCacheStore from "../db/schoolCache.js";
 import * as viewsStore from "../db/views.js";
 import { tenantDb } from "../db/tenant.js";
 import { scheduleAction } from "../permissions.js";
@@ -66,8 +67,17 @@ const PUBLIC_AUDIENCES: readonly string[] = ["guardian", "student", "public"];
  * one moment the raw token exists on this server: the response
  * carries it once, and the list and revoke actions — like the
  * database — only ever see the hash's row.
+ *
+ * Issuing also syncs the school cache (DESIGN-AUTH-TENANCY 3.1)
+ * from the platform, with the caller's own cookie: the public
+ * route resolves the URL's slug through that cache, so the
+ * school's slug must be on record here before its URLs can
+ * answer, and issuance is the first moment a school needs it
+ * to be. The sync is best-effort — the cache is a cache, and a
+ * platform that does not answer never blocks an issuance; the
+ * next issuance retries it.
  */
-export function createPublicTokenAdminActions(db: Db) {
+export function createPublicTokenAdminActions(db: Db, platformClient: PlatformApiClient) {
   return defineActions({
     createPublicViewToken: scheduleAction("school.admin", async ({ auth, request }) => {
       const input = createPublicViewTokenInputSchema.parse(request);
@@ -75,7 +85,13 @@ export function createPublicTokenAdminActions(db: Db) {
         (v) => v.id === input.viewId,
       );
       if (!view) {
-        throw new Error(`view definition not found: ${input.viewId}`);
+        // A 404 in the platform's refusal shape, like the public
+        // side's own not-found answers: the settings screen shows
+        // the reason instead of an opaque 500 (Issue #41 review).
+        throw new PlatformRelayError({
+          status: 404,
+          body: { error: "ビューが見つかりません" },
+        });
       }
       if (!PUBLIC_AUDIENCES.includes(view.audience)) {
         // A reasoned refusal in the platform's 4xx shape, so the
@@ -93,6 +109,29 @@ export function createPublicTokenAdminActions(db: Db) {
         tokenHash,
         createdBy: auth.userId,
       });
+      if (input.cookie) {
+        try {
+          const me = unwrapPlatformResult(await platformClient.getJson(ME_PATH, input.cookie));
+          const school = (
+            me as { school?: { schoolId?: unknown; name?: unknown; slug?: unknown } } | null
+          )?.school;
+          if (
+            school?.schoolId === auth.schoolId &&
+            typeof school.name === "string" &&
+            typeof school.slug === "string"
+          ) {
+            await schoolCacheStore.upsertSchoolCache(db, {
+              schoolId: auth.schoolId,
+              name: school.name,
+              slug: school.slug,
+            });
+          }
+        } catch {
+          // Best-effort, by design (see the note above): a failed
+          // sync leaves the cache as it was and the issuance
+          // standing; nothing about the token depends on it.
+        }
+      }
       return { ...row, token };
     }),
 
@@ -105,7 +144,13 @@ export function createPublicTokenAdminActions(db: Db) {
       const input = revokePublicViewTokenInputSchema.parse(request);
       const row = await tokensStore.revokePublicViewToken(db, auth.schoolId, input.id, new Date());
       if (!row) {
-        throw new Error(`public view token not found: ${input.id}`);
+        // The same 404 shape as the issuing side's missing view
+        // (Issue #41 review): a stale id on the settings screen
+        // is a "not there", not a server error.
+        throw new PlatformRelayError({
+          status: 404,
+          body: { error: "公開URLが見つかりません" },
+        });
       }
       return row;
     }),
@@ -128,10 +173,26 @@ interface PublicViewContext {
  * token was issued is shown as it now is, and a deleted view takes
  * its tokens with it (the schema's cascade), so a missing view is
  * the 404 again.
+ *
+ * The URL's slug is checked against the token's school, resolved
+ * through the school cache (Issue #41 review): the token alone
+ * would answer under any school's slug, so a URL could show one
+ * school's table under another school's address. A slug that
+ * names a different school — or no school this server has on
+ * record — is the same 404 as an unknown token: the URL as a
+ * whole names nothing here, and the answer does not say which
+ * half of it missed.
  */
-async function resolvePublicView(db: Db, token: string): Promise<PublicViewContext> {
+async function resolvePublicView(db: Db, token: string, slug: string): Promise<PublicViewContext> {
   const row = await tokensStore.findPublicViewTokenByHash(db, hashPublicToken(token));
   if (!row) {
+    throw new PlatformRelayError({
+      status: 404,
+      body: { error: "公開URLが見つかりません" },
+    });
+  }
+  const slugSchoolId = await schoolCacheStore.findSchoolIdBySlug(db, slug);
+  if (slugSchoolId !== row.schoolId) {
     throw new PlatformRelayError({
       status: 404,
       body: { error: "公開URLが見つかりません" },
@@ -246,7 +307,7 @@ export function createPublicActions(db: Db, platformClient: PlatformApiClient) {
   return defineActions({
     getPublicBootstrap: publicAction(async ({ request }) => {
       const input = getPublicBootstrapInputSchema.parse(request);
-      const { schoolId, view } = await resolvePublicView(db, input.token);
+      const { schoolId, view } = await resolvePublicView(db, input.token, input.slug);
       const rank = viewAudienceRank(view.audience as Audience);
       const year = schoolYearOf(todayText());
       const holidayRange = `from=${year}-04-01&to=${year + 1}-03-31`;
@@ -315,7 +376,7 @@ export function createPublicActions(db: Db, platformClient: PlatformApiClient) {
 
     getPublicRange: publicAction(async ({ request }) => {
       const input = getPublicRangeInputSchema.parse(request);
-      const { schoolId, view } = await resolvePublicView(db, input.token);
+      const { schoolId, view } = await resolvePublicView(db, input.token, input.slug);
       const range = await computeRange(db, platformClient, undefined, schoolId, {
         from: input.from,
         to: input.to,

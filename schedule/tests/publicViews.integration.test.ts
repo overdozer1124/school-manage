@@ -18,6 +18,7 @@ import { runMigrations } from "../src/db/migrate.js";
 import { createPlatformApiClient, PlatformRelayError } from "../src/platformClient.js";
 import { hashPublicToken } from "../src/publicViews/actions.js";
 import * as tokensStore from "../src/db/publicTokens.js";
+import * as schoolCacheStore from "../src/db/schoolCache.js";
 
 // Public viewing tests (Issue #41): a per-view token opens the
 // view to readers with no account, and nothing else. The fake
@@ -399,6 +400,7 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
   it("issuing returns the raw token once; the store holds only its hash", async () => {
     const issued = (await actions.createPublicViewToken.run(auth("Admin"), {
       viewId: "view-guardian",
+      cookie: COOKIE,
     })) as Record_;
     guardianToken = issued["token"] as string;
     guardianTokenId = issued["id"] as string;
@@ -421,11 +423,19 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     const stored = await tokensStore.findPublicViewTokenByHash(db, hashPublicToken(guardianToken));
     expect(stored?.id).toBe(guardianTokenId);
     expect(JSON.stringify(stored)).not.toContain(guardianToken);
+
+    // The issuance also synced the school cache from the
+    // platform (the caller's cookie rode along): the school's
+    // slug — "test", as the fake's /auth/me reports it — now
+    // resolves to this school, which is what the public reads
+    // below check their URL's slug against.
+    expect(await schoolCacheStore.findSchoolIdBySlug(db, "test")).toBe(SCHOOL);
   });
 
   it("the public bootstrap carries the school, the view, its items, axes and holidays only", async () => {
     const boot = (await publicActions.getPublicBootstrap.run({
       token: guardianToken,
+      slug: "test",
     })) as Record_;
     expect((boot["school"] as Record_)["name"]).toBe("テスト学校");
     const view = boot["view"] as Record_;
@@ -458,6 +468,7 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
   it("the public range has the day's public face and nothing staff-shaped", async () => {
     const range = (await publicActions.getPublicRange.run({
       token: guardianToken,
+      slug: "test",
       from: FROM,
       to: TO,
     })) as unknown as Record_;
@@ -495,7 +506,7 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
 
   it("an unknown token is a 404 and a revoked token is a 401", async () => {
     const unknown = await publicActions.getPublicRange
-      .run({ token: "no-such-token", from: FROM, to: TO })
+      .run({ token: "no-such-token", slug: "test", from: FROM, to: TO })
       .catch((e: unknown) => e);
     expect(unknown).toBeInstanceOf(PlatformRelayError);
     expect((unknown as PlatformRelayError).status).toBe(404);
@@ -509,7 +520,7 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     expect(revoked["revokedAt"]).not.toBeNull();
 
     const dead = await publicActions.getPublicBootstrap
-      .run({ token: issued["token"] as string })
+      .run({ token: issued["token"] as string, slug: "test" })
       .catch((e: unknown) => e);
     expect(dead).toBeInstanceOf(AuthAccessError);
     expect((dead as AuthAccessError).status).toBe(401);
@@ -521,6 +532,51 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     const row = listed.find((t) => t["id"] === issued["id"]) as Record_;
     expect(row["revokedAt"]).not.toBeNull();
     expect(row["createdBy"]).toBe("user-41");
+  });
+
+  it("a token answers only under its own school's slug", async () => {
+    // Another school's slug on record (its own issuance synced
+    // it, in its own time): this school's token under that slug
+    // is a 404 — the URL as a whole names nothing here, and the
+    // answer does not say which half missed.
+    await schoolCacheStore.upsertSchoolCache(db, {
+      schoolId: "school-42",
+      name: "別の学校",
+      slug: "other-school",
+    });
+    const wrongSchool = await publicActions.getPublicRange
+      .run({ token: guardianToken, slug: "other-school", from: FROM, to: TO })
+      .catch((e: unknown) => e);
+    expect(wrongSchool).toBeInstanceOf(PlatformRelayError);
+    expect((wrongSchool as PlatformRelayError).status).toBe(404);
+
+    // A slug no school has on record is the same 404.
+    const unknownSlug = await publicActions.getPublicBootstrap
+      .run({ token: guardianToken, slug: "no-such-school" })
+      .catch((e: unknown) => e);
+    expect(unknownSlug).toBeInstanceOf(PlatformRelayError);
+    expect((unknownSlug as PlatformRelayError).status).toBe(404);
+
+    // And the token still answers under its own school's slug.
+    const own = (await publicActions.getPublicBootstrap.run({
+      token: guardianToken,
+      slug: "test",
+    })) as Record_;
+    expect((own["school"] as Record_)["id"]).toBe(SCHOOL);
+  });
+
+  it("issuing for a missing view and revoking a missing token are 404s, not 500s", async () => {
+    const noView = await actions.createPublicViewToken
+      .run(auth("Admin"), { viewId: "view-missing" })
+      .catch((e: unknown) => e);
+    expect(noView).toBeInstanceOf(PlatformRelayError);
+    expect((noView as PlatformRelayError).status).toBe(404);
+
+    const noToken = await actions.revokePublicViewToken
+      .run(auth("Admin"), { id: "no-such-token-id" })
+      .catch((e: unknown) => e);
+    expect(noToken).toBeInstanceOf(PlatformRelayError);
+    expect((noToken as PlatformRelayError).status).toBe(404);
   });
 
   it("the public actions cannot be registered where secure actions are required", () => {

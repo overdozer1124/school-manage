@@ -5,6 +5,7 @@ import express from "express";
 import { AuthAccessError } from "@school-manage/platform-client";
 import type { ScheduleAuth } from "./auth.js";
 import { PlatformRelayError } from "./platformClient.js";
+import { createRequestRateLimiter } from "./rateLimit.js";
 
 /**
  * The schedule HTTP app (Issue #34): the health check the external
@@ -26,6 +27,12 @@ import { PlatformRelayError } from "./platformClient.js";
  * `/{slug}/schedule/public/`: no caller is verified there, and only
  * the PublicAction allowlist is served — the token in the request
  * is the credential, and the actions take no AuthContext at all.
+ * Two guards stand on that route instead (Issue #41 review): a
+ * per-source request limit, because it is the one surface that
+ * answers with no session and each call fans out to several
+ * reads; and the path's slug, injected into the request the way
+ * the secure route injects the cookie, so the action can check
+ * the URL's school against the token's own.
  */
 export interface ScheduleActionLike {
   run(auth: never, request: never): Promise<unknown>;
@@ -54,6 +61,13 @@ export interface ScheduleAppDeps {
    *  provide answers 404. When absent, the public route serves
    *  nothing. */
   createPublicActions?: () => Record<string, PublicActionLike>;
+  /** The public route's per-source request allowance (Issue #41
+   *  review). The default is sized for readers, not crawlers: a
+   *  page view costs two calls (bootstrap, then the month's
+   *  range) and paging through months costs one each, so 120 a
+   *  minute is far above a person's pace and far below a load
+   *  attack's. Tests shrink it to reach the 429 in a few calls. */
+  publicRateLimit?: { maxRequests: number; windowMs: number };
   /** Directory of the built screens (client/dist). When it does not
    *  exist, only the API and health check are served. */
   clientDistDir?: string;
@@ -201,6 +215,10 @@ export function createApp(deps?: ScheduleAppDeps) {
   });
 
   if (deps) {
+    const publicRateLimiter = createRequestRateLimiter(
+      deps.publicRateLimit ?? { maxRequests: 120, windowMs: 60_000 },
+    );
+
     app.post("/:slug/schedule/api/:action", async (req, res) => {
       const actionName = req.params.action as string;
       if (!(ACTION_NAMES as readonly string[]).includes(actionName)) {
@@ -234,7 +252,19 @@ export function createApp(deps?: ScheduleAppDeps) {
     // allowlist names are served; a secure action's name here is
     // an unknown action, exactly as a public name is on the route
     // above.
+    //
+    // Every hit on this route counts against the source address's
+    // allowance first — the limit guards the surface, not just
+    // the two served names — and the path's slug is injected into
+    // the request (the path's value wins over any the body sent),
+    // as the secure route injects the caller's cookie.
     app.post("/:slug/schedule/public/:action", async (req, res) => {
+      if (!publicRateLimiter.tryAcquire(req.ip ?? "unknown")) {
+        res.status(429).json({
+          error: "リクエストの回数が上限を超えました。しばらく待ってから再度お試しください。",
+        });
+        return;
+      }
       const actionName = req.params.action as string;
       if (!(PUBLIC_ACTION_NAMES as readonly string[]).includes(actionName)) {
         res.status(404).json({ error: `unknown action: ${actionName}` });
@@ -251,7 +281,7 @@ export function createApp(deps?: ScheduleAppDeps) {
           typeof req.body === "object" && req.body !== null
             ? (req.body as Record<string, unknown>)
             : {};
-        const result = await action.run(body as never);
+        const result = await action.run({ ...body, slug: req.params.slug } as never);
         res.json(result ?? null);
       } catch (error) {
         sendActionError(res, error);

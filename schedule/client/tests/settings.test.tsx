@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../src/App";
 import type { ScheduleApi } from "../src/api";
 import { createDevApi } from "../src/devAdapter";
+import { formatIssuedAt } from "../src/lib";
 import type { BootstrapData } from "../src/types";
 
 afterEach(cleanup);
@@ -129,6 +130,74 @@ describe("settings screens (Issue #39)", () => {
     expect(
       inDialog.getByText(/割当・交代の履歴・見送りの記録がすべて消えます/),
     ).toBeInTheDocument();
+  }, 20000);
+
+  it("revoking a public URL asks first, and its issued time is shown in local time", async () => {
+    render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const inDialog = within(dialog);
+
+    // The guardian view's block lists the fixture token, issued
+    // 2026-11-01T09:00:00Z on the adapter. The line shows the
+    // instant in the reader's zone (lib's conversion, pinned to
+    // exact zones in lib.test.ts), not the UTC slice.
+    const viewRow = inDialog.getByText("保護者用月表").closest("li") as HTMLElement;
+    const expectedIssued = formatIssuedAt("2026-11-01T09:00:00.000Z");
+    let tokenRow: HTMLElement | undefined;
+    await waitFor(() => {
+      tokenRow = [...viewRow.querySelectorAll<HTMLElement>(".public-url-block li")].find((li) =>
+        li.textContent?.includes(`${expectedIssued} 発行`),
+      );
+      expect(tokenRow).toBeDefined();
+    });
+    const inToken = within(tokenRow as HTMLElement);
+    expect(inToken.getByText(/（有効）/)).toBeInTheDocument();
+
+    // The first click only arms the button and spells out that
+    // the URL dies for good; the token is still live.
+    fireEvent.click(inToken.getByRole("button", { name: "無効化" }));
+    expect(inToken.getByRole("button", { name: "本当に無効化" })).toBeInTheDocument();
+    expect(inToken.getByText(/無効化すると、この公開URLは使えなくなります/)).toBeInTheDocument();
+    expect(inToken.getByText(/（有効）/)).toBeInTheDocument();
+
+    // The second click revokes, and the row says so.
+    fireEvent.click(inToken.getByRole("button", { name: "本当に無効化" }));
+    await waitFor(() => expect(inToken.queryByText(/に無効化済み/)).toBeInTheDocument());
+    expect(inToken.queryByRole("button", { name: "無効化" })).not.toBeInTheDocument();
+  }, 20000);
+
+  it("an issued public URL carries only dev=1 from the settings page's query", async () => {
+    window.history.pushState({}, "", "/test-school/schedule/?other=1&x=2");
+    try {
+      render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+      await screen.findByText("開発用小学校");
+      fireEvent.click(screen.getByRole("button", { name: "設定" }));
+      const dialog = await screen.findByRole("dialog", { name: "設定" });
+      const inDialog = within(dialog);
+      const viewRow = inDialog.getByText("保護者用月表").closest("li") as HTMLElement;
+      const inView = within(viewRow);
+
+      // The settings page's own query (?other=1&x=2) must not
+      // leak into a URL the school hands out.
+      fireEvent.click(inView.getByRole("button", { name: "公開URLを発行" }));
+      const issued = (await inView.findByLabelText("発行した公開URL")) as HTMLInputElement;
+      await waitFor(() => expect(issued.value).toContain("/public-view/"));
+      expect(issued.value.startsWith(`${window.location.origin}/test-school/schedule/`)).toBe(true);
+      expect(issued.value).not.toContain("?");
+      expect(issued.value).not.toContain("other");
+
+      // dev=1 — and only dev=1 — rides along, so a development
+      // page hands over a URL that opens against the same adapter.
+      window.history.pushState({}, "", "/test-school/schedule/?dev=1&other=1");
+      fireEvent.click(inView.getByRole("button", { name: "公開URLを発行" }));
+      await waitFor(() => expect(issued.value).toContain("?dev=1"));
+      expect(issued.value.endsWith("?dev=1")).toBe(true);
+      expect(issued.value).not.toContain("other");
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
   }, 20000);
 
   it("a master added through the relay shows in the masters list", async () => {

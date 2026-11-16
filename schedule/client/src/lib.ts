@@ -55,6 +55,33 @@ export function dayLabel(date: string): string {
   return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}（${weekdayLabel(date)}）`;
 }
 
+/**
+ * An instant the server recorded (an ISO string, in UTC) shown
+ * as "2026-11-17 06:51" in local time — the reader's own zone,
+ * which for this app's schools is Japan's. The instant is
+ * converted, never sliced out of the string: slicing shows the
+ * UTC wall clock, nine hours behind the school's day (Issue #41
+ * review). The optional zone exists for tests, which pin a zone
+ * and so read the same answer on any machine; the screens pass
+ * nothing and get the browser's zone. An unparseable value is
+ * returned as it came rather than rendered as NaN parts.
+ */
+export function formatIssuedAt(iso: string, timeZone?: string): string {
+  const instant = new Date(iso);
+  if (Number.isNaN(instant.getTime())) return iso;
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    ...(timeZone ? { timeZone } : {}),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(instant);
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}`;
+}
+
 export function monthStartOf(anchor: string): string {
   return `${anchor.slice(0, 7)}-01`;
 }

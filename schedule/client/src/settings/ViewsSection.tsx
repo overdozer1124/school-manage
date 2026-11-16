@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { columnLabel } from "../lib";
+import { columnLabel, formatIssuedAt } from "../lib";
 import type {
   BootstrapData,
   PublicViewTokenData,
@@ -325,7 +325,7 @@ export function ViewsSection({ ctx }: { ctx: SectionCtx }) {
  *  URL, in the moment it is issued; afterwards only the record
  *  (when, and whether revoked) remains. */
 function PublicUrlBlock({ ctx, view }: { ctx: SectionCtx; view: ViewDefinitionData }) {
-  const { api, run, busy } = ctx;
+  const { api, run, busy, deleteButton } = ctx;
   const [tokens, setTokens] = useState<PublicViewTokenData[] | null>(null);
   const [issuedUrl, setIssuedUrl] = useState<string | null>(null);
 
@@ -356,11 +356,20 @@ function PublicUrlBlock({ ctx, view }: { ctx: SectionCtx; view: ViewDefinitionDa
       setIssuedUrl(publicUrlFor(created.token));
     });
 
-  const revoke = (id: string) =>
-    void run(async () => {
-      const revoked = await api.revokePublicViewToken({ id });
-      setTokens((list) => (list ?? []).map((t) => (t.id === id ? revoked : t)));
-    });
+  // Revoking is the settings' two-step button, like a delete:
+  //  it takes effect at once and cannot be undone, and the URL
+  //  may already be in guardians' hands, so the first click only
+  //  arms it and spells that out (Issue #41 review).
+  const revokeButton = (token: PublicViewTokenData) =>
+    deleteButton(
+      `public-token-${token.id}`,
+      "無効化",
+      async () => {
+        const revoked = await api.revokePublicViewToken({ id: token.id });
+        setTokens((list) => (list ?? []).map((t) => (t.id === token.id ? revoked : t)));
+      },
+      "無効化すると、この公開URLは使えなくなります。元に戻すことはできません。",
+    );
 
   return (
     <div className="public-url-block">
@@ -381,11 +390,7 @@ function PublicUrlBlock({ ctx, view }: { ctx: SectionCtx; view: ViewDefinitionDa
                   <span className="dim">（有効）</span>
                 )}
               </span>{" "}
-              {!token.revokedAt && (
-                <button type="button" disabled={busy} onClick={() => revoke(token.id)}>
-                  無効化
-                </button>
-              )}
+              {!token.revokedAt && revokeButton(token)}
             </li>
           ))}
         </ul>
@@ -416,17 +421,16 @@ function PublicUrlBlock({ ctx, view }: { ctx: SectionCtx; view: ViewDefinitionDa
 
 /** The public page's URL for a token: the app is served under
  *  `/{slug}/schedule/`, and the public page hangs off the same
- *  root as `public-view/{token}`. The current query string rides
- *  along, so a development page (`?dev=1`) hands over a URL that
- *  opens against the same adapter. */
-function publicUrlFor(token: string): string {
+ *  root as `public-view/{token}`. Only `dev=1` rides along, so a
+ *  development page hands over a URL that opens against the same
+ *  adapter; the rest of the settings page's query is this
+ *  screen's own state and must not leak into a URL the school
+ *  hands out (Issue #41 review). */
+export function publicUrlFor(token: string): string {
   const { origin, pathname, search } = window.location;
   const marker = "/schedule/";
   const at = pathname.indexOf(marker);
   const root = at >= 0 ? pathname.slice(0, at + marker.length) : pathname.replace(/\/?$/, "/");
-  return `${origin}${root}public-view/${encodeURIComponent(token)}${search}`;
-}
-
-function formatIssuedAt(iso: string): string {
-  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
+  const dev = new URLSearchParams(search).get("dev") === "1" ? "?dev=1" : "";
+  return `${origin}${root}public-view/${encodeURIComponent(token)}${dev}`;
 }

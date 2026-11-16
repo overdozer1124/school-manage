@@ -226,8 +226,10 @@ describe("schedule HTTP app (Issue #34)", () => {
   });
 
   it("serves a public action with no caller at all (Issue #41)", async () => {
-    // No cookie header, and verifyRequest is never consulted:
-    // the request reaches the action exactly as sent.
+    // No cookie header, and verifyRequest is never consulted.
+    // The path's slug is injected into the request, the way the
+    // secure route injects the caller's cookie — the action
+    // checks it against the token's school (Issue #41 review).
     mode = "unauthenticated";
     const res = await fetch(`${baseUrl}/test-school/schedule/public/getPublicBootstrap`, {
       method: "POST",
@@ -236,8 +238,62 @@ describe("schedule HTTP app (Issue #34)", () => {
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ school: { id: "school-1", name: "テスト学校" } });
-    expect(lastRequest).toEqual({ token: "good-token" });
+    expect(lastRequest).toEqual({ token: "good-token", slug: "test-school" });
+    const range = await fetch(`${baseUrl}/test-school/schedule/public/getPublicRange`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "good-token", from: "2027-10-01", to: "2027-10-31" }),
+    });
+    expect(range.status).toBe(200);
+    expect(lastRequest).toEqual({
+      token: "good-token",
+      from: "2027-10-01",
+      to: "2027-10-31",
+      slug: "test-school",
+    });
     mode = "ok";
+  });
+
+  it("rate-limits the public route per source address (Issue #41 review)", async () => {
+    // A separate app with a small allowance: three public calls
+    // pass, the fourth is a 429, and the secure route — a
+    // different surface — is not limited by the public budget.
+    const distDir = mkdtempSync(path.join(tmpdir(), "schedule-client-rl-"));
+    writeFileSync(path.join(distDir, "index.html"), "<!doctype html><title>行事予定</title>");
+    const limited = await new Promise<Server>((resolve) => {
+      const s = createApp({
+        ...deps,
+        clientDistDir: distDir,
+        publicRateLimit: { maxRequests: 3, windowMs: 60_000 },
+      }).listen(0, () => resolve(s));
+    });
+    try {
+      const address = limited.address();
+      if (!address || typeof address === "string") throw new Error("no server address");
+      const base = `http://127.0.0.1:${address.port}`;
+      const call = () =>
+        fetch(`${base}/test-school/schedule/public/getPublicBootstrap`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ token: "good-token" }),
+        });
+      for (let i = 0; i < 3; i += 1) {
+        expect((await call()).status).toBe(200);
+      }
+      const refused = await call();
+      expect(refused.status).toBe(429);
+      expect(await refused.json()).toEqual({
+        error: "リクエストの回数が上限を超えました。しばらく待ってから再度お試しください。",
+      });
+      const secure = await fetch(`${base}/test-school/schedule/api/getBootstrap`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: "platform_session=tok" },
+        body: JSON.stringify({}),
+      });
+      expect(secure.status).toBe(200);
+    } finally {
+      limited.close();
+    }
   });
 
   it("maps the public token verdicts: a revoked token is 401, an unknown one 404", async () => {

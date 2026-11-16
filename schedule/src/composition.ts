@@ -52,7 +52,9 @@ export function createScheduleActions(db: Db, platformClient: PlatformApiClient,
     // Issue #41: managing the public viewing tokens (school.admin).
     // The public reads themselves are not actions of this record —
     // they take no AuthContext; see createSchedulePublicActions.
-    ...createPublicTokenAdminActions(db),
+    // The platform client rides along for the school-cache sync
+    // at issuance (the public route's slug check reads it).
+    ...createPublicTokenAdminActions(db, platformClient),
   };
 }
 
