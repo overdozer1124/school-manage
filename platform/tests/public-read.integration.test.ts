@@ -1,11 +1,12 @@
 import type { Server } from "node:http";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { CalendarEventRecord } from "@school-manage/calendar-types";
 import { createApp } from "../src/app.js";
 import { createAuthStore } from "../src/db/authStore.js";
 import { createDb, type Db } from "../src/db/client.js";
 import { createDayStore, createHolidayStore } from "../src/db/days.js";
-import { createEventStore } from "../src/db/events.js";
+import { createEventStore, type EventStore } from "../src/db/events.js";
 import { createMasterStore } from "../src/db/masters.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { grades, schools, staffMembers } from "../src/db/schema.js";
@@ -34,6 +35,7 @@ describe.skipIf(!url)("public read path", () => {
   let queryClient: ReturnType<typeof postgres>;
   let server: Server;
   let baseUrl: string;
+  let eventStore: EventStore;
 
   async function api(
     path: string,
@@ -108,7 +110,7 @@ describe.skipIf(!url)("public read path", () => {
     const actor = { userId: "person-a", via: "platform" as const };
     const dayStore = createDayStore(db);
     const holidayStore = createHolidayStore(db);
-    const eventStore = createEventStore(db);
+    eventStore = createEventStore(db);
     await dayStore.create(
       {
         schoolId: A,
@@ -327,5 +329,58 @@ describe.skipIf(!url)("public read path", () => {
     }
     // The staff master is not served on this path at all.
     expect((await api(`${BASE}/masters/staff?schoolId=${A}&audience=guardian`)).status).toBe(404);
+  });
+
+  it("the route itself empties assignees, even if the store stops shaping them away", async () => {
+    // Today the store's audience shaping is what empties an
+    // event's assignees before the route sees them. The public
+    // shape must not rest on that alone (Issue #82 review): this
+    // store answers the way an unshaped one would — the
+    // assignees back on the record — and the route must still
+    // send none of them out.
+    const assignees: CalendarEventRecord["assignees"] = [
+      { kind: "staff", staffId: "staff-1", role: "担当" },
+      { kind: "free_text", name: "外部講師", role: "引率" },
+    ];
+    const unshapedStore: EventStore = {
+      ...eventStore,
+      listRange: async (schoolId, range, audience) => {
+        const shaped = await eventStore.listRange(schoolId, range, audience);
+        return shaped.map((record) =>
+          record.id === "ev-public" ? { ...record, assignees } : record,
+        );
+      },
+    };
+    const leakyApp = createApp({
+      publicRead: {
+        authStore: createAuthStore(db),
+        dayStore: createDayStore(db),
+        holidayStore: createHolidayStore(db),
+        eventStore: unshapedStore,
+        masterStore: createMasterStore(db),
+        serviceToken: TOKEN,
+      },
+    });
+    const leakyServer = await new Promise<Server>((resolve) => {
+      const s = leakyApp.listen(0, () => resolve(s));
+    });
+    try {
+      const address = leakyServer.address();
+      const leakyBase = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
+      const res = await fetch(
+        `${leakyBase}${BASE}/calendar/events?schoolId=${A}&audience=guardian&${NOVEMBER}`,
+        { headers: { authorization: `Bearer ${TOKEN}` } },
+      );
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as Json;
+      const items = json.items ?? [];
+      expect(items.map((item) => item["id"])).toEqual(["ev-public"]);
+      expect(items[0]?.["assignees"]).toEqual([]);
+      const text = JSON.stringify(json);
+      expect(text).not.toContain("staff-1");
+      expect(text).not.toContain("外部講師");
+    } finally {
+      leakyServer.close();
+    }
   });
 });

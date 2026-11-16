@@ -177,13 +177,20 @@ export function createPublicReadRouter(deps: PublicReadRouterDeps): Router {
   // (filterVisible + forAudience, DESIGN-INTEGRATION 6): a
   // staff_only event is never in the list, and a kept event's
   // assignees and staff-axis targets are already dropped. The
-  // public schema then decides what of the record leaves at all.
+  // assignees are nevertheless replaced with an empty array
+  // here, on this path, and the public schema accepts nothing
+  // else (Issue #82 review): "no assignees leave" is this
+  // route's own guarantee, so a future change to the store's
+  // shaping cannot leak a name through it. The schema then
+  // decides what else of the record leaves at all.
   router.get(`${base}/calendar/events`, async (req, res) => {
     try {
       const { school, audience } = await parsePublicContext(deps, req);
       const range = parseRange(req);
       const items = await deps.eventStore.listRange(school.schoolId, range, audience);
-      res.json({ items: items.map((item) => publicCalendarEventSchema.parse(item)) });
+      res.json({
+        items: items.map((item) => publicCalendarEventSchema.parse({ ...item, assignees: [] })),
+      });
     } catch (error) {
       handleError(res, error);
     }

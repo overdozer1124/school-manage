@@ -63,11 +63,17 @@ export type PublicGrade = z.infer<typeof publicGradeSchema>;
 
 /**
  * An event, public shape: the event's own fields and nothing else.
- * The assignees field stays (the public bundle's shape carries it)
- * but the store's audience shaping has already emptied it for every
- * audience this path serves — assignee names, staff ids and
- * free-text names alike are staff-only (DESIGN-AUTH-TENANCY 4.5),
- * and the staff-axis targets are likewise already dropped there.
+ * The assignees field stays in the shape (the public bundle
+ * carries it) but only ever empty, and that is guaranteed here,
+ * not borrowed from the store: the route replaces whatever the
+ * store returned with an empty array, and this schema accepts
+ * nothing else — so if the replacement is ever lost, the answer
+ * fails closed instead of carrying a name out (assignee names,
+ * staff ids and free-text names alike are staff-only,
+ * DESIGN-AUTH-TENANCY 4.5; the store's audience shaping emptying
+ * them first is a second layer, not the guarantee). The
+ * staff-axis targets are dropped by the store's shaping and,
+ * on the schedule side, once more by the public layer.
  * Defined field by field because the record schema carries a
  * superRefine and cannot be omit-ed; the field list is the event
  * fields of calendar-types' entities, minus identity and stamps.
@@ -88,6 +94,6 @@ export const publicCalendarEventSchema = z.object({
   visibility: visibilitySchema,
   targets: z.array(targetRefSchema),
   impacts: z.array(eventImpactSchema),
-  assignees: z.array(eventAssigneeSchema),
+  assignees: z.array(eventAssigneeSchema).max(0),
 });
 export type PublicCalendarEvent = z.infer<typeof publicCalendarEventSchema>;

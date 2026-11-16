@@ -67,7 +67,8 @@ export function createPublicPlatformClient(options: {
   baseUrl: string;
   /** The service credential presented to the platform, from
    *  PUBLIC_READ_SERVICE_TOKEN. When unset, no credential is sent
-   *  and the platform refuses (401): the path fails closed. */
+   *  and the platform refuses (401): the path fails closed. This
+   *  client reports that refusal as a 503 (see request below). */
   serviceToken?: string | undefined;
   /** Tests inject a fake; the default is the global fetch. */
   fetchImpl?: typeof fetch;
@@ -82,6 +83,25 @@ export function createPublicPlatformClient(options: {
     }
     const res = await fetchImpl(`${baseUrl}${path}`, { method: "GET", headers });
     const parsed: unknown = await res.json().catch(() => null);
+    if (res.status === 401) {
+      // The one 401 on the public-read path is the platform
+      // refusing the service credential itself — the two
+      // servers' PUBLIC_READ_SERVICE_TOKEN values disagree, or
+      // one side has none set (Issue #82 review). That is an
+      // operations fault, not a verdict on the reader's public
+      // token: the token's own verdicts (an unknown token's 404,
+      // a revoked token's 401) are schedule's to give, and they
+      // are given before any platform call is made. Passing this
+      // 401 through would show the reader the revoked token's
+      // face for a misconfiguration they cannot act on, so log
+      // the fault for the operator — never the credential's
+      // value — and answer 503 instead: not available now.
+      console.error(
+        "platform public-read refused the service credential (401): " +
+          "PUBLIC_READ_SERVICE_TOKEN is unset or differs between the platform and schedule servers",
+      );
+      return { status: 503, body: { error: "ただいま表示できません" } };
+    }
     return { status: res.status, body: parsed };
   }
 

@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { PublicApp } from "../src/PublicApp";
-import { UnauthorizedError, type PublicApi } from "../src/api";
+import { ApiError, UnauthorizedError, type PublicApi } from "../src/api";
 import { createDevPublicApi } from "../src/devAdapter";
 import type { PublicBootstrapData, RangeData } from "../src/types";
 
@@ -150,6 +150,23 @@ describe("public viewing screen (Issue #41)", () => {
     expect(await screen.findByText("この公開URLは使えません")).toBeInTheDocument();
     expect(screen.getByText("この公開URLは無効化されています")).toBeInTheDocument();
     expect(screen.queryByText("ログイン")).not.toBeInTheDocument();
+  });
+
+  it("a 503 is a 'not available now' face, not the dead URL's", async () => {
+    // The server answers 503 when it cannot serve the page
+    // itself (Issue #82 review): the reader is asked to come
+    // back later, not told their URL cannot be used.
+    render(
+      <PublicApp
+        api={fakeApi({
+          getPublicBootstrap: async () => {
+            throw new ApiError(503, "ただいま表示できません");
+          },
+        })}
+      />,
+    );
+    expect(await screen.findByText("ただいま表示できません")).toBeInTheDocument();
+    expect(screen.queryByText("この公開URLは使えません")).not.toBeInTheDocument();
   });
 
   it("the dev public adapter answers the fixture token with a staff-free bundle", async () => {

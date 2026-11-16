@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   AuthAccessError,
   type AuthContext,
@@ -773,6 +773,55 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     })) as Record_;
     expect(typeof reissued["token"]).toBe("string");
     expect(await schoolCacheStore.findSchoolIdBySlug(db, "test")).toBe(SCHOOL);
+  });
+
+  it("a platform that refuses the service credential answers 503, not the token's 401", async () => {
+    // Issue #82 review: when the two servers' service
+    // credentials disagree, the platform's public-read path
+    // answers 401. That is an operations fault, and the public
+    // actions must not pass the 401 on to the reader — it is
+    // the revoked token's face, and this token is not revoked.
+    // They answer 503 instead, and the fault reaches the server
+    // log without the credential's value in it. The token's own
+    // verdicts are untouched: they are given before any platform
+    // call (the revoked token's 401 above is one).
+    const misconfigured = createSchedulePublicActions(
+      db,
+      createPublicPlatformClient({
+        baseUrl: "http://platform.test",
+        serviceToken: "not-the-platforms-token",
+        fetchImpl: fake.fetch,
+      }),
+    );
+    const logged: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      logged.push(args);
+    });
+    try {
+      const bootError = await misconfigured.getPublicBootstrap
+        .run({ token: guardianToken, slug: "test" })
+        .catch((e: unknown) => e);
+      expect(bootError).toBeInstanceOf(PlatformRelayError);
+      expect((bootError as PlatformRelayError).status).toBe(503);
+      expect((bootError as PlatformRelayError).body).toEqual({
+        error: "ただいま表示できません",
+      });
+
+      const rangeError = await misconfigured.getPublicRange
+        .run({ token: guardianToken, slug: "test", from: FROM, to: TO })
+        .catch((e: unknown) => e);
+      expect(rangeError).toBeInstanceOf(PlatformRelayError);
+      expect((rangeError as PlatformRelayError).status).toBe(503);
+      expect((rangeError as PlatformRelayError).body).toEqual({
+        error: "ただいま表示できません",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logged.length).toBeGreaterThan(0);
+    const logText = JSON.stringify(logged);
+    expect(logText).not.toContain("not-the-platforms-token");
+    expect(logText).not.toContain(PUBLIC_TOKEN);
   });
 
   it("the public actions cannot be registered where secure actions are required", () => {
