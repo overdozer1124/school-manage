@@ -216,6 +216,216 @@ describe("the duty panel for a Viewer", () => {
   });
 });
 
+describe("the rotation preview in the panel", () => {
+  it("discards the preview when the period changes, so unpreviewed days are never applied", async () => {
+    render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(await screen.findByRole("button", { name: /当番・競合/ }));
+    const dialog = await screen.findByRole("dialog", { name: "当番と競合" });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "プレビュー" }));
+    expect(
+      await within(dialog).findByRole("button", { name: /この内容で割り当てる/ }),
+    ).toBeInTheDocument();
+
+    // Change the end of the period: the standing preview no
+    // longer matches the conditions on screen, so the apply
+    // button goes away until the new period is previewed.
+    fireEvent.change(within(dialog).getByLabelText("生成終了日"), {
+      target: { value: "2026-12-31" },
+    });
+    expect(
+      within(dialog).queryByRole("button", { name: /この内容で割り当てる/ }),
+    ).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/（新規）|（入れ替え）/)).not.toBeInTheDocument();
+  });
+});
+
+describe("the duty panel when applying a proposal fails", () => {
+  it("says the proposal stands and shows it in the history", async () => {
+    const bootstrap = structuredClone(DEV_BOOTSTRAP);
+    bootstrap.role = "Editor";
+    const proposedChange = {
+      id: "change-1",
+      dutyDefinitionId: "duty-day",
+      kind: "substitute" as const,
+      assignmentAId: "as-1",
+      assignmentBId: null,
+      fromPersonId: "teacher-3",
+      toPersonId: "teacher-2",
+      reason: "",
+      requestedBy: "dev-user",
+      approvedBy: null,
+      status: "proposed" as const,
+      createdAt: "2026-11-10T00:00:00.000Z",
+      appliedAt: null,
+    };
+    let proposed = false;
+    const api: ScheduleApi = {
+      getBootstrap: async () => bootstrap,
+      getRange: async () => {
+        throw new Error("not used");
+      },
+      previewRotation: async () => [],
+      applyRotation: async () => ({ created: 0, updated: 0, skipped: 0, assignments: [] }),
+      proposeDutyChange: vi.fn(async () => {
+        proposed = true;
+        return proposedChange;
+      }),
+      applyDutyChange: vi.fn(async () => {
+        throw new Error("ほかの先生が先に変更しました");
+      }),
+      declineDutyChange: vi.fn(async () => ({ ...proposedChange, status: "declined" as const })),
+      getDutyChanges: vi.fn(async () => (proposed ? [proposedChange] : [])),
+      getDutyConflicts: async () => [],
+      waiveConflict: vi.fn(async () => ({ waived: true })),
+      getDutyChangeCandidates: async () => ["teacher-2"],
+    };
+    const range: RangeData = {
+      view: structuredClone(DEV_BOOTSTRAP.views[0] as RangeData["view"]),
+      from: "2026-11-10",
+      to: "2026-11-10",
+      days: [
+        {
+          date: "2026-11-10",
+          day: { date: "2026-11-10", dayType: "class_day" },
+          holidays: [],
+          events: [],
+          absences: [],
+          dailyValues: [],
+          dutyAssignments: [
+            {
+              id: "as-1",
+              dutyDefinitionId: "duty-day",
+              date: "2026-11-10",
+              slot: "all_day",
+              personId: "teacher-3",
+              targetId: null,
+              origin: "auto",
+              note: null,
+            },
+          ],
+        },
+      ],
+      undecided: [],
+      eventValues: [],
+      conflicts: [
+        {
+          kind: "absence",
+          assignmentId: "as-1",
+          otherAssignmentId: null,
+          dutyDefinitionId: "duty-day",
+          dutyName: "日番",
+          date: "2026-11-10",
+          slot: "all_day",
+          personId: "teacher-3",
+          absenceId: "abs-1",
+          absenceKind: "business_trip",
+          certainty: "confirmed",
+        },
+      ],
+    };
+    render(
+      <DutyPanel
+        bootstrap={bootstrap}
+        range={range}
+        api={api}
+        onClose={() => {}}
+        onChanged={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "交代を手配する" }));
+    fireEvent.click(await screen.findByRole("button", { name: "この回だけ代行してもらう" }));
+
+    // The message names what happened: the proposal was recorded,
+    // the apply failed, and the retry lives in the history.
+    expect(
+      await screen.findByText(
+        "申し出は記録されました。適用できなかったので、履歴から適用し直してください。",
+      ),
+    ).toBeInTheDocument();
+    expect(api.proposeDutyChange).toHaveBeenCalledTimes(1);
+    expect(api.applyDutyChange).toHaveBeenCalledTimes(1);
+    // The history was re-read after the failure (initial load plus
+    // the finally), so the standing proposal shows there — with
+    // its apply button — instead of inviting a second proposal.
+    await waitFor(() => {
+      expect(api.getDutyChanges).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText("提案中")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "適用する" })).toBeInTheDocument();
+  });
+});
+
+describe("the rotation period follows the displayed range", () => {
+  it("resets the draft period and drops the preview when the range changes", async () => {
+    const bootstrap = structuredClone(DEV_BOOTSTRAP);
+    const api: ScheduleApi = {
+      getBootstrap: async () => bootstrap,
+      getRange: async () => {
+        throw new Error("not used");
+      },
+      previewRotation: async () => [
+        {
+          date: "2026-11-05",
+          slot: "all_day",
+          personId: "teacher-1",
+          action: "create" as const,
+          existing: null,
+        },
+      ],
+      applyRotation: async () => ({ created: 0, updated: 0, skipped: 0, assignments: [] }),
+      proposeDutyChange: vi.fn(async () => {
+        throw new Error("not used");
+      }),
+      applyDutyChange: vi.fn(async () => {
+        throw new Error("not used");
+      }),
+      declineDutyChange: vi.fn(async () => {
+        throw new Error("not used");
+      }),
+      getDutyChanges: async () => [],
+      getDutyConflicts: async () => [],
+      waiveConflict: vi.fn(async () => ({ waived: true })),
+      getDutyChangeCandidates: async () => [],
+    };
+    const rangeFor = (from: string, to: string): RangeData => ({
+      view: structuredClone(DEV_BOOTSTRAP.views[0] as RangeData["view"]),
+      from,
+      to,
+      days: [],
+      undecided: [],
+      eventValues: [],
+      conflicts: [],
+    });
+    const { rerender } = render(
+      <DutyPanel
+        bootstrap={bootstrap}
+        range={rangeFor("2026-11-01", "2026-11-30")}
+        api={api}
+        onClose={() => {}}
+        onChanged={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "プレビュー" }));
+    expect(await screen.findByRole("button", { name: /この内容で割り当てる/ })).toBeInTheDocument();
+
+    rerender(
+      <DutyPanel
+        bootstrap={bootstrap}
+        range={rangeFor("2026-12-01", "2026-12-31")}
+        api={api}
+        onClose={() => {}}
+        onChanged={() => {}}
+      />,
+    );
+    expect((screen.getByLabelText("生成開始日") as HTMLInputElement).value).toBe("2026-12-01");
+    expect((screen.getByLabelText("生成終了日") as HTMLInputElement).value).toBe("2026-12-31");
+    expect(screen.queryByRole("button", { name: /この内容で割り当てる/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("duty cell lines (pure)", () => {
   const bootstrap = structuredClone(DEV_BOOTSTRAP);
   const column = (DEV_BOOTSTRAP.views[0]?.columns.find((c) => c.sourceKind === "duty") ??

@@ -129,16 +129,28 @@ export function DutyPanel({
         reason: changeReason,
       });
       if (canWrite) {
-        await api.applyDutyChange({ id: proposed.id });
+        try {
+          await api.applyDutyChange({ id: proposed.id });
+        } catch {
+          // The proposal itself stands on the server even though
+          // applying it failed. Say so plainly, and let the
+          // finally below re-read the history so the change shows
+          // there and can be applied from the history instead of
+          // being proposed a second time.
+          setError("申し出は記録されました。適用できなかったので、履歴から適用し直してください。");
+          return;
+        }
       } else {
         setNotice("交代を申し出しました。編集できる先生が適用すると表に反映されます。");
       }
       setActiveKey(null);
-      await refreshChanges();
       onChanged();
     } catch (cause) {
       fail(cause);
     } finally {
+      // Re-read on every path: a proposal may have been recorded
+      // even when the apply step after it failed.
+      await refreshChanges();
       setBusy(false);
     }
   };
@@ -190,16 +202,54 @@ export function DutyPanel({
   const [rotFrom, setRotFrom] = useState(range.from);
   const [rotTo, setRotTo] = useState(range.to);
   const [preview, setPreview] = useState<RotationPlanCellData[] | null>(null);
+  // The conditions the standing preview was produced under. The
+  // apply step runs under exactly these, and any edit to the
+  // definition or the period discards the preview (and this
+  // record) so nothing is ever applied that was not previewed.
+  const [previewConditions, setPreviewConditions] = useState<{
+    dutyDefinitionId: string;
+    from: string;
+    to: string;
+  } | null>(null);
   const [applyMsg, setApplyMsg] = useState("");
+
+  const discardPreview = () => {
+    setPreview(null);
+    setPreviewConditions(null);
+    setApplyMsg("");
+  };
+  const changeRotDefId = (value: string) => {
+    setRotDefId(value);
+    discardPreview();
+  };
+  const changeRotFrom = (value: string) => {
+    setRotFrom(value);
+    discardPreview();
+  };
+  const changeRotTo = (value: string) => {
+    setRotTo(value);
+    discardPreview();
+  };
+
+  // The panel's overlay covers the whole screen, so the period
+  // behind it cannot be moved while the panel is open. Follow the
+  // range anyway: if the period ever changes under an open panel,
+  // the rotation draft restarts from the new period and the
+  // preview goes with it.
+  useEffect(() => {
+    setRotFrom(range.from);
+    setRotTo(range.to);
+    discardPreview();
+  }, [range.from, range.to]);
 
   const runPreview = async () => {
     if (busy || !rotDefId) return;
     setBusy(true);
     setError(null);
     try {
-      setPreview(
-        await api.previewRotation({ dutyDefinitionId: rotDefId, from: rotFrom, to: rotTo }),
-      );
+      const conditions = { dutyDefinitionId: rotDefId, from: rotFrom, to: rotTo };
+      setPreview(await api.previewRotation(conditions));
+      setPreviewConditions(conditions);
     } catch (cause) {
       fail(cause);
     } finally {
@@ -208,19 +258,16 @@ export function DutyPanel({
   };
 
   const runApply = async () => {
-    if (busy || !rotDefId) return;
+    if (busy || !previewConditions) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await api.applyRotation({
-        dutyDefinitionId: rotDefId,
-        from: rotFrom,
-        to: rotTo,
-      });
+      const result = await api.applyRotation(previewConditions);
       setApplyMsg(
         `${result.created}件を作成し、${result.updated}件を入れ替えました（${result.skipped}件はそのままにしました）。`,
       );
       setPreview(null);
+      setPreviewConditions(null);
       onChanged();
     } catch (cause) {
       fail(cause);
@@ -395,7 +442,7 @@ export function DutyPanel({
                 <select
                   aria-label="自動生成する当番"
                   value={rotDefId}
-                  onChange={(e) => setRotDefId(e.target.value)}
+                  onChange={(e) => changeRotDefId(e.target.value)}
                 >
                   {rotDefs.map((d) => (
                     <option key={d.id} value={d.id}>
@@ -407,21 +454,21 @@ export function DutyPanel({
                   aria-label="生成開始日"
                   type="date"
                   value={rotFrom}
-                  onChange={(e) => setRotFrom(e.target.value)}
+                  onChange={(e) => changeRotFrom(e.target.value)}
                 />
                 <span>〜</span>
                 <input
                   aria-label="生成終了日"
                   type="date"
                   value={rotTo}
-                  onChange={(e) => setRotTo(e.target.value)}
+                  onChange={(e) => changeRotTo(e.target.value)}
                 />
               </div>
               <div className="rotation-controls">
                 <button type="button" disabled={busy} onClick={() => void runPreview()}>
                   プレビュー
                 </button>
-                {preview && canWrite && (
+                {preview && previewConditions && canWrite && (
                   <button
                     type="button"
                     className="accent-button"
