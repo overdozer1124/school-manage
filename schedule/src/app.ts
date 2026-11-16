@@ -21,9 +21,23 @@ import { PlatformRelayError } from "./platformClient.js";
  * refusal is the platform's own status and body, and the client's
  * 401-vs-403 split (DESIGN-AUTH-TENANCY 4.8) is built on exactly
  * that.
+ *
+ * The public viewing endpoints (Issue #41) sit beside them under
+ * `/{slug}/schedule/public/`: no caller is verified there, and only
+ * the PublicAction allowlist is served — the token in the request
+ * is the credential, and the actions take no AuthContext at all.
  */
 export interface ScheduleActionLike {
   run(auth: never, request: never): Promise<unknown>;
+}
+
+/** A public action (Issue #41): its run takes the request alone.
+ *  There is no caller to verify — the token in the request is the
+ *  whole credential — so these are served on their own route and
+ *  never mixed into the secure record, where run would be handed
+ *  an AuthContext it must not have. */
+export interface PublicActionLike {
+  run(request: never): Promise<unknown>;
 }
 
 export interface ScheduleAppDeps {
@@ -35,6 +49,11 @@ export interface ScheduleAppDeps {
    *  the assembly does not provide answers 404, like an unknown
    *  name. */
   createActions(cookie: string): Record<string, ScheduleActionLike>;
+  /** The public viewing actions (Issue #41), keyed by name; a
+   *  name in PUBLIC_ACTION_NAMES that the assembly does not
+   *  provide answers 404. When absent, the public route serves
+   *  nothing. */
+  createPublicActions?: () => Record<string, PublicActionLike>;
   /** Directory of the built screens (client/dist). When it does not
    *  exist, only the API and health check are served. */
   clientDistDir?: string;
@@ -117,7 +136,61 @@ const ACTION_NAMES = [
   "createPublication",
   "getPublications",
   "getPublication",
+  // Issue #41: managing the public viewing tokens (school.admin).
+  // The public reads are not here: they take no AuthContext and
+  // are served by the public route below (PUBLIC_ACTION_NAMES).
+  "createPublicViewToken",
+  "getPublicViewTokens",
+  "revokePublicViewToken",
 ] as const;
+
+/** The public viewing reads (Issue #41): the whole allowlist of
+ *  DESIGN-AUTH-TENANCY 4.5. Any other name on the public route —
+ *  including every secure action's name — answers 404. */
+const PUBLIC_ACTION_NAMES = ["getPublicBootstrap", "getPublicRange"] as const;
+
+/**
+ * The error mapping both action routes share: an AuthAccessError
+ * is its 401 / 403 (on the public route, a revoked token's 401),
+ * a platform relay refusal is the platform's own status and body
+ * (on the public route, an unknown token's 404 rides this shape
+ * too), a ZodError names only which input is wrong, and anything
+ * else is a generic 500 — a 500 never carries the exception's
+ * message, which can name SQL and internals; the detail goes to
+ * the server log only.
+ */
+function sendActionError(res: express.Response, error: unknown): void {
+  if (error instanceof AuthAccessError) {
+    res.status(error.status).json({ error: error.message });
+    return;
+  }
+  if (error instanceof PlatformRelayError) {
+    // The platform's verdict travels untouched (Issue #29).
+    res.status(error.status).json(error.body ?? { error: error.message });
+    return;
+  }
+  if (error instanceof Error && error.name === "ZodError") {
+    // Only which input is wrong travels: field paths and the
+    // kind of mismatch. The raw message can quote received
+    // values, so it stays out of the response.
+    const issues = (error as { issues?: unknown }).issues;
+    res.status(400).json({
+      error: "入力が正しくありません",
+      issues: Array.isArray(issues)
+        ? issues.map((issue) => {
+            const i = issue as { path?: unknown; code?: unknown };
+            return {
+              path: Array.isArray(i.path) ? i.path.map(String).join(".") : "",
+              code: typeof i.code === "string" ? i.code : "invalid",
+            };
+          })
+        : [],
+    });
+    return;
+  }
+  console.error("schedule action failed:", error);
+  res.status(500).json({ error: "サーバーでエラーが起きました" });
+}
 
 export function createApp(deps?: ScheduleAppDeps) {
   const app = express();
@@ -150,39 +223,38 @@ export function createApp(deps?: ScheduleAppDeps) {
         const result = await action.run(auth as never, { ...body, cookie } as never);
         res.json(result ?? null);
       } catch (error) {
-        if (error instanceof AuthAccessError) {
-          res.status(error.status).json({ error: error.message });
+        sendActionError(res, error);
+      }
+    });
+
+    // The public viewing route (Issue #41): no caller is verified
+    // and no cookie is injected — the token in the request body is
+    // the whole credential, and the actions behind this route are
+    // PublicActions, whose run takes the request alone. Only the
+    // allowlist names are served; a secure action's name here is
+    // an unknown action, exactly as a public name is on the route
+    // above.
+    app.post("/:slug/schedule/public/:action", async (req, res) => {
+      const actionName = req.params.action as string;
+      if (!(PUBLIC_ACTION_NAMES as readonly string[]).includes(actionName)) {
+        res.status(404).json({ error: `unknown action: ${actionName}` });
+        return;
+      }
+      try {
+        const actions = deps.createPublicActions?.() ?? {};
+        const action = actions[actionName];
+        if (!action) {
+          res.status(404).json({ error: `unknown action: ${actionName}` });
           return;
         }
-        if (error instanceof PlatformRelayError) {
-          // The platform's verdict travels untouched (Issue #29).
-          res.status(error.status).json(error.body ?? { error: error.message });
-          return;
-        }
-        if (error instanceof Error && error.name === "ZodError") {
-          // Only which input is wrong travels: field paths and the
-          // kind of mismatch. The raw message can quote received
-          // values, so it stays out of the response.
-          const issues = (error as { issues?: unknown }).issues;
-          res.status(400).json({
-            error: "入力が正しくありません",
-            issues: Array.isArray(issues)
-              ? issues.map((issue) => {
-                  const i = issue as { path?: unknown; code?: unknown };
-                  return {
-                    path: Array.isArray(i.path) ? i.path.map(String).join(".") : "",
-                    code: typeof i.code === "string" ? i.code : "invalid",
-                  };
-                })
-              : [],
-          });
-          return;
-        }
-        // A 500 never carries the exception's message: database and
-        // other internal errors name SQL and internals that must not
-        // reach the screen. The detail goes to the server log only.
-        console.error("schedule action failed:", error);
-        res.status(500).json({ error: "サーバーでエラーが起きました" });
+        const body =
+          typeof req.body === "object" && req.body !== null
+            ? (req.body as Record<string, unknown>)
+            : {};
+        const result = await action.run(body as never);
+        res.json(result ?? null);
+      } catch (error) {
+        sendActionError(res, error);
       }
     });
 

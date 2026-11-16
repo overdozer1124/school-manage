@@ -362,3 +362,35 @@ export interface RangeData {
   eventValues: unknown[];
   conflicts: DutyConflictData[];
 }
+
+// ---- public viewing (Issue #41) -----------------------------------
+
+/** One issued public-view token, as the settings screen lists
+ *  it. The token's value is never here — it was returned once,
+ *  by the issuing call below, and is nowhere else. */
+export interface PublicViewTokenData {
+  id: string;
+  viewDefinitionId: string;
+  createdBy: string;
+  createdAt: string;
+  revokedAt: string | null;
+}
+
+/** The issuing call's answer: the row, plus the token's value,
+ *  shown once so the URL can be copied. */
+export interface PublicTokenCreatedData extends PublicViewTokenData {
+  token: string;
+}
+
+/** What the public screen opens with: the school's name, the
+ *  token's one view (already audience-filtered server-side), the
+ *  items its columns show, the target axes those items range
+ *  over, and the year's holidays. No staff master, no people. */
+export interface PublicBootstrapData {
+  school: { id: string; name: string };
+  view: ViewDefinitionData;
+  itemDefinitions: ItemDefinitionData[];
+  targetGroups: TargetGroupData[];
+  grades: MasterEntry[];
+  holidays: Record<string, unknown>[];
+}

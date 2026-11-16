@@ -312,6 +312,9 @@ function makeFakeApi(bootstrap: BootstrapData) {
     createPublication: unused,
     getPublications: unused,
     getPublication: unused,
+    createPublicViewToken: unused,
+    getPublicViewTokens: unused,
+    revokePublicViewToken: unused,
   };
   return { api, calls, state };
 }

@@ -1,6 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { columnLabel } from "../lib";
-import type { BootstrapData, ViewColumnData, ViewDefinitionData } from "../types";
+import type {
+  BootstrapData,
+  PublicViewTokenData,
+  ViewColumnData,
+  ViewDefinitionData,
+} from "../types";
 import {
   AUDIENCE_LABELS,
   LAYOUT_LABELS,
@@ -70,6 +75,7 @@ export function ViewsSection({ ctx }: { ctx: SectionCtx }) {
               await api.deleteViewDefinition({ id: view.id });
               setViews((list) => list.filter((v) => v.id !== view.id));
             })}
+            <PublicUrlBlock ctx={ctx} view={view} />
           </li>
         ))}
       </ul>
@@ -308,4 +314,119 @@ export function ViewsSection({ ctx }: { ctx: SectionCtx }) {
       )}
     </Section>
   );
+}
+
+/** The view's public URL (Issue #41): issue and revoke the
+ *  tokens that open this view to readers with no account. Only
+ *  non-staff views can be opened this way — a staff view's URL
+ *  would carry duties and names, so the server refuses to issue
+ *  one and this block says why instead of offering the button.
+ *  An issued token's value is shown exactly once, as the full
+ *  URL, in the moment it is issued; afterwards only the record
+ *  (when, and whether revoked) remains. */
+function PublicUrlBlock({ ctx, view }: { ctx: SectionCtx; view: ViewDefinitionData }) {
+  const { api, run, busy } = ctx;
+  const [tokens, setTokens] = useState<PublicViewTokenData[] | null>(null);
+  const [issuedUrl, setIssuedUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (view.audience === "staff") return;
+    let cancelled = false;
+    api
+      .getPublicViewTokens({ viewId: view.id })
+      .then((rows) => {
+        if (!cancelled) setTokens(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setTokens([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, view.id, view.audience]);
+
+  if (view.audience === "staff") {
+    return <p className="dim">公開URL：職員用ビューには発行できません</p>;
+  }
+
+  const issue = () =>
+    void run(async () => {
+      const created = await api.createPublicViewToken({ viewId: view.id });
+      setTokens((list) => [...(list ?? []), created]);
+      setIssuedUrl(publicUrlFor(created.token));
+    });
+
+  const revoke = (id: string) =>
+    void run(async () => {
+      const revoked = await api.revokePublicViewToken({ id });
+      setTokens((list) => (list ?? []).map((t) => (t.id === id ? revoked : t)));
+    });
+
+  return (
+    <div className="public-url-block">
+      <p className="dim">公開URL：このURLを知っている人は、ログインなしでこのビューを見られます</p>
+      {tokens === null ? (
+        <p className="dim">読み込み中です…</p>
+      ) : tokens.length === 0 ? (
+        <p className="dim">まだ発行されていません</p>
+      ) : (
+        <ul className="settings-list">
+          {tokens.map((token) => (
+            <li key={token.id}>
+              <span>
+                {formatIssuedAt(token.createdAt)} 発行
+                {token.revokedAt ? (
+                  <span className="dim">（{formatIssuedAt(token.revokedAt)} に無効化済み）</span>
+                ) : (
+                  <span className="dim">（有効）</span>
+                )}
+              </span>{" "}
+              {!token.revokedAt && (
+                <button type="button" disabled={busy} onClick={() => revoke(token.id)}>
+                  無効化
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <button type="button" disabled={busy} onClick={issue}>
+        公開URLを発行
+      </button>
+      {issuedUrl && (
+        <p>
+          <label>
+            発行した公開URL（このURLは今だけ表示されます。必要な人に渡してください）{" "}
+            <input
+              aria-label="発行した公開URL"
+              readOnly
+              value={issuedUrl}
+              size={Math.min(issuedUrl.length, 72)}
+              onFocus={(e) => e.target.select()}
+            />
+          </label>{" "}
+          <button type="button" onClick={() => setIssuedUrl(null)}>
+            閉じる
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The public page's URL for a token: the app is served under
+ *  `/{slug}/schedule/`, and the public page hangs off the same
+ *  root as `public-view/{token}`. The current query string rides
+ *  along, so a development page (`?dev=1`) hands over a URL that
+ *  opens against the same adapter. */
+function publicUrlFor(token: string): string {
+  const { origin, pathname, search } = window.location;
+  const marker = "/schedule/";
+  const at = pathname.indexOf(marker);
+  const root = at >= 0 ? pathname.slice(0, at + marker.length) : pathname.replace(/\/?$/, "/");
+  return `${origin}${root}public-view/${encodeURIComponent(token)}${search}`;
+}
+
+function formatIssuedAt(iso: string): string {
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
 }

@@ -513,6 +513,15 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
     getPublication: async (): Promise<never> => {
       throw new Error("not used");
     },
+    createPublicViewToken: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getPublicViewTokens: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    revokePublicViewToken: async (): Promise<never> => {
+      throw new Error("not used");
+    },
   };
   return { api, calls, control, state };
 }

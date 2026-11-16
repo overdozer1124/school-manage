@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { AuthAccessError, type AuthContext } from "@school-manage/platform-client";
 import { createApp, type ScheduleAppDeps } from "../src/app.js";
+import { PlatformRelayError } from "../src/platformClient.js";
 
 // The HTTP layer of the screens (Issue #34): the action endpoints
 // under /{slug}/schedule/api/ and the built screens under
@@ -62,6 +63,33 @@ const deps: ScheduleAppDeps = {
       async run(_auth: never, request: never) {
         lastRequest = request;
         return { waived: true };
+      },
+    },
+  }),
+  // Issue #41: the public viewing actions. Their run takes the
+  // request alone — no AuthContext, no cookie — and the token in
+  // the body is the whole credential.
+  createPublicActions: () => ({
+    getPublicBootstrap: {
+      async run(request: never) {
+        lastRequest = request;
+        const token = (request as { token?: unknown }).token;
+        if (token === "revoked-token") {
+          throw new AuthAccessError(401, "この公開URLは無効化されています");
+        }
+        if (token !== "good-token") {
+          throw new PlatformRelayError({
+            status: 404,
+            body: { error: "公開URLが見つかりません" },
+          });
+        }
+        return { school: { id: "school-1", name: "テスト学校" } };
+      },
+    },
+    getPublicRange: {
+      async run(request: never) {
+        lastRequest = request;
+        return { days: [] };
       },
     },
   }),
@@ -195,6 +223,55 @@ describe("schedule HTTP app (Issue #34)", () => {
       body: JSON.stringify({}),
     });
     expect(res.status).toBe(404);
+  });
+
+  it("serves a public action with no caller at all (Issue #41)", async () => {
+    // No cookie header, and verifyRequest is never consulted:
+    // the request reaches the action exactly as sent.
+    mode = "unauthenticated";
+    const res = await fetch(`${baseUrl}/test-school/schedule/public/getPublicBootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "good-token" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ school: { id: "school-1", name: "テスト学校" } });
+    expect(lastRequest).toEqual({ token: "good-token" });
+    mode = "ok";
+  });
+
+  it("maps the public token verdicts: a revoked token is 401, an unknown one 404", async () => {
+    const revoked = await fetch(`${baseUrl}/test-school/schedule/public/getPublicBootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "revoked-token" }),
+    });
+    expect(revoked.status).toBe(401);
+    expect(await revoked.json()).toEqual({ error: "この公開URLは無効化されています" });
+    const unknown = await fetch(`${baseUrl}/test-school/schedule/public/getPublicBootstrap`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "no-such-token" }),
+    });
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({ error: "公開URLが見つかりません" });
+  });
+
+  it("keeps the two routes' allowlists apart (Issue #41)", async () => {
+    // A write action's name on the public route is unknown there.
+    const write = await fetch(`${baseUrl}/test-school/schedule/public/createEvent`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: "good-token" }),
+    });
+    expect(write.status).toBe(404);
+    // And a public name on the secure route is unknown there.
+    const pub = await fetch(`${baseUrl}/test-school/schedule/api/getPublicRange`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "platform_session=tok" },
+      body: JSON.stringify({ token: "good-token", from: "2027-10-01", to: "2027-10-31" }),
+    });
+    expect(pub.status).toBe(404);
   });
 
   it("serves the built screens under /{slug}/schedule/", async () => {

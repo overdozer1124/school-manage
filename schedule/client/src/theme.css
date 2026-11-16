@@ -840,6 +840,11 @@ body {
   gap: 6px;
 }
 
+/* The public-URL block inside a view's settings row (Issue #41). */
+.public-url-block {
+  margin: 4px 0 8px 16px;
+}
+
 .settings-form {
   display: flex;
   flex-direction: column;

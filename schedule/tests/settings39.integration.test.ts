@@ -180,6 +180,9 @@ const EXPECTED_ACTIONS = [
   "createPublication",
   "getPublications",
   "getPublication",
+  "createPublicViewToken",
+  "getPublicViewTokens",
+  "revokePublicViewToken",
 ];
 
 describe.skipIf(!url)("settings screens' server side (Issue #39)", () => {

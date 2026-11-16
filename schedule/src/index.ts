@@ -1,6 +1,6 @@
 import { createApp } from "./app.js";
 import { createScheduleAuth } from "./auth.js";
-import { createScheduleActions } from "./composition.js";
+import { createScheduleActions, createSchedulePublicActions } from "./composition.js";
 import { loadScheduleConfig } from "./config.js";
 import { createDbFromEnv } from "./db/runtime.js";
 import { createPlatformApiClient } from "./platformClient.js";
@@ -23,6 +23,9 @@ createApp({
   // The actions are built per request: their platform reads and the
   // duty source forward the caller's own cookie (Issue #34).
   createActions: (cookie) => createScheduleActions(db, platformClient, cookie),
+  // The public viewing actions (Issue #41) are built once: there
+  // is no caller's cookie to bind — the token is the credential.
+  createPublicActions: () => createSchedulePublicActions(db, platformClient),
 }).listen(config.port, () => {
   console.log(`schedule listening on port ${config.port}`);
 });

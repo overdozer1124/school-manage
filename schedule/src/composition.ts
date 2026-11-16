@@ -6,6 +6,7 @@ import { createEventActions } from "./events/actions.js";
 import { createMasterRelayActions } from "./masters/actions.js";
 import type { PlatformApiClient } from "./platformClient.js";
 import { createPublicationActions } from "./publications/actions.js";
+import { createPublicActions, createPublicTokenAdminActions } from "./publicViews/actions.js";
 import { createRangeActions } from "./range/actions.js";
 import { createViewActions } from "./views/actions.js";
 
@@ -48,5 +49,21 @@ export function createScheduleActions(db: Db, platformClient: PlatformApiClient,
     // Publishing renders through computeRange, so it takes the
     // duty platform source like the range actions do.
     ...createPublicationActions(db, platformClient, dutyPlatform),
+    // Issue #41: managing the public viewing tokens (school.admin).
+    // The public reads themselves are not actions of this record —
+    // they take no AuthContext; see createSchedulePublicActions.
+    ...createPublicTokenAdminActions(db),
   };
+}
+
+/**
+ * The public viewing actions (Issue #41): the allowlist of
+ * DESIGN-AUTH-TENANCY 4.5, assembled apart from the secure actions
+ * because their type is different — a PublicAction's run takes the
+ * request alone, no AuthContext, and the HTTP layer serves them on
+ * their own route, without verifying a caller. They are built once
+ * (not per request): there is no caller's cookie to bind.
+ */
+export function createSchedulePublicActions(db: Db, platformClient: PlatformApiClient) {
+  return createPublicActions(db, platformClient);
 }
