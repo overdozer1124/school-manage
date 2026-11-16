@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
-import { isCommitEnter } from "./cells";
+import { isCommitEnter, isImeKeyEvent } from "./cells";
 import { ClockPicker } from "./ClockPicker";
 import { absenceLineText, eventTitle, matchStaffByName, normalizeName } from "./lib";
 import type {
@@ -165,6 +165,7 @@ export function QuickPopover({
   onSaved,
   onUnauthorizedError,
   onClose,
+  onOpenDetail,
 }: {
   target: QuickPopoverTarget;
   bootstrap: BootstrapData;
@@ -173,6 +174,10 @@ export function QuickPopover({
   onSaved(): void;
   onUnauthorizedError(): void;
   onClose(): void;
+  /** 「詳細を開く」 (6.5): hand the entry — as this popover's
+   *  steps have left it, not as it was when the popover opened —
+   *  to the detail modal (Issue #37). */
+  onOpenDetail?(record: Record<string, unknown>): void;
 }) {
   const steps = popoverSteps(target, bootstrap);
   const [record, setRecord] = useState(target.record);
@@ -616,7 +621,7 @@ export function QuickPopover({
       role="dialog"
       aria-label={`${title}のクイック入力`}
       onKeyDown={(e) => {
-        if (e.key === "Escape") {
+        if (e.key === "Escape" && !isImeKeyEvent(e)) {
           e.stopPropagation();
           onClose();
         }
@@ -882,7 +887,7 @@ export function QuickPopover({
         </p>
       )}
       <div className="quick-popover-foot">
-        <button type="button" disabled title="詳細モーダルは次の Issue で対応します">
+        <button type="button" disabled={!onOpenDetail} onClick={() => onOpenDetail?.(record)}>
           詳細を開く
         </button>
         <span className="quick-foot-actions">
@@ -922,8 +927,10 @@ function itemStepValue(text: string): unknown {
  *  rewrite of the whole set keeps the items this popover did not
  *  touch. A row whose value cannot be read back in its item's
  *  terms — an option id the definition no longer has, a target
- *  known only by id — is left out rather than guessed. */
-function eventValueInputOf(
+ *  known only by id — is left out rather than guessed. The detail
+ *  modal (Issue #37) rewrites a record's set through the same
+ *  helper, so both screens keep exactly what the other wrote. */
+export function eventValueInputOf(
   row: EventValueData,
   bootstrap: BootstrapData,
 ): {

@@ -176,8 +176,7 @@ export interface BootstrapData {
   absenceSubdivisions: AbsenceSubdivisionData[];
   /** The school's default input behaviour (DESIGN schedule 6.5):
    *  after Enter, open the quick-entry popover, or — for schools
-   *  that prefer the detail modal — not. The modal itself arrives
-   *  with its own issue; "modal" here only keeps the popover shut. */
+   *  that prefer it — the detail modal (Issue #37). */
   inputOpener: "popover" | "modal";
   masters: {
     staff: MasterEntry[];
