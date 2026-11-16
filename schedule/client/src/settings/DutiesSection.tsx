@@ -66,10 +66,18 @@ export function DutiesSection({ ctx }: { ctx: SectionCtx }) {
             <button type="button" disabled={busy} onClick={() => openForm(duty)}>
               編集
             </button>{" "}
-            {deleteButton(`duty:${duty.id}`, "削除", async () => {
-              await api.deleteDutyDefinition({ id: duty.id });
-              setDuties((list) => list.filter((d) => d.id !== duty.id));
-            })}
+            {deleteButton(
+              `duty:${duty.id}`,
+              "削除",
+              async () => {
+                await api.deleteDutyDefinition({ id: duty.id });
+                setDuties((list) => list.filter((d) => d.id !== duty.id));
+              },
+              // Duty definitions carry no is_active stop switch
+              // (unlike item definitions), so the guidance is
+              // not to delete when only the use ends.
+              "削除すると、この当番の割当・交代の履歴・見送りの記録がすべて消えます。使うのをやめるだけなら、削除せずに残してください。",
+            )}
           </li>
         ))}
       </ul>

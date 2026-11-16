@@ -27,6 +27,10 @@ function withRole(api: ScheduleApi, role: string, permissions: string[]): Schedu
 }
 
 describe("settings screens (Issue #39)", () => {
+  // This scenario renders the whole settings panel several times
+  // over; the client config's testTimeout already allows 20s, and
+  // the explicit limit here keeps the intent visible (PR #78
+  // re-review, required 1).
   it("an item added in the settings can be put in a view as a column, and the table gains the column", async () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
@@ -72,7 +76,60 @@ describe("settings screens (Issue #39)", () => {
       },
       { timeout: 5000 },
     );
-  });
+  }, 20000);
+
+  it("a new item's visibility defaults to staff only, and editing keeps the item's own value", async () => {
+    render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const inDialog = within(dialog);
+
+    // New item: the default is closed — staff only (DESIGN 9).
+    fireEvent.click(inDialog.getByRole("button", { name: "項目を追加" }));
+    expect((inDialog.getByLabelText("公開範囲") as HTMLSelectElement).value).toBe("staff_only");
+    fireEvent.click(inDialog.getByRole("button", { name: "やめる" }));
+
+    // Editing an existing item shows that item's own value
+    // (行事 is guardian in the fixture), not the new-item default.
+    const eventsRow = inDialog.getByText(/events／/).closest("li") as HTMLElement;
+    fireEvent.click(within(eventsRow).getByRole("button", { name: "編集" }));
+    expect((inDialog.getByLabelText("公開範囲") as HTMLSelectElement).value).toBe("guardian");
+    fireEvent.click(inDialog.getByRole("button", { name: "やめる" }));
+
+    // And an existing staff-only item stays staff only.
+    const cleaningRow = inDialog.getByText(/cleaning／/).closest("li") as HTMLElement;
+    fireEvent.click(within(cleaningRow).getByRole("button", { name: "編集" }));
+    expect((inDialog.getByLabelText("公開範囲") as HTMLSelectElement).value).toBe("staff_only");
+  }, 20000);
+
+  it("arming an item or duty delete spells out what disappears with it", async () => {
+    render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const inDialog = within(dialog);
+
+    // Item definition: its daily values, event values and legend
+    // cascade away for every school year; stopping (isActive) is
+    // offered as the non-destructive alternative.
+    const eventsRow = inDialog.getByText(/events／/).closest("li") as HTMLElement;
+    fireEvent.click(within(eventsRow).getByRole("button", { name: "削除" }));
+    expect(within(eventsRow).getByRole("button", { name: "本当に削除" })).toBeInTheDocument();
+    expect(
+      inDialog.getByText(/日次値・行事の追加項目・凡例が全年度分すべて消えます/),
+    ).toBeInTheDocument();
+    expect(inDialog.getByText(/「使用中」のチェックを外して停止してください/)).toBeInTheDocument();
+
+    // Duty definition: assignments, the change history and the
+    // waivers cascade away.
+    const dutyRow = inDialog.getByText(/通年／輪番/).closest("li") as HTMLElement;
+    fireEvent.click(within(dutyRow).getByRole("button", { name: "削除" }));
+    expect(within(dutyRow).getByRole("button", { name: "本当に削除" })).toBeInTheDocument();
+    expect(
+      inDialog.getByText(/割当・交代の履歴・見送りの記録がすべて消えます/),
+    ).toBeInTheDocument();
+  }, 20000);
 
   it("a master added through the relay shows in the masters list", async () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);

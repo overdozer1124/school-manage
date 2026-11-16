@@ -112,21 +112,34 @@ export function SettingsPanel({
   };
 
   /** A two-step delete button: the first click arms it, the
-   *  second (on the same row) deletes. Any other action disarms. */
-  const deleteButton = (key: string, label: string, action: () => Promise<unknown>) => (
-    <button
-      type="button"
-      disabled={busy}
-      onClick={() => {
-        if (confirmKey === key) {
-          void run(action);
-        } else {
-          setConfirmKey(key);
-        }
-      }}
-    >
-      {confirmKey === key ? `本当に${label}` : label}
-    </button>
+   *  second (on the same row) deletes. Any other action disarms.
+   *  A section may pass a confirm note naming what the delete
+   *  cascades to; it is shown while the button is armed, before
+   *  the second click (PR #78 re-review). */
+  const deleteButton = (
+    key: string,
+    label: string,
+    action: () => Promise<unknown>,
+    confirmNote?: string,
+  ) => (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => {
+          if (confirmKey === key) {
+            void run(action);
+          } else {
+            setConfirmKey(key);
+          }
+        }}
+      >
+        {confirmKey === key ? `本当に${label}` : label}
+      </button>
+      {confirmKey === key && confirmNote && (
+        <span className="settings-delete-note">{confirmNote}</span>
+      )}
+    </>
   );
 
   const ctx: SectionCtx = {

@@ -130,7 +130,14 @@ export interface SectionCtx {
   bootstrap: BootstrapData;
   busy: boolean;
   run: RunFn;
-  deleteButton: (key: string, label: string, action: () => Promise<unknown>) => React.ReactNode;
+  deleteButton: (
+    key: string,
+    label: string,
+    action: () => Promise<unknown>,
+    /** Shown next to the armed 「本当に削除」 button: what the
+     *  delete takes with it, for rows whose children cascade. */
+    confirmNote?: string,
+  ) => React.ReactNode;
   defs: DefinitionSetData | null;
   setDefs: React.Dispatch<React.SetStateAction<DefinitionSetData | null>>;
   masters: MastersData | null;

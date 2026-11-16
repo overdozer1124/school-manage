@@ -22,7 +22,10 @@ export function ItemsSection({ ctx }: { ctx: SectionCtx }) {
   const [key, setKey] = useState("");
   const [valueType, setValueType] = useState("event_list");
   const [granularity, setGranularity] = useState("day");
-  const [visibility, setVisibility] = useState("guardian");
+  // A new item's visibility starts closed (DESIGN 9: 既定は
+  // 閉じる側に倒す — staff only), never at guardian (PR #78
+  // re-review). Editing an existing item shows its own value.
+  const [visibility, setVisibility] = useState("staff_only");
   const [axis, setAxis] = useState("");
   const [sort, setSort] = useState("1");
   const [isActive, setIsActive] = useState(true);
@@ -34,7 +37,7 @@ export function ItemsSection({ ctx }: { ctx: SectionCtx }) {
     setKey(itemDef?.key ?? "");
     setValueType(itemDef?.valueType ?? "event_list");
     setGranularity(itemDef?.granularity ?? "day");
-    setVisibility(itemDef?.defaultVisibility ?? "guardian");
+    setVisibility(itemDef?.defaultVisibility ?? "staff_only");
     setAxis(
       itemDef?.targetPlatformAxis
         ? `platform:${itemDef.targetPlatformAxis}`
@@ -111,17 +114,22 @@ export function ItemsSection({ ctx }: { ctx: SectionCtx }) {
             <button type="button" disabled={busy} onClick={() => openForm(itemDef)}>
               編集
             </button>{" "}
-            {deleteButton(`item:${itemDef.id}`, "削除", async () => {
-              await api.deleteItemDefinition({ id: itemDef.id });
-              setDefs((current) =>
-                current
-                  ? {
-                      ...current,
-                      itemDefinitions: current.itemDefinitions.filter((i) => i.id !== itemDef.id),
-                    }
-                  : current,
-              );
-            })}
+            {deleteButton(
+              `item:${itemDef.id}`,
+              "削除",
+              async () => {
+                await api.deleteItemDefinition({ id: itemDef.id });
+                setDefs((current) =>
+                  current
+                    ? {
+                        ...current,
+                        itemDefinitions: current.itemDefinitions.filter((i) => i.id !== itemDef.id),
+                      }
+                    : current,
+                );
+              },
+              "削除すると、この項目の日次値・行事の追加項目・凡例が全年度分すべて消えます。使うのをやめるだけなら、削除ではなく、編集で「使用中」のチェックを外して停止してください。",
+            )}
           </li>
         ))}
       </ul>
