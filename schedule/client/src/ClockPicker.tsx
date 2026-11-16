@@ -93,7 +93,13 @@ export function ClockPicker({
           onBlur={(e) => commitText(e.target.value)}
           onKeyDown={(e) => {
             if (isCommitEnter(e)) {
-              onEnter?.(commitText((e.target as HTMLInputElement).value));
+              // The commit runs whether or not a surrounding flow
+              // takes the value on: an optional-chain call would
+              // skip evaluating its argument — and the commit with
+              // it — for a consumer without onEnter (the detail
+              // modal, Issue #37).
+              const committed = commitText((e.target as HTMLInputElement).value);
+              onEnter?.(committed);
             }
           }}
         />

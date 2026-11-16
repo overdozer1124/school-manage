@@ -468,7 +468,7 @@ describe("quick-entry popover (Issue #36)", () => {
     expect(state.eventValues.get(created?.["id"] as string)?.[0]?.valueText).toBe("A4両面");
   });
 
-  it("a school set to the modal opens no popover", async () => {
+  it("a school set to the modal opens the detail modal, not the popover", async () => {
     const { calls } = await renderApp("modal");
     const eventsCell = cell(DATE, 0);
     fireEvent.click(eventsCell);
@@ -476,7 +476,10 @@ describe("quick-entry popover (Issue #36)", () => {
     fireEvent.change(input, { target: { value: "運動会" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(calls.createEvent).toHaveLength(1));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // No popover (Issue #36); the detail modal opens instead
+    // (Issue #37, DESIGN schedule 6.5).
+    expect(screen.queryByRole("dialog", { name: /クイック入力/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "行事の詳細" })).toBeInTheDocument();
   });
 
   it("a provisional entry (a placeholder name) opens no popover", async () => {

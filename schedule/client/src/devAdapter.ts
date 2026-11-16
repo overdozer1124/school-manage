@@ -232,7 +232,24 @@ export const DEV_BOOTSTRAP: BootstrapData = {
   masters: {
     staff: STAFF,
     grades: GRADES,
-    dayPatterns: [{ id: "pattern-a", code: "A", name: "A日課" }],
+    dayPatterns: [
+      {
+        id: "pattern-a",
+        code: "A",
+        name: "A日課",
+        // The pattern's lesson periods, in the platform record's
+        // shape: the detail modal's 時限指定 offers them
+        // (Issue #37).
+        periods: [
+          { period: 1, label: "1限", startsAt: "08:50", endsAt: "09:40" },
+          { period: 2, label: "2限", startsAt: "09:50", endsAt: "10:40" },
+          { period: 3, label: "3限", startsAt: "10:50", endsAt: "11:40" },
+          { period: 4, label: "4限", startsAt: "11:50", endsAt: "12:40" },
+          { period: 5, label: "5限", startsAt: "13:30", endsAt: "14:20" },
+          { period: 6, label: "6限", startsAt: "14:30", endsAt: "15:20" },
+        ],
+      },
+    ],
   },
 };
 
@@ -567,6 +584,10 @@ export function createDevApi(): ScheduleApi {
           id: String(p["id"]),
           code: String(p["code"]),
           name: String(p["name"]),
+          // The pattern's periods ride along, as the platform
+          // record carries them: the detail modal's 時限指定
+          // offers them (Issue #37).
+          periods: p["periods"],
         })),
       },
     });

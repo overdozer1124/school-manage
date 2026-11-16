@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
+import { DetailModal, type DetailTarget } from "./DetailModal";
 import { QuickPopover, type QuickPopoverTarget } from "./QuickPopover";
 import {
   absenceLineText,
@@ -292,7 +293,7 @@ function buildAbsenceRecord(
  * person's name with the classification — which is also how the
  * cell line reads.
  */
-function buildFreeTextEntry(
+export function buildFreeTextEntry(
   name: string,
   template: KindTemplateData,
   date: string,
@@ -317,7 +318,7 @@ function buildFreeTextEntry(
  * input offers it as the 「件名のみ」 mode beside the person's
  * name.
  */
-function buildTitleOnlyEntry(
+export function buildTitleOnlyEntry(
   title: string,
   template: KindTemplateData,
   date: string,
@@ -355,6 +356,31 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
   // The entry the quick-entry popover is detailing (Issue #36),
   // set by the Enter that just created it.
   const [popover, setPopover] = useState<QuickPopoverTarget | null>(null);
+  // The entry the detail modal is editing (Issue #37), set by a
+  // click on an existing entry (6.2-5), by the popover's
+  // 「詳細を開く」, or — in a school whose default input behaviour
+  // is the modal — by the Enter that just created the entry.
+  const [detail, setDetail] = useState<DetailTarget | null>(null);
+
+  const dayScheduleId =
+    typeof day.day["dayScheduleId"] === "string" ? (day.day["dayScheduleId"] as string) : null;
+
+  /** Opens the detail modal on one entry, framed by its kind
+   *  template: a provisional entry by the absence template it
+   *  stands in for, any other by the template of its kind. */
+  const openDetail = (subjectKind: "event" | "absence", record: Record<string, unknown>) => {
+    const resolved =
+      subjectKind === "event"
+        ? (provisionalTemplateOf(record, bootstrap) ??
+          templateForKind(bootstrap, "event", stringField(record, "kind") ?? "") ??
+          templates.find((t) => t.subjectKind === "event") ??
+          null)
+        : (templateForKind(bootstrap, "absence", stringField(record, "kind") ?? "") ??
+          templates.find((t) => t.subjectKind === "absence") ??
+          null);
+    if (!resolved) return;
+    setDetail({ subjectKind, template: resolved, record, date: day.date, dayScheduleId });
+  };
 
   // Only the arriving seed matters; the draft is the person's own
   // from then on, so the effect keys on the seed alone.
@@ -399,12 +425,12 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
     setNotice(null);
     try {
       // The record Enter just made, when it is a settled entry:
-      // the quick-entry popover (Issue #36) opens on it below. A
+      // the quick-entry popover (Issue #36) opens on it below, or
+      // the detail modal (Issue #37) in a school whose default
+      // input behaviour is the modal (DESIGN schedule 6.5). A
       // provisional entry — a placeholder name, a title-only trip —
-      // gets none: its person is not settled, and the popover's
-      // steps exist to detail a settled entry. A school whose
-      // default input behaviour is the modal gets none either
-      // (the modal itself is a later issue; DESIGN schedule 6.5).
+      // gets neither: its person is not settled, and the steps
+      // exist to detail a settled entry.
       let created: { subjectKind: "event" | "absence"; record: Record<string, unknown> } | null =
         null;
       if (template.subjectKind === "event") {
@@ -441,6 +467,17 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
       editor.onSaved();
       if (created && bootstrap.inputOpener === "popover") {
         setPopover({ subjectKind: created.subjectKind, template, record: created.record });
+      } else if (created && bootstrap.inputOpener === "modal") {
+        // A school whose default input behaviour is the modal
+        // (DESIGN schedule 6.5): the Enter lands on the detail
+        // modal instead of the popover.
+        setDetail({
+          subjectKind: created.subjectKind,
+          template,
+          record: created.record,
+          date: day.date,
+          dayScheduleId,
+        });
       }
     } catch (cause) {
       fail(cause);
@@ -657,7 +694,23 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
     }
     return (
       <li key={id} className="entry-line">
-        <span className="entry-text">{text}</span>
+        {editable ? (
+          // Clicking an existing entry opens the detail modal
+          // (6.2-5); the click does not also activate the cell
+          // behind it, so no new-entry input starts.
+          <button
+            type="button"
+            className="entry-text entry-open"
+            onClick={(e) => {
+              e.stopPropagation();
+              openDetail(subjectKind, record);
+            }}
+          >
+            {text}
+          </button>
+        ) : (
+          <span className="entry-text">{text}</span>
+        )}
         {changeable && (
           <span className="entry-actions">
             {editable && (
@@ -785,6 +838,26 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
           onSaved={editor.onSaved}
           onUnauthorizedError={editor.onUnauthorizedError}
           onClose={() => setPopover(null)}
+          onOpenDetail={(record) => {
+            setDetail({
+              subjectKind: popover.subjectKind,
+              template: popover.template,
+              record,
+              date: day.date,
+              dayScheduleId,
+            });
+            setPopover(null);
+          }}
+        />
+      )}
+      {detail && (
+        <DetailModal
+          target={detail}
+          bootstrap={bootstrap}
+          api={editor.api}
+          onSaved={editor.onSaved}
+          onUnauthorizedError={editor.onUnauthorizedError}
+          onClose={() => setDetail(null)}
         />
       )}
     </div>

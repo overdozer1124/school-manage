@@ -899,3 +899,142 @@ body {
   font-size: 12px;
   color: var(--danger, #b3261e);
 }
+
+/* The detail modal (Issue #37): the duty panel's shell, a form
+   inside. Labels stack over their controls; the assignee chips
+   follow the popover's people list. */
+.detail-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-label {
+  display: block;
+  font-size: 12px;
+  color: var(--dim);
+  margin-bottom: 4px;
+}
+
+.detail-modal input,
+.detail-modal select,
+.detail-modal textarea {
+  max-width: 100%;
+}
+
+.detail-modal textarea {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 14px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+
+.detail-static {
+  margin: 0;
+  font-size: 14px;
+}
+
+.detail-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.detail-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.detail-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 6px 2px 10px;
+  font-size: 13px;
+}
+
+.detail-add-person {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.detail-target-group {
+  margin-top: 4px;
+}
+
+.detail-target-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.detail-targets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 2px;
+}
+
+.detail-targets label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.detail-delete {
+  margin-left: auto;
+  color: var(--sun);
+}
+
+.detail-delete-confirm {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.detail-actions .danger-button {
+  background: var(--sun);
+  border-color: var(--sun);
+  color: #fff;
+}
+
+/* An entry line that opens the detail modal reads as the text
+   it replaces; only the hover says it can be pressed. */
+.entry-text.entry-open {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.entry-text.entry-open:hover {
+  text-decoration: underline;
+}
