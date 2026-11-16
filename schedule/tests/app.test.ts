@@ -51,6 +51,13 @@ const deps: ScheduleAppDeps = {
         return { days: [] };
       },
     },
+    // Issue #35: a write action rides the same endpoint pattern.
+    createEvent: {
+      async run(_auth: never, request: never) {
+        lastRequest = request;
+        return { record: { id: "ev-1" }, values: [] };
+      },
+    },
     waiveConflict: {
       async run(_auth: never, request: never) {
         lastRequest = request;
@@ -89,6 +96,21 @@ describe("schedule HTTP app (Issue #34)", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ school: { id: "school-1", name: "テスト学校" } });
     expect(lastRequest).toEqual({ cookie: "platform_session=tok" });
+  });
+
+  it("answers a write action call the same way, cookie injected (Issue #35)", async () => {
+    mode = "ok";
+    const res = await fetch(`${baseUrl}/test-school/schedule/api/createEvent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: "platform_session=tok" },
+      body: JSON.stringify({ event: { id: "ev-1", title: "運動会" } }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ record: { id: "ev-1" }, values: [] });
+    expect(lastRequest).toEqual({
+      event: { id: "ev-1", title: "運動会" },
+      cookie: "platform_session=tok",
+    });
   });
 
   it("answers 401 when the caller is not signed in", async () => {

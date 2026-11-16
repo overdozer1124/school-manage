@@ -6,6 +6,7 @@ import {
   platformLoginUrl,
   type ScheduleApi,
 } from "./api";
+import type { CellEditorContext } from "./cells";
 import { DutyPanel } from "./DutyPanel";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
@@ -16,8 +17,9 @@ import type { BootstrapData, RangeData } from "./types";
  * months or weeks, and read the L1 / L2 rows table. Only layouts
  * month_rows and week_rows are drawn; a view naming a Phase 2 layout
  * can be selected but shows a notice instead of a table (those
- * layouts arrive with their own issues). Input is not part of this
- * issue.
+ * layouts arrive with their own issues). Cells take direct input
+ * (Issue #35): a saved write re-reads the range, so what the table
+ * shows is always what the server holds.
  *
  * A 401 from the API sends the person to the platform's login
  * (DESIGN-AUTH-TENANCY 4.8); a 403 shows 「権限がありません」.
@@ -40,8 +42,9 @@ export function App({
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
-  // Bumped by the duty panel after a change lands, so the table
-  // (and its conflict marks) is read again.
+  // Bumped after a saved write (a cell edit, or a change landed
+  // from the duty panel), so the table (and its conflict marks)
+  // is read again.
   const [reloadTick, setReloadTick] = useState(0);
 
   const handleError = useCallback(
@@ -105,7 +108,16 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [api, bootstrap, view, anchor, handleError, reloadTick]);
+  }, [api, bootstrap, view, anchor, reloadTick, handleError]);
+
+  const editor = useMemo<CellEditorContext>(
+    () => ({
+      api,
+      onSaved: () => setReloadTick((t) => t + 1),
+      onUnauthorizedError: () => handleError(new UnauthorizedError()),
+    }),
+    [api, handleError],
+  );
 
   if (forbidden) {
     return (
@@ -185,7 +197,7 @@ export function App({
       )}
       {supported && range && (
         <>
-          <RowsTable bootstrap={bootstrap} range={range} />
+          <RowsTable bootstrap={bootstrap} range={range} editor={editor} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />
         </>
       )}

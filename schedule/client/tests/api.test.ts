@@ -25,6 +25,22 @@ describe("schedule api client", () => {
     );
   });
 
+  it("posts a write action to its endpoint with the input as the body (Issue #35)", async () => {
+    const fetchImpl = fetchReturning(200, { record: { id: "ev-1" }, values: [] });
+    const api = createScheduleApi({ fetchImpl, baseUrl: "./api" });
+    await expect(api.createEvent({ event: { id: "ev-1", title: "運動会" } })).resolves.toEqual({
+      record: { id: "ev-1" },
+      values: [],
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "./api/createEvent",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ event: { id: "ev-1", title: "運動会" } }),
+      }),
+    );
+  });
+
   it("throws UnauthorizedError on 401", async () => {
     const api = createScheduleApi({ fetchImpl: fetchReturning(401, { error: "認証が必要です" }) });
     await expect(api.getBootstrap()).rejects.toBeInstanceOf(UnauthorizedError);

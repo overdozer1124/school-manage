@@ -77,6 +77,30 @@ export interface MasterEntry {
   [key: string]: unknown;
 }
 
+/** A kind template (Issue #29), as getBootstrap returns it: the
+ *  shape of one kind of entry — which platform record it saves as,
+ *  whose name the cell's text is for person-led kinds, and how the
+ *  cell line is led (DESIGN schedule 6.3.1). */
+export interface KindTemplateData {
+  id: string;
+  key: string;
+  name: string;
+  subjectKind: "event" | "absence";
+  kindCode: string;
+  personLabel: string;
+  displaySource: "title" | "person" | "person_title";
+  steps: { kind: string; itemDefinitionId?: string | null }[];
+  itemDefinitionIds?: string[];
+  sort: number;
+}
+
+/** A daily value's target, as the write actions take it
+ *  (schedule/src/dailyValues/types.ts): a platform axis member, or a
+ *  member of one of this app's own target groups. */
+export type TargetRefData =
+  | { axis: "grade" | "class" | "special_needs_class" | "staff" | "room"; id: string }
+  | { axis: "app"; app: "schedule"; axisKey: string; id: string };
+
 /**
  * One duty definition with its rotation rule, as getBootstrap
  * returns it (Issue #38): the name labels the table's duty columns,
@@ -103,7 +127,7 @@ export interface BootstrapData {
   views: ViewDefinitionData[];
   itemDefinitions: ItemDefinitionData[];
   targetGroups: TargetGroupData[];
-  kindTemplates: unknown[];
+  kindTemplates: KindTemplateData[];
   dutyDefinitions: DutyDefinitionData[];
   masters: {
     staff: MasterEntry[];

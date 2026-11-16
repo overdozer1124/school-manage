@@ -135,6 +135,103 @@ body {
   white-space: normal;
 }
 
+/* Cell input (Issue #35): the selected cell is outlined, entries
+   carry their own small edit / delete buttons, kind chips pick the
+   entry kind, and a failed save's notice sits in the cell in the
+   holiday red — the typed text itself never leaves the input. */
+.rows-table td.cell-active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.entry-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.entry-line .entry-actions {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.entry-line .entry-actions button,
+.kind-chips .chip {
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.kind-chips {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0;
+}
+
+.kind-chips .chip.selected {
+  background: var(--accent);
+  color: var(--surface);
+  border-color: var(--accent);
+}
+
+.entry-editor input,
+.entry-line input,
+.daily-cell input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.entry-line input {
+  width: auto;
+  flex: 1;
+}
+
+.daily-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.daily-target-name {
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.daily-cell select {
+  font: inherit;
+  font-size: 13px;
+  max-width: 100%;
+}
+
+.time-range-editor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cell-notice {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--sun);
+}
+
 .undecided {
   margin-top: 20px;
 }

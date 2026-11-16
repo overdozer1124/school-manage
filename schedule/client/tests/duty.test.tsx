@@ -10,6 +10,35 @@ import type { BootstrapData, RangeData } from "../src/types";
 
 afterEach(cleanup);
 
+// The cell editors' write actions (Issue #35) are not exercised
+// by these tests; the fakes refuse them like an unused endpoint.
+const unusedWrites = {
+  createEvent: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  updateEvent: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  deleteEvent: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  createAbsence: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  updateAbsence: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  deleteAbsence: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  setDailyValue: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  deleteDailyValue: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+};
+
 // Duty marks and the duty panel (Issue #38): a conflicted
 // assignment carries the warning mark in the table, applying a
 // change from the panel clears it, and a Viewer is offered
@@ -152,6 +181,7 @@ describe("the duty panel for a Viewer", () => {
       appliedAt: null,
     };
     const api: ScheduleApi = {
+      ...unusedWrites,
       getBootstrap: async () => viewerBootstrap(),
       getRange: async () => viewerRange(),
       previewRotation: async () => [],
@@ -262,6 +292,7 @@ describe("the duty panel when applying a proposal fails", () => {
     };
     let proposed = false;
     const api: ScheduleApi = {
+      ...unusedWrites,
       getBootstrap: async () => bootstrap,
       getRange: async () => {
         throw new Error("not used");
@@ -362,6 +393,7 @@ describe("the rotation period follows the displayed range", () => {
   it("resets the draft period and drops the preview when the range changes", async () => {
     const bootstrap = structuredClone(DEV_BOOTSTRAP);
     const api: ScheduleApi = {
+      ...unusedWrites,
       getBootstrap: async () => bootstrap,
       getRange: async () => {
         throw new Error("not used");

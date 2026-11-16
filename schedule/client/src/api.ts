@@ -5,6 +5,7 @@ import type {
   DutyConflictData,
   RangeData,
   RotationPlanCellData,
+  TargetRefData,
 } from "./types";
 
 /**
@@ -42,6 +43,14 @@ export class ForbiddenError extends ApiError {
   }
 }
 
+/** The answer of a relayed create / update: the platform record as
+ *  the platform returned it, plus the additional items saved with
+ *  it (empty for creates without values, null for updates). */
+export interface RelaySaveResult {
+  record: Record<string, unknown>;
+  values: unknown[] | null;
+}
+
 export interface DutyChangeProposal {
   kind: "swap" | "substitute" | "reassign";
   assignmentAId: string;
@@ -53,6 +62,34 @@ export interface DutyChangeProposal {
 export interface ScheduleApi {
   getBootstrap(): Promise<BootstrapData>;
   getRange(input: { from: string; to: string; viewId: string }): Promise<RangeData>;
+  // Issue #35: the cell editors' writes. Events and absences are
+  // relayed to the platform, which judges them; daily values are
+  // schedule's own writes.
+  createEvent(input: { event: Record<string, unknown> }): Promise<RelaySaveResult>;
+  updateEvent(input: {
+    id: string;
+    revision: number;
+    event: Record<string, unknown>;
+  }): Promise<RelaySaveResult>;
+  deleteEvent(input: { id: string; revision: number }): Promise<{ deleted: true }>;
+  createAbsence(input: { absence: Record<string, unknown> }): Promise<RelaySaveResult>;
+  updateAbsence(input: {
+    id: string;
+    revision: number;
+    absence: Record<string, unknown>;
+  }): Promise<RelaySaveResult>;
+  deleteAbsence(input: { id: string; revision: number }): Promise<{ deleted: true }>;
+  setDailyValue(input: {
+    date: string;
+    itemDefinitionId: string;
+    target?: TargetRefData | null;
+    value: unknown;
+  }): Promise<unknown>;
+  deleteDailyValue(input: {
+    date: string;
+    itemDefinitionId: string;
+    target?: TargetRefData | null;
+  }): Promise<{ deleted: true }>;
   // The duty panel's actions (Issue #38), served by the same
   // endpoints: the rotation preview / apply of Issue #30 and the
   // change / conflict operations of Issue #31.
@@ -136,6 +173,14 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
   return {
     getBootstrap: () => call<BootstrapData>("getBootstrap", {}),
     getRange: (input) => call<RangeData>("getRange", input),
+    createEvent: (input) => call<RelaySaveResult>("createEvent", input),
+    updateEvent: (input) => call<RelaySaveResult>("updateEvent", input),
+    deleteEvent: (input) => call<{ deleted: true }>("deleteEvent", input),
+    createAbsence: (input) => call<RelaySaveResult>("createAbsence", input),
+    updateAbsence: (input) => call<RelaySaveResult>("updateAbsence", input),
+    deleteAbsence: (input) => call<{ deleted: true }>("deleteAbsence", input),
+    setDailyValue: (input) => call<unknown>("setDailyValue", input),
+    deleteDailyValue: (input) => call<{ deleted: true }>("deleteDailyValue", input),
     previewRotation: (input) => call<RotationPlanCellData[]>("previewRotation", input),
     applyRotation: (input) => call<ApplyRotationResultData>("applyRotation", input),
     proposeDutyChange: (input) => call<DutyChangeData>("proposeDutyChange", input),

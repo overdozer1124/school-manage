@@ -43,6 +43,17 @@ export interface ScheduleAppDeps {
 const ACTION_NAMES = [
   "getBootstrap",
   "getRange",
+  // Issue #35: the cell editors' writes. Events and absences go
+  // through the platform relay (Issue #29); daily values are
+  // schedule's own writes (Issue #28).
+  "createEvent",
+  "updateEvent",
+  "deleteEvent",
+  "createAbsence",
+  "updateAbsence",
+  "deleteAbsence",
+  "setDailyValue",
+  "deleteDailyValue",
   // The duty panel's actions (Issue #38): the rotation preview and
   // apply, and the change / conflict operations of Issue #31. The
   // actions themselves carry the permission checks (duty.write,

@@ -9,9 +9,12 @@ import type {
   DailyValueData,
   DutyConflictData,
   ItemDefinitionData,
+  KindTemplateData,
+  MasterEntry,
   RangeData,
   RangeDayData,
   TargetGroupData,
+  TargetRefData,
   ViewColumnData,
   ViewDefinitionData,
 } from "./types";
@@ -230,7 +233,7 @@ function targetNameOf(
 }
 
 /** The ordered target entries of an item's axis, for grouping. */
-function axisEntries(
+export function axisEntries(
   item: ItemDefinitionData,
   bootstrap: BootstrapData,
 ): { id: string; name: string }[] {
@@ -455,3 +458,167 @@ export function undecidedForMonth(range: RangeData, anchor: string): Record<stri
 }
 
 export type { RangeData };
+
+// ---- cell input (Issue #35) ----------------------------------------
+
+/**
+ * Name matching for person-led entries, ported from the prototype's
+ * server/src/logic.ts: names compare equal once every blank —
+ * half-width or full-width — is removed. The prototype compared
+ * typed text against the people list exactly this way; DESIGN
+ * schedule 6.4 keeps direct typing and list choice side by side,
+ * and a typed name that matches nobody stays free text (6.3.1).
+ */
+export function normalizeName(name: string): string {
+  return name.replace(/[\s\u3000]/g, "");
+}
+
+/** The staff member a typed name refers to, or null when no staff
+ *  name matches after blank-stripping. */
+export function matchStaffByName(name: string, staff: MasterEntry[]): MasterEntry | null {
+  const wanted = normalizeName(name);
+  if (wanted === "") return null;
+  return staff.find((s) => typeof s.name === "string" && normalizeName(s.name) === wanted) ?? null;
+}
+
+/** The kind template of one subject kind and kind code, if the
+ *  school has one (getBootstrap returns them sorted by sort). */
+export function templateForKind(
+  bootstrap: BootstrapData,
+  subjectKind: "event" | "absence",
+  kindCode: string,
+): KindTemplateData | null {
+  return (
+    bootstrap.kindTemplates.find((t) => t.subjectKind === subjectKind && t.kindCode === kindCode) ??
+    null
+  );
+}
+
+/** A staff member's display name (the id itself when unknown). */
+export function staffNameOf(bootstrap: BootstrapData, staffId: string): string {
+  return bootstrap.masters.staff.find((s) => s.id === staffId)?.name ?? staffId;
+}
+
+/**
+ * The absence kind template a provisional entry belongs to, if
+ * the record is one (PR #75 review, 推奨 3): an entry typed into
+ * a trip / leave column that is not (yet) a real absence — a
+ * placeholder name standing in for the person, or a trip known
+ * only by its title — is held as an event of kind "other" whose
+ * kindLabel names the absence template it was typed under (see
+ * buildFreeTextEntry / buildTitleOnlyEntry in cells.tsx). It is
+ * not an absence, so it never takes part in duty-conflict
+ * derivation (#31); it becomes one only when the placeholder is
+ * rewritten with a roster name.
+ */
+export function provisionalTemplateOf(
+  event: Record<string, unknown>,
+  bootstrap: BootstrapData,
+): KindTemplateData | null {
+  if (stringField(event, "kind") !== "other") return null;
+  const label = stringField(event, "kindLabel");
+  if (!label) return null;
+  return (
+    bootstrap.kindTemplates.find((t) => t.subjectKind === "absence" && t.name === label) ?? null
+  );
+}
+
+/** The free-text person name a provisional entry carries, if it
+ *  carries one (the placeholder-name shape); a title-only entry
+ *  has no free-text assignee. */
+export function freeTextNameOf(event: Record<string, unknown>): string | null {
+  const assignees = event["assignees"];
+  if (!Array.isArray(assignees)) return null;
+  for (const assignee of assignees) {
+    if (typeof assignee !== "object" || assignee === null) continue;
+    const record = assignee as Record<string, unknown>;
+    if (record["kind"] === "free_text" && typeof record["name"] === "string") {
+      return record["name"];
+    }
+  }
+  return null;
+}
+
+/** How a provisional entry reads in its own column: the
+ *  placeholder name exactly as typed — no kind suffix — or, for
+ *  a title-only entry, the title itself. */
+export function provisionalLineText(event: Record<string, unknown>): string {
+  return freeTextNameOf(event) ?? eventTitle(event);
+}
+
+/**
+ * The cell line of one absence record, led the way its kind
+ * template prescribes (DESIGN schedule 6.3.1): a leave is led by
+ * the holder's name with its classification in brackets — 「取得者名
+ * （分類）」 — and a trip shows the person's name together with the
+ * trip's purpose. A record in the restricted shape (no purpose
+ * field, the leave privacy rule) simply shows less.
+ */
+export function absenceLineText(
+  absence: Record<string, unknown>,
+  bootstrap: BootstrapData,
+): string {
+  const staffId = stringField(absence, "staffId");
+  const name = staffId ? staffNameOf(bootstrap, staffId) : "（不明）";
+  const kind = stringField(absence, "kind") ?? "";
+  const template = templateForKind(bootstrap, "absence", kind);
+  const purpose = stringField(absence, "purpose");
+  if (template?.displaySource === "person") {
+    const subdivision = stringField(absence, "subdivisionKey");
+    return subdivision ? `${name}（${subdivision}）` : name;
+  }
+  if (template?.displaySource === "person_title") {
+    return purpose ? `${name} ${purpose}` : name;
+  }
+  return purpose ?? name;
+}
+
+/** The daily value of one item for one axis target, if set. */
+export function dailyValueForTarget(
+  day: RangeDayData,
+  item: ItemDefinitionData,
+  targetId: string,
+): DailyValueData | undefined {
+  return day.dailyValues.find(
+    (v) =>
+      v.itemDefinitionId === item.id && (v.targetId === targetId || v.targetRef?.id === targetId),
+  );
+}
+
+/** The daily value of one item with no target, if set. */
+export function plainDailyValue(
+  day: RangeDayData,
+  item: ItemDefinitionData,
+): DailyValueData | undefined {
+  return day.dailyValues.find(
+    (v) => v.itemDefinitionId === item.id && v.targetId === null && v.targetRef === null,
+  );
+}
+
+/** The write-side target reference for one axis entry of an item:
+ *  an app-axis member names its target group; a platform-axis
+ *  member names the axis itself (schedule/src/dailyValues/types). */
+export function targetRefForTarget(
+  item: ItemDefinitionData,
+  bootstrap: BootstrapData,
+  targetId: string,
+): TargetRefData | null {
+  if (item.targetGroupId) {
+    const group = bootstrap.targetGroups.find((g) => g.id === item.targetGroupId);
+    if (!group) return null;
+    return { axis: "app", app: "schedule", axisKey: group.key, id: targetId };
+  }
+  if (item.targetPlatformAxis) {
+    const axis = item.targetPlatformAxis;
+    if (
+      axis === "grade" ||
+      axis === "class" ||
+      axis === "special_needs_class" ||
+      axis === "staff" ||
+      axis === "room"
+    ) {
+      return { axis, id: targetId };
+    }
+  }
+  return null;
+}
