@@ -5,6 +5,7 @@ import { createCalendarRouter, type CalendarRouterDeps } from "./calendar/routes
 import { createChangesRouter, type ChangesRouterDeps } from "./changes/routes.js";
 import { createEventsRouter, type EventsRouterDeps } from "./events/routes.js";
 import { createMastersRouter, type MastersRouterDeps } from "./masters/routes.js";
+import { createPublicReadRouter, type PublicReadRouterDeps } from "./publicRead/routes.js";
 
 /**
  * The platform HTTP app: the health check the external monitoring pings
@@ -21,6 +22,7 @@ export interface AppDeps {
   events?: EventsRouterDeps;
   calendar?: CalendarRouterDeps;
   absences?: AbsencesRouterDeps;
+  publicRead?: PublicReadRouterDeps;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -60,6 +62,13 @@ export function createApp(deps: AppDeps = {}) {
 
   if (deps.absences) {
     app.use("/platform/api/v1", createAbsencesRouter(deps.absences));
+  }
+
+  // The public-read path (Issue #82): the schedule server's
+  // session-less reads for the public viewing pages, authenticated
+  // by the service credential rather than a member's session.
+  if (deps.publicRead) {
+    app.use("/platform/api/v1", createPublicReadRouter(deps.publicRead));
   }
 
   return app;

@@ -22,6 +22,7 @@ import {
 } from "../platformClient.js";
 import { computeRange } from "../range/actions.js";
 import type { RangeResult } from "../range/types.js";
+import type { PublicPlatformClient } from "./publicPlatform.js";
 import {
   createPublicViewTokenInputSchema,
   getPublicBootstrapInputSchema,
@@ -35,8 +36,6 @@ import {
 type Db = Parameters<typeof tenantDb>[0];
 
 const ME_PATH = "/platform/api/v1/auth/me";
-const HOLIDAYS_PATH = "/platform/api/v1/calendar/holidays";
-const MASTERS_PATH = "/platform/api/v1/masters";
 
 /**
  * The public token itself (Issue #41): 32 random bytes, base64url.
@@ -213,17 +212,6 @@ async function resolvePublicView(db: Db, token: string, slug: string): Promise<P
   return { schoolId: row.schoolId, view };
 }
 
-/** The `items` of a platform list answer, as opaque records (the
- *  same reading as the range actions). */
-function itemsOf(body: unknown): Record<string, unknown>[] {
-  const items = (body as { items?: unknown } | null)?.items;
-  if (!Array.isArray(items)) return [];
-  return items.filter(
-    (item): item is Record<string, unknown> =>
-      typeof item === "object" && item !== null && !Array.isArray(item),
-  );
-}
-
 /** The school year (April to March) a YYYY-MM-DD date belongs to. */
 function schoolYearOf(date: string): number {
   const year = Number(date.slice(0, 4));
@@ -259,6 +247,20 @@ function publicEvent(event: Record<string, unknown>, audience: Audience): Record
   return body;
 }
 
+/**
+ * One daily / additional-item value as the public side may see it:
+ * the value itself, without the person it names (valuePersonId)
+ * and without the creator / updater stamps — a person's id is
+ * staff information wherever it appears (DESIGN-AUTH-TENANCY 4.5),
+ * the same rule publicEvent applies to the events themselves.
+ */
+function publicValue<T extends { valuePersonId: string | null }>(value: T): T {
+  const body = { ...value, valuePersonId: null } as Record<string, unknown>;
+  delete body["createdBy"];
+  delete body["updatedBy"];
+  return body as T;
+}
+
 /** A range bundle with everything staff-shaped taken out of it. */
 function publicRange(range: RangeResult, audience: Audience): RangeResult {
   return {
@@ -270,16 +272,14 @@ function publicRange(range: RangeResult, audience: Audience): RangeResult {
       // computeRange never fetches them, and the public bundle
       // states that by construction rather than by that promise.
       absences: [],
-      dailyValues: day.dailyValues.map((value) => ({ ...value, valuePersonId: null })),
+      dailyValues: day.dailyValues.map((value) => publicValue(value)),
       dutyAssignments: [],
     })),
     undecided: range.undecided.map((group) => ({
       ...group,
       events: group.events.map((event) => publicEvent(event, audience)),
     })),
-    // An additional item answered by a person names that person
-    // by id; the public bundle carries the value without the id.
-    eventValues: range.eventValues.map((value) => ({ ...value, valuePersonId: null })),
+    eventValues: range.eventValues.map((value) => publicValue(value)),
     conflicts: [],
   };
 }
@@ -299,29 +299,29 @@ function publicRange(range: RangeResult, audience: Audience): RangeResult {
  * asked with the audience named, and applies its own filter
  * (DESIGN-INTEGRATION 6), and this layer shapes what comes back
  * once more (publicRange above). The platform reads carry no user
- * cookie: there is no user. What the platform does with a
- * session-less read is the platform's side of the boundary; this
- * layer's contract is the PlatformApiClient it is given.
+ * cookie: there is no user. They go through the platform's
+ * public-read path instead (Issue #82), authenticated by the
+ * service credential the PublicPlatformClient presents, with the
+ * school and the audience named on every request — the school's
+ * name included, so nothing here asks /auth/me for it.
  */
-export function createPublicActions(db: Db, platformClient: PlatformApiClient) {
+export function createPublicActions(db: Db, publicClient: PublicPlatformClient) {
   return defineActions({
     getPublicBootstrap: publicAction(async ({ request }) => {
       const input = getPublicBootstrapInputSchema.parse(request);
       const { schoolId, view } = await resolvePublicView(db, input.token, input.slug);
-      const rank = viewAudienceRank(view.audience as Audience);
+      const audience = view.audience as Audience;
+      const rank = viewAudienceRank(audience);
       const year = schoolYearOf(todayText());
-      const holidayRange = `from=${year}-04-01&to=${year + 1}-03-31`;
-      const [me, holidays, grades, definitionSet] = await Promise.all([
-        unwrapPlatformResult(await platformClient.getJson(ME_PATH, "")),
-        itemsOf(
-          unwrapPlatformResult(
-            await platformClient.getJson(`${HOLIDAYS_PATH}?${holidayRange}`, ""),
-          ),
-        ),
-        itemsOf(unwrapPlatformResult(await platformClient.getJson(`${MASTERS_PATH}/grades`, ""))),
+      const [school, holidays, grades, definitionSet] = await Promise.all([
+        publicClient.getSchool(schoolId, audience),
+        publicClient.getHolidays(schoolId, audience, {
+          from: `${year}-04-01`,
+          to: `${year + 1}-03-31`,
+        }),
+        publicClient.getGrades(schoolId, audience),
         definitionsStore.getDefinitionSet(db, schoolId),
       ]);
-      const school = (me as { school?: { name?: unknown } } | null)?.school;
 
       // The view's own filter, applied exactly as computeRange
       // applies it (Issue #32's pure functions): the columns the
@@ -360,7 +360,7 @@ export function createPublicActions(db: Db, platformClient: PlatformApiClient) {
       return {
         school: {
           id: schoolId,
-          name: typeof school?.name === "string" ? school.name : null,
+          name: typeof school["name"] === "string" ? school["name"] : null,
         },
         view: { ...view, columns },
         itemDefinitions,
@@ -377,13 +377,25 @@ export function createPublicActions(db: Db, platformClient: PlatformApiClient) {
     getPublicRange: publicAction(async ({ request }) => {
       const input = getPublicRangeInputSchema.parse(request);
       const { schoolId, view } = await resolvePublicView(db, input.token, input.slug);
-      const range = await computeRange(db, platformClient, undefined, schoolId, {
-        from: input.from,
-        to: input.to,
-        viewId: view.id,
-        cookie: "",
-      });
-      return publicRange(range, view.audience as Audience);
+      const audience = view.audience as Audience;
+      // The range computation reads the platform through the
+      // public-read adapter bound to this token's school and the
+      // view's audience; the cookie it threads through is inert
+      // there (there is no user), and a non-staff view never asks
+      // it for absences at all.
+      const range = await computeRange(
+        db,
+        publicClient.asPlatformClient(schoolId, audience),
+        undefined,
+        schoolId,
+        {
+          from: input.from,
+          to: input.to,
+          viewId: view.id,
+          cookie: "",
+        },
+      );
+      return publicRange(range, audience);
     }),
   });
 }

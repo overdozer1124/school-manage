@@ -7,6 +7,7 @@ import { createMasterRelayActions } from "./masters/actions.js";
 import type { PlatformApiClient } from "./platformClient.js";
 import { createPublicationActions } from "./publications/actions.js";
 import { createPublicActions, createPublicTokenAdminActions } from "./publicViews/actions.js";
+import type { PublicPlatformClient } from "./publicViews/publicPlatform.js";
 import { createRangeActions } from "./range/actions.js";
 import { createViewActions } from "./views/actions.js";
 
@@ -66,6 +67,6 @@ export function createScheduleActions(db: Db, platformClient: PlatformApiClient,
  * their own route, without verifying a caller. They are built once
  * (not per request): there is no caller's cookie to bind.
  */
-export function createSchedulePublicActions(db: Db, platformClient: PlatformApiClient) {
-  return createPublicActions(db, platformClient);
+export function createSchedulePublicActions(db: Db, publicClient: PublicPlatformClient) {
+  return createPublicActions(db, publicClient);
 }

@@ -4,6 +4,7 @@ import { createScheduleActions, createSchedulePublicActions } from "./compositio
 import { loadScheduleConfig } from "./config.js";
 import { createDbFromEnv } from "./db/runtime.js";
 import { createPlatformApiClient } from "./platformClient.js";
+import { createPublicPlatformClient } from "./publicViews/publicPlatform.js";
 
 // Loading the configuration comes first on purpose: without
 // SCHEDULE_DATABASE_URL or PLATFORM_BASE_URL it throws, and the
@@ -13,6 +14,13 @@ const config = loadScheduleConfig();
 
 const db = createDbFromEnv();
 const platformClient = createPlatformApiClient({ baseUrl: config.platformBaseUrl });
+// The public viewing reads (Issue #82) go through the platform's
+// public-read path with the service credential, not the member
+// client: there is no user's cookie to forward on that path.
+const publicPlatformClient = createPublicPlatformClient({
+  baseUrl: config.platformBaseUrl,
+  serviceToken: config.publicReadServiceToken,
+});
 const auth = await createScheduleAuth({
   platformBaseUrl: config.platformBaseUrl,
   devAuth: config.devAuth,
@@ -25,7 +33,7 @@ createApp({
   createActions: (cookie) => createScheduleActions(db, platformClient, cookie),
   // The public viewing actions (Issue #41) are built once: there
   // is no caller's cookie to bind — the token is the credential.
-  createPublicActions: () => createSchedulePublicActions(db, platformClient),
+  createPublicActions: () => createSchedulePublicActions(db, publicPlatformClient),
 }).listen(config.port, () => {
   console.log(`schedule listening on port ${config.port}`);
 });

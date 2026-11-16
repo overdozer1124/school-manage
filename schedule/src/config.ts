@@ -12,6 +12,15 @@ export interface ScheduleConfig {
   databaseUrl: string;
   /** True when the development auth adapter is explicitly enabled. */
   devAuth: boolean;
+  /**
+   * The service credential for the platform's public-read path
+   * (PUBLIC_READ_SERVICE_TOKEN), presented on the public viewing
+   * reads (Issue #82). Optional here: when it is unset the platform
+   * refuses those reads (401) and the public pages cannot open —
+   * the credential is the platform's to require, and this server
+   * never invents a default for it.
+   */
+  publicReadServiceToken: string | undefined;
 }
 
 export function loadScheduleConfig(env: NodeJS.ProcessEnv = process.env): ScheduleConfig {
@@ -33,5 +42,6 @@ export function loadScheduleConfig(env: NodeJS.ProcessEnv = process.env): Schedu
     platformBaseUrl: platformBaseUrl.replace(/\/+$/, ""),
     databaseUrl,
     devAuth: env.PLATFORM_DEV_AUTH === "1",
+    publicReadServiceToken: env.PUBLIC_READ_SERVICE_TOKEN || undefined,
   };
 }
