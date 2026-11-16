@@ -2,22 +2,27 @@ import { useEffect, useState } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
 import { buildFreeTextEntry, buildTitleOnlyEntry } from "./cells";
-import { ClockPicker } from "./ClockPicker";
 import { eventValueInputOf } from "./QuickPopover";
+import { freeTextNameOf, normalizeName, provisionalLineText, schoolYearOf } from "./lib";
+import type { BootstrapData, EventValueData, TargetRefData } from "./types";
+import { AbsenceForm } from "./detail/AbsenceForm";
+import { EventForm } from "./detail/EventForm";
 import {
-  freeTextNameOf,
-  matchStaffByName,
-  normalizeName,
-  provisionalLineText,
-  schoolYearOf,
-} from "./lib";
-import type {
-  BootstrapData,
-  EventValueData,
-  ItemDefinitionData,
-  KindTemplateData,
-  TargetRefData,
-} from "./types";
+  ItemFields,
+  draftOfRow,
+  draftValueOf,
+  itemDefsOf,
+  type ItemDraft,
+} from "./detail/ItemFields";
+import { ProvisionalForm } from "./detail/ProvisionalForm";
+import {
+  assigneesOf,
+  revisionOf,
+  stringField,
+  type Assignee,
+  type DetailTarget,
+} from "./detail/shared";
+import { calendarTimeOf, periodChoicesOf, timeStateOf, type TimeState } from "./detail/TimeEditor";
 
 /**
  * The detail modal (Issue #37; DESIGN schedule 6.3 / 6.3.1): an
@@ -50,320 +55,13 @@ import type {
  * and its record's shape: rewriting it here never turns it into
  * an absence — that conversion stays with the cell's inline
  * re-edit, where the roster match is the whole act (PR #75).
+ *
+ * This file holds the modal's state and its save; the three
+ * forms (absence / provisional / event), the time editor and the
+ * additional items live under detail/, one file each.
  */
 
-export interface DetailTarget {
-  subjectKind: "event" | "absence";
-  template: KindTemplateData;
-  record: Record<string, unknown>;
-  /** The day the entry was opened from: its day pattern's
-   *  periods are the 時限指定 choices. */
-  date: string;
-  dayScheduleId: string | null;
-}
-
-function stringField(record: Record<string, unknown>, key: string): string | null {
-  const value = record[key];
-  return typeof value === "string" && value !== "" ? value : null;
-}
-
-function revisionOf(record: Record<string, unknown>): number | null {
-  const value = record["revision"];
-  return typeof value === "number" ? value : null;
-}
-
-type Assignee =
-  | { kind: "staff"; staffId: string; role: string | null }
-  | { kind: "free_text"; name: string; role: string | null };
-
-function assigneesOf(record: Record<string, unknown>): Assignee[] {
-  const list = record["assignees"];
-  if (!Array.isArray(list)) return [];
-  const out: Assignee[] = [];
-  for (const entry of list) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const a = entry as Record<string, unknown>;
-    const role = typeof a["role"] === "string" ? (a["role"] as string) : null;
-    if (a["kind"] === "staff" && typeof a["staffId"] === "string") {
-      out.push({ kind: "staff", staffId: a["staffId"] as string, role });
-    } else if (a["kind"] === "free_text" && typeof a["name"] === "string") {
-      out.push({ kind: "free_text", name: a["name"] as string, role });
-    }
-  }
-  return out;
-}
-
-// ---- the time editor ------------------------------------------------
-
-type TimeMode = "all_day" | "am" | "pm" | "clock" | "periods";
-
-interface TimeState {
-  mode: TimeMode;
-  start: string;
-  end: string;
-  periodFrom: string;
-  periodTo: string;
-}
-
-function timeStateOf(record: Record<string, unknown>): TimeState {
-  const base: TimeState = { mode: "all_day", start: "", end: "", periodFrom: "", periodTo: "" };
-  const time = record["time"];
-  if (typeof time !== "object" || time === null) return base;
-  const t = time as Record<string, unknown>;
-  if (t["kind"] === "half_day") return { ...base, mode: t["half"] === "pm" ? "pm" : "am" };
-  if (t["kind"] === "clock") {
-    return {
-      ...base,
-      mode: "clock",
-      start: typeof t["startsAt"] === "string" ? (t["startsAt"] as string) : "",
-      end: typeof t["endsAt"] === "string" ? (t["endsAt"] as string) : "",
-    };
-  }
-  if (t["kind"] === "periods") {
-    return {
-      ...base,
-      mode: "periods",
-      periodFrom: typeof t["from"] === "number" ? String(t["from"]) : "",
-      periodTo: typeof t["to"] === "number" ? String(t["to"]) : "",
-    };
-  }
-  return base;
-}
-
-/** The CalendarTime a time state stands for. An event that
- *  carried no time at all keeps carrying none while the mode
- *  stays 終日 — opening the modal must not rewrite a record the
- *  person did not touch. */
-function calendarTimeOf(state: TimeState, wasNull: boolean): Record<string, unknown> | null {
-  switch (state.mode) {
-    case "all_day":
-      return wasNull ? null : { kind: "all_day" };
-    case "am":
-    case "pm":
-      return { kind: "half_day", half: state.mode };
-    case "clock":
-      return { kind: "clock", startsAt: state.start, endsAt: state.end || null };
-    case "periods":
-      return { kind: "periods", from: Number(state.periodFrom), to: Number(state.periodTo) };
-  }
-}
-
-interface PeriodChoice {
-  period: number;
-  label: string;
-}
-
-/** The lesson periods of the day's pattern (0 is the morning
- *  band and 99 the after-school band; a CalendarTime names lesson
- *  periods, as the prototype's modal offered them). */
-function periodChoicesOf(bootstrap: BootstrapData, dayScheduleId: string | null): PeriodChoice[] {
-  const pattern =
-    bootstrap.masters.dayPatterns.find((p) => p.id === dayScheduleId) ??
-    bootstrap.masters.dayPatterns[0];
-  const periods = pattern?.["periods"];
-  if (!Array.isArray(periods)) return [];
-  const out: PeriodChoice[] = [];
-  for (const entry of periods) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const p = entry as Record<string, unknown>;
-    if (typeof p["period"] !== "number" || p["period"] < 1 || p["period"] > 90) continue;
-    out.push({
-      period: p["period"] as number,
-      label: typeof p["label"] === "string" ? (p["label"] as string) : `${p["period"]}限`,
-    });
-  }
-  return out.sort((a, b) => a.period - b.period);
-}
-
-function TimeEditor({
-  label,
-  state,
-  periods,
-  onChange,
-}: {
-  label: string;
-  state: TimeState;
-  periods: PeriodChoice[];
-  onChange(state: TimeState): void;
-}) {
-  const modes: { mode: TimeMode; text: string }[] = [
-    { mode: "all_day", text: "終日" },
-    { mode: "am", text: "午前" },
-    { mode: "pm", text: "午後" },
-    { mode: "clock", text: "時刻指定" },
-    ...(periods.length > 0 || state.mode === "periods"
-      ? [{ mode: "periods" as TimeMode, text: "時限指定" }]
-      : []),
-  ];
-  return (
-    <div>
-      <span className="detail-label">{label}</span>
-      <div className="kind-chips" role="group" aria-label={label}>
-        {modes.map((m) => (
-          <button
-            key={m.mode}
-            type="button"
-            aria-pressed={state.mode === m.mode}
-            className={state.mode === m.mode ? "chip selected" : "chip"}
-            onClick={() => onChange({ ...state, mode: m.mode })}
-          >
-            {m.text}
-          </button>
-        ))}
-      </div>
-      {state.mode === "clock" && (
-        <div className="detail-grid">
-          <ClockPicker
-            label="開始"
-            value={state.start}
-            onChange={(v) => onChange({ ...state, start: v })}
-          />
-          <ClockPicker
-            label="終了"
-            value={state.end}
-            onChange={(v) => onChange({ ...state, end: v })}
-          />
-        </div>
-      )}
-      {state.mode === "periods" && (
-        <div className="detail-grid">
-          <label>
-            <span className="detail-label">開始時限</span>
-            <select
-              aria-label="開始時限"
-              value={state.periodFrom}
-              onChange={(e) => onChange({ ...state, periodFrom: e.target.value })}
-            >
-              <option value="">選ぶ</option>
-              {periods.map((p) => (
-                <option key={p.period} value={p.period}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span className="detail-label">終了時限</span>
-            <select
-              aria-label="終了時限"
-              value={state.periodTo}
-              onChange={(e) => onChange({ ...state, periodTo: e.target.value })}
-            >
-              <option value="">選ぶ</option>
-              {periods.map((p) => (
-                <option key={p.period} value={p.period}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---- the additional items (event_values) ----------------------------
-
-interface ItemDraft {
-  text: string;
-  end: string;
-}
-
-function draftOfRow(row: EventValueData, itemDef: ItemDefinitionData): ItemDraft {
-  switch (itemDef.valueType) {
-    case "symbol":
-    case "code":
-      return {
-        text: itemDef.options.find((o) => o.id === row.valueOptionId)?.code ?? "",
-        end: "",
-      };
-    case "time":
-      return { text: row.valueTime ?? "", end: "" };
-    case "time_range":
-      return { text: row.valueTime ?? "", end: row.valueTimeEnd ?? "" };
-    case "number":
-      return { text: row.valueNumber !== null ? String(row.valueNumber) : "", end: "" };
-    case "boolean":
-      return { text: row.valueBoolean === null ? "" : String(row.valueBoolean), end: "" };
-    case "person":
-      return { text: row.valuePersonId ?? "", end: "" };
-    default:
-      return { text: row.valueText ?? "", end: "" };
-  }
-}
-
-/** The value a draft sends, or undefined when the draft is not a
- *  value the item can hold (the caller names the item and stops). */
-function draftValueOf(itemDef: ItemDefinitionData, draft: ItemDraft): unknown {
-  const text = draft.text.trim();
-  switch (itemDef.valueType) {
-    case "text":
-      return text === "" ? null : text;
-    case "symbol":
-    case "code":
-    case "person":
-      return text === "" ? null : text;
-    case "time":
-      return text === "" ? null : isValidTimeString(text) ? text : undefined;
-    case "time_range": {
-      const end = draft.end.trim();
-      if (text === "" && end === "") return null;
-      if (!isValidTimeString(text) || !isValidTimeString(end)) return undefined;
-      if (timeToMinutes(end) <= timeToMinutes(text)) return undefined;
-      return { startsAt: text, endsAt: end };
-    }
-    case "number": {
-      if (text === "") return null;
-      const parsed = Number(text);
-      return Number.isFinite(parsed) ? parsed : undefined;
-    }
-    case "boolean":
-      return text === "" ? null : text === "true";
-    default:
-      return text === "" ? null : text;
-  }
-}
-
-/** The item definitions a template binds as its additional items:
- *  its 追加項目 (itemDefinitionIds) first, then any item step's
- *  binding not already among them. Types this form cannot edit
- *  (persons lists, per-target time maps) are left out of the form;
- *  their stored rows are still carried through a save untouched. */
-const EDITABLE_VALUE_TYPES = [
-  "text",
-  "symbol",
-  "code",
-  "time",
-  "time_range",
-  "number",
-  "boolean",
-  "person",
-];
-
-function itemDefsOf(template: KindTemplateData, bootstrap: BootstrapData): ItemDefinitionData[] {
-  const ids: string[] = [];
-  for (const id of template.itemDefinitionIds ?? []) if (!ids.includes(id)) ids.push(id);
-  for (const step of template.steps) {
-    if (step.kind === "item" && step.itemDefinitionId && !ids.includes(step.itemDefinitionId)) {
-      ids.push(step.itemDefinitionId);
-    }
-  }
-  return ids
-    .map((id) => bootstrap.itemDefinitions.find((i) => i.id === id))
-    .filter(
-      (d): d is ItemDefinitionData => d !== undefined && EDITABLE_VALUE_TYPES.includes(d.valueType),
-    );
-}
-
-// ---- the modal --------------------------------------------------------
-
-const VISIBILITY_OPTIONS: { value: string; label: string }[] = [
-  { value: "staff_only", label: "職員のみ" },
-  { value: "guardian", label: "保護者" },
-  { value: "student", label: "生徒" },
-  { value: "public", label: "公開" },
-];
+export type { DetailTarget } from "./detail/shared";
 
 export function DetailModal({
   target,
@@ -430,8 +128,6 @@ export function DetailModal({
     return found?.name ?? stringField(target.record, "locationText") ?? "";
   });
   const [assignees, setAssignees] = useState<Assignee[]>(() => assigneesOf(target.record));
-  const [addPersonId, setAddPersonId] = useState("");
-  const [addFreeName, setAddFreeName] = useState("");
   const [visibility, setVisibility] = useState(
     () => stringField(target.record, "visibility") ?? "staff_only",
   );
@@ -520,6 +216,22 @@ export function DetailModal({
     };
     // The form opens on one record; the read happens once.
   }, []);
+
+  // Esc closes the modal wherever the focus sits, as with the
+  // quick-entry popover (PR #77): the dialog's own key handler
+  // covers focus inside the modal, and this document-level one
+  // covers the rest — a click on an empty part of the modal can
+  // move focus out to the cell behind it (mousedown moves focus
+  // even though the click itself is stopped), and Esc must still
+  // close the modal from there. An Esc that cancels an IME
+  // conversion is the conversion's, not the modal's.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.isComposing) onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   const periods = periodChoicesOf(bootstrap, target.dayScheduleId);
   const heading = `${template.name}の詳細`;
@@ -797,18 +509,6 @@ export function DetailModal({
     }
   };
 
-  const addAssignee = (assignee: Assignee) => {
-    setAssignees((current) => {
-      if (
-        assignee.kind === "staff" &&
-        current.some((a) => a.kind === "staff" && a.staffId === assignee.staffId)
-      ) {
-        return current;
-      }
-      return [...current, assignee];
-    });
-  };
-
   const certaintyField = (
     <div>
       <span className="detail-label">確定度</span>
@@ -827,100 +527,17 @@ export function DetailModal({
     </div>
   );
 
-  const itemSection = itemDefs.length > 0 && (
-    <>
-      {itemDefs.map((def) => {
-        const draft = valueDrafts[def.id] ?? { text: "", end: "" };
-        const setDraft = (next: ItemDraft) =>
-          setValueDrafts((current) => ({ ...current, [def.id]: next }));
-        return (
-          <div key={def.id}>
-            <label className="detail-label" htmlFor={`detail-item-${def.id}`}>
-              {def.name}
-            </label>
-            {def.valueType === "symbol" || def.valueType === "code" ? (
-              <select
-                id={`detail-item-${def.id}`}
-                aria-label={def.name}
-                value={draft.text}
-                disabled={valueRows === null}
-                onChange={(e) => setDraft({ ...draft, text: e.target.value })}
-              >
-                <option value="">（なし）</option>
-                {def.options.map((o) => (
-                  <option key={o.id} value={o.code}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            ) : def.valueType === "boolean" ? (
-              <select
-                id={`detail-item-${def.id}`}
-                aria-label={def.name}
-                value={draft.text}
-                disabled={valueRows === null}
-                onChange={(e) => setDraft({ ...draft, text: e.target.value })}
-              >
-                <option value="">（なし）</option>
-                <option value="true">○</option>
-                <option value="false">×</option>
-              </select>
-            ) : def.valueType === "person" ? (
-              <select
-                id={`detail-item-${def.id}`}
-                aria-label={def.name}
-                value={draft.text}
-                disabled={valueRows === null}
-                onChange={(e) => setDraft({ ...draft, text: e.target.value })}
-              >
-                <option value="">（なし）</option>
-                {bootstrap.masters.staff
-                  .filter((s) => typeof s.name === "string")
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-              </select>
-            ) : def.valueType === "time_range" ? (
-              <span className="time-range-editor">
-                <input
-                  id={`detail-item-${def.id}`}
-                  aria-label={`${def.name} 開始`}
-                  value={draft.text}
-                  placeholder="HH:MM"
-                  disabled={valueRows === null}
-                  onChange={(e) => setDraft({ ...draft, text: e.target.value })}
-                />
-                <span>〜</span>
-                <input
-                  aria-label={`${def.name} 終了`}
-                  value={draft.end}
-                  placeholder="HH:MM"
-                  disabled={valueRows === null}
-                  onChange={(e) => setDraft({ ...draft, end: e.target.value })}
-                />
-              </span>
-            ) : (
-              <input
-                id={`detail-item-${def.id}`}
-                aria-label={def.name}
-                value={draft.text}
-                inputMode={def.valueType === "number" ? "decimal" : undefined}
-                placeholder={def.valueType === "time" ? "HH:MM" : undefined}
-                disabled={valueRows === null}
-                onChange={(e) => setDraft({ ...draft, text: e.target.value })}
-              />
-            )}
-          </div>
-        );
-      })}
-      {valuesFailed && (
-        <p className="cell-notice" role="alert">
-          追加項目を読み込めませんでした。追加項目は保存されません
-        </p>
-      )}
-    </>
+  const itemFields = (
+    <ItemFields
+      defs={itemDefs}
+      drafts={valueDrafts}
+      onDraftChange={(defId, draft) =>
+        setValueDrafts((current) => ({ ...current, [defId]: draft }))
+      }
+      valuesLoaded={valueRows !== null}
+      valuesFailed={valuesFailed}
+      bootstrap={bootstrap}
+    />
   );
 
   return (
@@ -940,6 +557,7 @@ export function DetailModal({
         role="dialog"
         aria-modal="true"
         aria-label={heading}
+        tabIndex={-1}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.stopPropagation();
@@ -956,439 +574,87 @@ export function DetailModal({
 
         <div className="detail-form">
           {subjectKind === "absence" ? (
-            <>
-              <div>
-                <label className="detail-label" htmlFor="detail-staff">
-                  {template.personLabel}
-                </label>
-                <select
-                  id="detail-staff"
-                  aria-label={template.personLabel}
-                  value={staffId}
-                  autoFocus
-                  onChange={(e) => setStaffId(e.target.value)}
-                >
-                  <option value="">選んでください</option>
-                  {bootstrap.masters.staff
-                    .filter((s) => typeof s.name === "string")
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-              {!isLeaveAbsence && (
-                <div>
-                  <label className="detail-label" htmlFor="detail-purpose">
-                    用務
-                  </label>
-                  <input
-                    id="detail-purpose"
-                    aria-label="用務"
-                    value={purpose}
-                    onChange={(e) => setPurpose(e.target.value)}
-                  />
-                </div>
-              )}
-              {subdivisionOptions.length > 0 && (
-                <div>
-                  <label className="detail-label" htmlFor="detail-subdivision">
-                    {isLeaveAbsence ? "休暇分類" : `${template.name}分類`}
-                  </label>
-                  <select
-                    id="detail-subdivision"
-                    aria-label={isLeaveAbsence ? "休暇分類" : `${template.name}分類`}
-                    value={subdivisionKey}
-                    onChange={(e) => setSubdivisionKey(e.target.value)}
-                  >
-                    <option value="">（なし）</option>
-                    {subdivisionOptions.map((o) => (
-                      <option key={o.id} value={o.key}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              <div className="detail-grid">
-                <label>
-                  <span className="detail-label">開始日</span>
-                  <input
-                    type="date"
-                    aria-label="開始日"
-                    value={fromDate}
-                    onChange={(e) => setFromDate(e.target.value)}
-                  />
-                </label>
-                <label>
-                  <span className="detail-label">終了日</span>
-                  <input
-                    type="date"
-                    aria-label="終了日"
-                    value={toDate}
-                    onChange={(e) => setToDate(e.target.value)}
-                  />
-                </label>
-              </div>
-              <TimeEditor label="時間帯" state={time} periods={periods} onChange={setTime} />
-              {itemSection}
-              <div>
-                <label className="detail-label" htmlFor="detail-note">
-                  メモ
-                </label>
-                <textarea
-                  id="detail-note"
-                  aria-label="メモ"
-                  rows={2}
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                />
-              </div>
-              {certaintyField}
-            </>
+            <AbsenceForm
+              template={template}
+              bootstrap={bootstrap}
+              staffId={staffId}
+              onStaffIdChange={setStaffId}
+              isLeaveAbsence={isLeaveAbsence}
+              purpose={purpose}
+              onPurposeChange={setPurpose}
+              subdivisionOptions={subdivisionOptions}
+              subdivisionKey={subdivisionKey}
+              onSubdivisionKeyChange={setSubdivisionKey}
+              fromDate={fromDate}
+              onFromDateChange={setFromDate}
+              toDate={toDate}
+              onToDateChange={setToDate}
+              time={time}
+              periods={periods}
+              onTimeChange={setTime}
+              itemFields={itemFields}
+              note={note}
+              onNoteChange={setNote}
+              certaintyField={certaintyField}
+            />
           ) : provisional ? (
-            <>
-              <p className="detail-note">
-                仮の予定です。{template.personLabel}
-                が決まったら、セルの再編集で名簿の名前に書き換えると不在として登録されます。
-              </p>
-              <div>
-                <label className="detail-label" htmlFor="detail-provisional-text">
-                  {freeTextNameOf(record) !== null ? `${template.personLabel}の名前` : "件名"}
-                </label>
-                <input
-                  id="detail-provisional-text"
-                  aria-label={
-                    freeTextNameOf(record) !== null ? `${template.personLabel}の名前` : "件名"
-                  }
-                  value={provisionalText}
-                  autoFocus
-                  onChange={(e) => setProvisionalText(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="detail-label" htmlFor="detail-provisional-date">
-                  日付
-                </label>
-                <input
-                  id="detail-provisional-date"
-                  type="date"
-                  aria-label="日付"
-                  value={provisionalDate}
-                  onChange={(e) => setProvisionalDate(e.target.value)}
-                />
-              </div>
-              <TimeEditor label="時間" state={time} periods={periods} onChange={setTime} />
-              {itemSection}
-              <div>
-                <label className="detail-label" htmlFor="detail-description">
-                  メモ
-                </label>
-                <textarea
-                  id="detail-description"
-                  aria-label="メモ"
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-              <div className="detail-grid">
-                <div>
-                  <span className="detail-label">公開範囲</span>
-                  <select
-                    aria-label="公開範囲"
-                    value={visibility}
-                    onChange={(e) => setVisibility(e.target.value)}
-                  >
-                    {VISIBILITY_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {certaintyField}
-              </div>
-            </>
+            <ProvisionalForm
+              template={provisional}
+              textLabel={freeTextNameOf(record) !== null ? `${template.personLabel}の名前` : "件名"}
+              text={provisionalText}
+              onTextChange={setProvisionalText}
+              date={provisionalDate}
+              onDateChange={setProvisionalDate}
+              time={time}
+              periods={periods}
+              onTimeChange={setTime}
+              itemFields={itemFields}
+              description={description}
+              onDescriptionChange={setDescription}
+              visibility={visibility}
+              onVisibilityChange={setVisibility}
+              certaintyField={certaintyField}
+            />
           ) : (
-            <>
-              <div>
-                <label className="detail-label" htmlFor="detail-title">
-                  件名
-                </label>
-                <input
-                  id="detail-title"
-                  aria-label="件名"
-                  value={title}
-                  autoFocus
-                  onChange={(e) => setTitle(e.target.value)}
-                />
-              </div>
-              <div className="detail-grid">
-                <div>
-                  <label className="detail-label" htmlFor="detail-kind">
-                    種別
-                  </label>
-                  <select
-                    id="detail-kind"
-                    aria-label="種別"
-                    value={kindKey}
-                    onChange={(e) => setKindKey(e.target.value)}
-                  >
-                    {eventTemplates.map((t) => (
-                      <option key={t.key} value={t.key}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="detail-label" htmlFor="detail-precision">
-                    日付の確定度
-                  </label>
-                  <select
-                    id="detail-precision"
-                    aria-label="日付の確定度"
-                    value={precision}
-                    onChange={(e) => setPrecision(e.target.value)}
-                  >
-                    <option value="day">日が確定</option>
-                    <option value="range">期間</option>
-                    <option value="month">月のみ確定</option>
-                    <option value="undecided">時期未定</option>
-                  </select>
-                </div>
-              </div>
-              {precision === "day" && (
-                <div>
-                  <label className="detail-label" htmlFor="detail-date">
-                    日付
-                  </label>
-                  <input
-                    id="detail-date"
-                    type="date"
-                    aria-label="日付"
-                    value={startsOn}
-                    onChange={(e) => {
-                      setStartsOn(e.target.value);
-                      setEndsOn(e.target.value);
-                    }}
-                  />
-                </div>
-              )}
-              {precision === "range" && (
-                <div className="detail-grid">
-                  <label>
-                    <span className="detail-label">開始日</span>
-                    <input
-                      type="date"
-                      aria-label="開始日"
-                      value={startsOn}
-                      onChange={(e) => setStartsOn(e.target.value)}
-                    />
-                  </label>
-                  <label>
-                    <span className="detail-label">終了日</span>
-                    <input
-                      type="date"
-                      aria-label="終了日"
-                      value={endsOn}
-                      onChange={(e) => setEndsOn(e.target.value)}
-                    />
-                  </label>
-                </div>
-              )}
-              {precision === "month" && (
-                <div>
-                  <label className="detail-label" htmlFor="detail-month">
-                    対象月
-                  </label>
-                  <input
-                    id="detail-month"
-                    type="month"
-                    aria-label="対象月"
-                    value={monthVal}
-                    onChange={(e) => setMonthVal(e.target.value)}
-                  />
-                </div>
-              )}
-              {precision === "undecided" && (
-                <div>
-                  <label className="detail-label" htmlFor="detail-year">
-                    年度（時期未定）
-                  </label>
-                  <input
-                    id="detail-year"
-                    aria-label="年度"
-                    inputMode="numeric"
-                    value={schoolYear}
-                    onChange={(e) => setSchoolYear(e.target.value)}
-                  />
-                </div>
-              )}
-              {precision !== "month" && precision !== "undecided" && (
-                <TimeEditor label="時間" state={time} periods={periods} onChange={setTime} />
-              )}
-              <div>
-                <label className="detail-label" htmlFor="detail-location">
-                  場所（登録済みの場所から選択、または直接入力）
-                </label>
-                <input
-                  id="detail-location"
-                  aria-label="場所"
-                  value={locationText}
-                  list="detail-location-list"
-                  onChange={(e) => setLocationText(e.target.value)}
-                />
-                <datalist id="detail-location-list">
-                  {bootstrap.locations
-                    .filter((l) => l.isActive)
-                    .map((l) => (
-                      <option key={l.id} value={l.name} />
-                    ))}
-                </datalist>
-                {locationText.trim() !== "" &&
-                  !bootstrap.locations.some(
-                    (l) => normalizeName(l.name) === normalizeName(locationText.trim()),
-                  ) && (
-                    <p className="detail-note">
-                      未登録の場所です。テキストとして保存されます（§6.4）。
-                    </p>
-                  )}
-              </div>
-              <div>
-                <span className="detail-label">{personLabel}（複数選択可・直接入力可）</span>
-                <div className="detail-people">
-                  {assignees.map((a, i) => (
-                    <span key={i} className="detail-person">
-                      {a.kind === "staff"
-                        ? (bootstrap.masters.staff.find((s) => s.id === a.staffId)?.name ??
-                          a.staffId)
-                        : a.name}
-                      <button
-                        type="button"
-                        aria-label={`${a.kind === "staff" ? a.staffId : a.name}を外す`}
-                        onClick={() => setAssignees(assignees.filter((_, j) => j !== i))}
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                  {assignees.length === 0 && <span className="detail-note">未設定</span>}
-                </div>
-                <div className="detail-add-person">
-                  <select
-                    aria-label={`登録済みの人から${personLabel}を選ぶ`}
-                    value={addPersonId}
-                    onChange={(e) => setAddPersonId(e.target.value)}
-                  >
-                    <option value="">登録済みの人から選ぶ</option>
-                    {bootstrap.masters.staff
-                      .filter((s) => typeof s.name === "string")
-                      .map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name}
-                        </option>
-                      ))}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (addPersonId === "") return;
-                      addAssignee({
-                        kind: "staff",
-                        staffId: addPersonId,
-                        role: personLabel,
-                      });
-                      setAddPersonId("");
-                    }}
-                  >
-                    追加
-                  </button>
-                  <input
-                    aria-label={`${personLabel}を直接入力`}
-                    placeholder="直接入力（氏名）"
-                    value={addFreeName}
-                    onChange={(e) => setAddFreeName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        const name = addFreeName.trim();
-                        if (!name) return;
-                        const matched = matchStaffByName(name, bootstrap.masters.staff);
-                        addAssignee(
-                          matched
-                            ? { kind: "staff", staffId: matched.id, role: personLabel }
-                            : { kind: "free_text", name, role: personLabel },
-                        );
-                        setAddFreeName("");
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-              {offeredTargets.length > 0 && (
-                <div>
-                  <span className="detail-label">対象</span>
-                  {[...new Set(offeredTargets.map((o) => o.group))].map((group) => (
-                    <div key={group} className="detail-target-group">
-                      <span className="detail-target-name">{group}</span>
-                      <div className="detail-targets">
-                        {offeredTargets
-                          .filter((o) => o.group === group)
-                          .map((o) => (
-                            <label key={o.key}>
-                              <input
-                                type="checkbox"
-                                checked={targetKeys.includes(o.key)}
-                                onChange={(e) =>
-                                  setTargetKeys(
-                                    e.target.checked
-                                      ? [...targetKeys, o.key]
-                                      : targetKeys.filter((k) => k !== o.key),
-                                  )
-                                }
-                              />{" "}
-                              {o.label}
-                            </label>
-                          ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {itemSection}
-              <div>
-                <label className="detail-label" htmlFor="detail-description">
-                  メモ
-                </label>
-                <textarea
-                  id="detail-description"
-                  aria-label="メモ"
-                  rows={2}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-              <div className="detail-grid">
-                <div>
-                  <span className="detail-label">公開範囲</span>
-                  <select
-                    aria-label="公開範囲"
-                    value={visibility}
-                    onChange={(e) => setVisibility(e.target.value)}
-                  >
-                    {VISIBILITY_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {certaintyField}
-              </div>
-            </>
+            <EventForm
+              bootstrap={bootstrap}
+              title={title}
+              onTitleChange={setTitle}
+              eventTemplates={eventTemplates}
+              kindKey={kindKey}
+              onKindKeyChange={setKindKey}
+              precision={precision}
+              onPrecisionChange={setPrecision}
+              startsOn={startsOn}
+              onStartsOnChange={setStartsOn}
+              endsOn={endsOn}
+              onEndsOnChange={setEndsOn}
+              onDayDateChange={(value) => {
+                setStartsOn(value);
+                setEndsOn(value);
+              }}
+              monthVal={monthVal}
+              onMonthValChange={setMonthVal}
+              schoolYear={schoolYear}
+              onSchoolYearChange={setSchoolYear}
+              time={time}
+              periods={periods}
+              onTimeChange={setTime}
+              locationText={locationText}
+              onLocationTextChange={setLocationText}
+              personLabel={personLabel}
+              assignees={assignees}
+              setAssignees={setAssignees}
+              offeredTargets={offeredTargets}
+              targetKeys={targetKeys}
+              setTargetKeys={setTargetKeys}
+              itemFields={itemFields}
+              description={description}
+              onDescriptionChange={setDescription}
+              visibility={visibility}
+              onVisibilityChange={setVisibility}
+              certaintyField={certaintyField}
+            />
           )}
         </div>
 

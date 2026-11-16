@@ -309,6 +309,9 @@ function makeFakeApi(bootstrap: BootstrapData) {
     confirmAbsence: unused,
     getPendingEvents: unused,
     confirmEvent: unused,
+    createPublication: unused,
+    getPublications: unused,
+    getPublication: unused,
   };
   return { api, calls, state };
 }

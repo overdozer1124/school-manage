@@ -428,4 +428,28 @@ describe("the detail modal (Issue #37)", () => {
     expect(record["description"]).toBe("担当は未定");
     expect(within(cellFor("2026-11-19", 7)).getByText("生徒指導担当")).toBeInTheDocument();
   }, 20000);
+
+  it("Esc closes the modal even when focus has moved to the cell behind it", async () => {
+    const api = createDevApi();
+    await renderApp(api);
+    const cell = cellFor("2026-11-06", 0);
+    fireEvent.click(entryButton(cell, "授業参観"));
+    const dialog = await screen.findByRole("dialog", { name: "行事の詳細" });
+    // The dialog itself can hold focus, so a click on an empty
+    // part of it can land on the dialog rather than behind it.
+    expect(dialog).toHaveAttribute("tabindex", "-1");
+    // Click the heading — an empty part of the modal. In a real
+    // browser the mousedown moves focus out of the modal to the
+    // focusable cell behind it (the click itself is stopped, the
+    // focus move is not); jsdom does not move focus on mousedown,
+    // so put it there by hand.
+    fireEvent.click(within(dialog).getByRole("heading", { name: "行事の詳細" }));
+    cell.focus();
+    expect(document.activeElement).toBe(cell);
+    // Esc lands on the cell, outside the dialog: the modal must
+    // still close — it listens at the document level, like the
+    // quick-entry popover (PR #77).
+    fireEvent.keyDown(cell, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  }, 20000);
 });

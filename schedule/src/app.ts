@@ -112,6 +112,11 @@ const ACTION_NAMES = [
   "createMaster",
   "updateMaster",
   "deleteMaster",
+  // Issue #40: issuing a month table as a versioned document,
+  // the version list, and the issued document itself.
+  "createPublication",
+  "getPublications",
+  "getPublication",
 ] as const;
 
 export function createApp(deps?: ScheduleAppDeps) {

@@ -320,6 +320,39 @@ export type MasterKindData = keyof MastersData;
  *  record stays opaque; the panel reads the fields it draws. */
 export type PendingRecord = Record<string, unknown>;
 
+/** The print settings one publication was generated with
+ *  (Issue #40, DESIGN schedule 9.1): paper, orientation, margin
+ *  and the font-size step. The view definition carries the
+ *  school's defaults; a publication records the effective set. */
+export interface PrintSettingsData {
+  paper: "A4" | "A3";
+  orientation: "landscape" | "portrait";
+  marginMm: number;
+  fontScale: "small" | "medium" | "large";
+}
+
+/** One issued version of a view's month table (Issue #40), as
+ *  the version list returns it: the record, without the document.
+ *  An issued publication is never rewritten — to hand out a
+ *  corrected table, a new version is issued. */
+export interface PublicationData {
+  id: string;
+  viewDefinitionId: string;
+  targetMonth: string;
+  versionLabel: string;
+  publishedAt: string;
+  publishedBy: string;
+  snapshotNote: string | null;
+  printSettings: PrintSettingsData;
+  documentFormat: string;
+}
+
+/** One issued publication with its document: the stored,
+ *  self-contained print HTML, returned byte for byte as issued. */
+export interface PublicationDocumentData extends PublicationData {
+  documentHtml: string;
+}
+
 export interface RangeData {
   view: ViewDefinitionData;
   from: string;

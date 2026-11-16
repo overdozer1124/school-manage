@@ -13,6 +13,15 @@ afterEach(cleanup);
 // The cell editors' write actions (Issue #35) are not exercised
 // by these tests; the fakes refuse them like an unused endpoint.
 const unusedWrites = {
+  createPublication: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  getPublications: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  getPublication: async (): Promise<never> => {
+    throw new Error("not used");
+  },
   createEvent: async (): Promise<never> => {
     throw new Error("not used");
   },
