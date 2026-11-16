@@ -378,6 +378,86 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
     getDutyChangeCandidates: async (): Promise<never> => {
       throw new Error("not used");
     },
+    // The settings screens and the confirmation queue (Issue
+    // #39) are not exercised by these tests either.
+    getDefinitions: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    upsertItemDefinition: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteItemDefinition: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    upsertTargetGroup: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteTargetGroup: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    upsertTarget: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteTarget: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    upsertLocation: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteLocation: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    saveSettings: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    applyPreset: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    upsertViewDefinition: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteViewDefinition: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    upsertDutyDefinition: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteDutyDefinition: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    upsertKindTemplate: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteKindTemplate: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    applyDefaultKindTemplates: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getMasters: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    createMaster: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    updateMaster: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteMaster: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getPendingAbsences: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    confirmAbsence: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    getPendingEvents: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    confirmEvent: async (): Promise<never> => {
+      throw new Error("not used");
+    },
   };
   return { api, calls, control, state };
 }

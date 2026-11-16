@@ -3,11 +3,16 @@ import type { RelaySaveResult, ScheduleApi } from "./api";
 import type {
   BootstrapData,
   DailyValueData,
+  DefinitionSetData,
   DutyAssignmentData,
   DutyChangeData,
   DutyConflictData,
+  ItemDefinitionData,
+  LocationData,
+  MastersData,
   RangeData,
   RangeDayData,
+  SchoolSettingsData,
   ViewDefinitionData,
 } from "./types";
 
@@ -408,6 +413,20 @@ function fixtureAbsences(): Record<string, unknown>[] {
       purpose: "県教研大会",
       subdivisionKey: null,
     },
+    {
+      // A tentative trip, so the confirmation queue (Issue #39)
+      // has an absence to show next to the provisional events.
+      ...base,
+      id: "abs-3",
+      staffId: "teacher-3",
+      fromDate: "2026-11-24",
+      toDate: "2026-11-24",
+      kind: "business_trip",
+      purpose: "市教研研修会",
+      subdivisionKey: null,
+      certainty: "tentative",
+      confirmedBy: null,
+    },
   ];
 }
 
@@ -452,6 +471,85 @@ function fixtureProvisionals(): Record<string, unknown>[] {
 }
 
 export function createDevApi(): ScheduleApi {
+  // The definition state of this adapter instance (Issue #39):
+  // the settings screens edit these copies, and getBootstrap /
+  // getRange read them back, so a saved setting is what the
+  // table behind the panel is drawn from — the same contract as
+  // the duty state below. The shared masters are kept in their
+  // full platform record shape; the bootstrap's slimmer masters
+  // are derived from them on every read.
+  const boot = structuredClone(DEV_BOOTSTRAP);
+  const locationsState: LocationData[] = [
+    { id: "loc-gym", name: "体育館", kind: "屋内", sort: 1, isActive: true },
+    { id: "loc-ground", name: "運動場", kind: "屋外", sort: 2, isActive: true },
+    { id: "loc-music", name: "音楽室", kind: "特別教室", sort: 3, isActive: true },
+  ];
+  let settingsState: SchoolSettingsData = {
+    inputOpener: "popover",
+    dutyConflictAbsenceKinds: null,
+  };
+  const mastersState: MastersData = {
+    staff: STAFF.map((s, i) => ({
+      id: s.id,
+      name: s.name,
+      shortName: s.name.replace("先生", ""),
+      sortOrder: i + 1,
+      active: true,
+      personId: i === 0 ? "dev-user" : null,
+      revision: 1,
+    })),
+    grade: GRADES.map((g, i) => ({
+      id: g.id,
+      name: g.name,
+      sortOrder: i + 1,
+      stage: null,
+      revision: 1,
+    })),
+    class: [
+      { id: "class-1-1", gradeId: "grade-1", name: "1組", sortOrder: 1, revision: 1 },
+      { id: "class-1-2", gradeId: "grade-1", name: "2組", sortOrder: 2, revision: 1 },
+    ],
+    special_needs_class: [{ id: "snc-1", name: "ひまわり", sortOrder: 1, revision: 1 }],
+    day_pattern: [
+      {
+        id: "pattern-a",
+        code: "A",
+        name: "A日課",
+        kind: "normal",
+        periods: [
+          { period: 1, label: "1限", startsAt: "08:45", endsAt: "09:35" },
+          { period: 2, label: "2限", startsAt: "09:45", endsAt: "10:35" },
+          { period: 3, label: "3限", startsAt: "10:45", endsAt: "11:35" },
+          { period: 4, label: "4限", startsAt: "11:45", endsAt: "12:35" },
+          { period: 5, label: "5限", startsAt: "13:30", endsAt: "14:20" },
+          { period: 6, label: "6限", startsAt: "14:30", endsAt: "15:20" },
+        ],
+        revision: 1,
+      },
+    ],
+  };
+
+  const bootstrapNow = (): BootstrapData =>
+    structuredClone({
+      ...boot,
+      masters: {
+        staff: mastersState.staff.map((s) => ({ id: String(s["id"]), name: String(s["name"]) })),
+        grades: mastersState.grade.map((g) => ({ id: String(g["id"]), name: String(g["name"]) })),
+        dayPatterns: mastersState.day_pattern.map((p) => ({
+          id: String(p["id"]),
+          code: String(p["code"]),
+          name: String(p["name"]),
+        })),
+      },
+    });
+
+  const definitionSetNow = (): DefinitionSetData => ({
+    settings: structuredClone(settingsState),
+    targetGroups: structuredClone(boot.targetGroups),
+    itemDefinitions: structuredClone(boot.itemDefinitions),
+    locations: structuredClone(locationsState),
+  });
+
   // The duty state of this adapter instance (Issue #38): the
   // rotation's assignments by date, the recorded changes, and the
   // waived (assignment, absence) pairs. Panel operations rewrite
@@ -646,12 +744,11 @@ export function createDevApi(): ScheduleApi {
   };
   return {
     async getBootstrap() {
-      return structuredClone(DEV_BOOTSTRAP);
+      return bootstrapNow();
     },
     async getRange(input) {
       const view =
-        DEV_BOOTSTRAP.views.find((v) => v.id === input.viewId) ??
-        (DEV_BOOTSTRAP.views[0] as ViewDefinitionData);
+        boot.views.find((v) => v.id === input.viewId) ?? (boot.views[0] as ViewDefinitionData);
       const dates = datesInRange(input.from, input.to);
       valueSeq = 0;
       return {
@@ -754,7 +851,7 @@ export function createDevApi(): ScheduleApi {
       return { deleted: true as const };
     },
     async setDailyValue(input) {
-      const itemDef = DEV_BOOTSTRAP.itemDefinitions.find((i) => i.id === input.itemDefinitionId);
+      const itemDef = boot.itemDefinitions.find((i) => i.id === input.itemDefinitionId);
       if (!itemDef) throw new Error(`item definition not found: ${input.itemDefinitionId}`);
       const values = storedDaily(input.date);
       const targetKey = input.target?.id ?? null;
@@ -925,6 +1022,310 @@ export function createDevApi(): ScheduleApi {
         if (id !== a.personId && !absent.has(id)) ordered.push(id);
       }
       return ordered;
+    },
+
+    // --- Issue #39: the settings screens and the queue ---------
+
+    async getDefinitions() {
+      return definitionSetNow();
+    },
+
+    async upsertItemDefinition(input) {
+      const saved: ItemDefinitionData = {
+        id: String(input["id"]),
+        key: String(input["key"]),
+        name: String(input["name"]),
+        valueType: String(input["valueType"]),
+        targetGroupId: (input["targetGroupId"] as string | null) ?? null,
+        targetPlatformAxis: (input["targetPlatformAxis"] as string | null) ?? null,
+        granularity: String(input["granularity"]),
+        defaultVisibility: String(input["defaultVisibility"]),
+        isActive: input["isActive"] !== false,
+        sort: typeof input["sort"] === "number" ? (input["sort"] as number) : 0,
+        options: ((input["options"] as ItemDefinitionData["options"] | undefined) ?? []).map(
+          (o) => ({ ...o }),
+        ),
+      };
+      boot.itemDefinitions = [...boot.itemDefinitions.filter((i) => i.id !== saved.id), saved].sort(
+        (a, b) => a.sort - b.sort,
+      );
+      return structuredClone(saved);
+    },
+
+    async deleteItemDefinition(input) {
+      boot.itemDefinitions = boot.itemDefinitions.filter((i) => i.id !== input.id);
+      return { deleted: true as const };
+    },
+
+    async upsertTargetGroup(input) {
+      const existing = boot.targetGroups.find((g) => g.id === input["id"]);
+      const saved = {
+        id: String(input["id"]),
+        key: String(input["key"]),
+        name: String(input["name"]),
+        sort: typeof input["sort"] === "number" ? (input["sort"] as number) : 0,
+        targets: existing?.targets ?? [],
+      };
+      boot.targetGroups = [...boot.targetGroups.filter((g) => g.id !== saved.id), saved].sort(
+        (a, b) => a.sort - b.sort,
+      );
+      return structuredClone(saved);
+    },
+
+    async deleteTargetGroup(input) {
+      boot.targetGroups = boot.targetGroups.filter((g) => g.id !== input.id);
+      return { deleted: true as const };
+    },
+
+    async upsertTarget(input) {
+      const group = boot.targetGroups.find((g) => g.id === input["targetGroupId"]);
+      if (!group) throw new Error(`target group not found: ${String(input["targetGroupId"])}`);
+      const saved = {
+        id: String(input["id"]),
+        targetGroupId: group.id,
+        code: (input["code"] as string | null) ?? null,
+        name: String(input["name"]),
+        sort: typeof input["sort"] === "number" ? (input["sort"] as number) : 0,
+      };
+      group.targets = [...group.targets.filter((t) => t.id !== saved.id), saved].sort(
+        (a, b) => a.sort - b.sort,
+      );
+      return structuredClone(saved);
+    },
+
+    async deleteTarget(input) {
+      for (const group of boot.targetGroups) {
+        group.targets = group.targets.filter((t) => t.id !== input.id);
+      }
+      return { deleted: true as const };
+    },
+
+    async upsertLocation(input) {
+      const saved: LocationData = {
+        id: String(input["id"]),
+        name: String(input["name"]),
+        kind: (input["kind"] as string | null) ?? null,
+        sort: typeof input["sort"] === "number" ? (input["sort"] as number) : 0,
+        isActive: input["isActive"] !== false,
+      };
+      const index = locationsState.findIndex((l) => l.id === saved.id);
+      if (index >= 0) locationsState[index] = saved;
+      else locationsState.push(saved);
+      locationsState.sort((a, b) => a.sort - b.sort);
+      return structuredClone(saved);
+    },
+
+    async deleteLocation(input) {
+      const index = locationsState.findIndex((l) => l.id === input.id);
+      if (index >= 0) locationsState.splice(index, 1);
+      return { deleted: true as const };
+    },
+
+    async saveSettings(input) {
+      settingsState = {
+        inputOpener: input.inputOpener,
+        dutyConflictAbsenceKinds:
+          input.dutyConflictAbsenceKinds !== undefined
+            ? input.dutyConflictAbsenceKinds
+            : settingsState.dutyConflictAbsenceKinds,
+      };
+      return structuredClone(settingsState);
+    },
+
+    async applyPreset(input) {
+      // The fixture school already carries the elementary-bus
+      // preset, so — as on the real store, which skips keys the
+      // school already has — the elementary presets change
+      // nothing here. The junior-high preset adds its signature
+      // club item and axis when they are missing.
+      if (input.preset === "junior_high") {
+        if (!boot.targetGroups.some((g) => g.key === "club")) {
+          boot.targetGroups.push({
+            id: "tg-club",
+            key: "club",
+            name: "部活動",
+            sort: 2,
+            targets: [
+              {
+                id: "tgt-club-baseball",
+                targetGroupId: "tg-club",
+                code: null,
+                name: "野球部",
+                sort: 1,
+              },
+              {
+                id: "tgt-club-soccer",
+                targetGroupId: "tg-club",
+                code: null,
+                name: "サッカー部",
+                sort: 2,
+              },
+              {
+                id: "tgt-club-brass",
+                targetGroupId: "tg-club",
+                code: null,
+                name: "吹奏楽部",
+                sort: 3,
+              },
+            ],
+          });
+        }
+        if (!boot.itemDefinitions.some((i) => i.key === "club_day")) {
+          boot.itemDefinitions.push(
+            item("item-club-day", "club_day", "部活動", "symbol", 9, {
+              targetGroupId: "tg-club",
+              defaultVisibility: "student",
+              options: [
+                { id: "opt-club-yes", code: "yes", label: "○", sort: 1 },
+                { id: "opt-club-no", code: "no", label: "×", sort: 2 },
+              ],
+            }),
+          );
+        }
+      }
+      return definitionSetNow();
+    },
+
+    async upsertViewDefinition(input) {
+      const viewId = String(input["id"]);
+      const saved: ViewDefinitionData = {
+        id: viewId,
+        name: String(input["name"]),
+        layout: String(input["layout"]),
+        layoutParams: (input["layoutParams"] as Record<string, unknown> | null) ?? null,
+        audience: String(input["audience"]),
+        periodScope: String(input["periodScope"]),
+        printSettings: (input["printSettings"] as Record<string, unknown> | null) ?? null,
+        columns: ((input["columns"] as ViewDefinitionData["columns"] | undefined) ?? []).map(
+          (c) => ({ ...c, viewDefinitionId: viewId }),
+        ),
+      };
+      boot.views = [...boot.views.filter((v) => v.id !== saved.id), saved];
+      return structuredClone(saved);
+    },
+
+    async deleteViewDefinition(input) {
+      boot.views = boot.views.filter((v) => v.id !== input.id);
+      return { deleted: true as const };
+    },
+
+    async upsertDutyDefinition(input) {
+      const saved = {
+        id: String(input["id"]),
+        name: String(input["name"]),
+        granularity: String(input["granularity"]),
+        applicablePeriod: String(input["applicablePeriod"]),
+        applicableStartsOn: (input["applicableStartsOn"] as string | null) ?? null,
+        applicableEndsOn: (input["applicableEndsOn"] as string | null) ?? null,
+        targetGroupId: (input["targetGroupId"] as string | null) ?? null,
+        sort: typeof input["sort"] === "number" ? (input["sort"] as number) : 0,
+        rotation:
+          (input["rotation"] as { personIds: string[]; changeWeekdays: string[] | null } | null) ??
+          null,
+      };
+      boot.dutyDefinitions = [...boot.dutyDefinitions.filter((d) => d.id !== saved.id), saved].sort(
+        (a, b) => a.sort - b.sort,
+      );
+      return structuredClone(saved);
+    },
+
+    async deleteDutyDefinition(input) {
+      boot.dutyDefinitions = boot.dutyDefinitions.filter((d) => d.id !== input.id);
+      return { deleted: true as const };
+    },
+
+    async upsertKindTemplate(input) {
+      const saved = {
+        id: String(input["id"]),
+        key: String(input["key"]),
+        name: String(input["name"]),
+        subjectKind: String(input["subjectKind"]) as "event" | "absence",
+        kindCode: String(input["kindCode"]),
+        personLabel: String(input["personLabel"]),
+        displaySource: String(input["displaySource"]) as "title" | "person" | "person_title",
+        steps: ((input["steps"] as { kind: string; itemDefinitionId?: string | null }[]) ?? []).map(
+          (s) => ({ kind: s.kind, itemDefinitionId: s.itemDefinitionId ?? null }),
+        ),
+        itemDefinitionIds: (input["itemDefinitionIds"] as string[] | undefined) ?? [],
+        sort: typeof input["sort"] === "number" ? (input["sort"] as number) : 0,
+      };
+      boot.kindTemplates = [...boot.kindTemplates.filter((t) => t.id !== saved.id), saved].sort(
+        (a, b) => a.sort - b.sort,
+      );
+      return structuredClone(saved);
+    },
+
+    async deleteKindTemplate(input) {
+      boot.kindTemplates = boot.kindTemplates.filter((t) => t.id !== input.id);
+      return { deleted: true as const };
+    },
+
+    async applyDefaultKindTemplates() {
+      return structuredClone(boot.kindTemplates);
+    },
+
+    async getMasters() {
+      return structuredClone(mastersState);
+    },
+
+    async createMaster(input) {
+      const record = { ...input.record, revision: 1 };
+      (mastersState[input.kind] as Record<string, unknown>[]).push(record);
+      return structuredClone(record);
+    },
+
+    async updateMaster(input) {
+      const list = mastersState[input.kind] as Record<string, unknown>[];
+      const index = list.findIndex((r) => r["id"] === input.id);
+      if (index < 0) throw new Error(`master not found: ${input.id}`);
+      const record = { ...input.record, revision: (list[index]?.["revision"] as number) + 1 };
+      list[index] = record;
+      return structuredClone(record);
+    },
+
+    async deleteMaster(input) {
+      const list = mastersState[input.kind] as Record<string, unknown>[];
+      const index = list.findIndex((r) => r["id"] === input.id);
+      if (index >= 0) list.splice(index, 1);
+      return { deleted: true as const };
+    },
+
+    async getPendingAbsences() {
+      return {
+        items: structuredClone(state.absences.filter((a) => a["certainty"] === "tentative")),
+      };
+    },
+
+    async confirmAbsence(input) {
+      const absence = state.absences.find((a) => a["id"] === input.id);
+      if (!absence) throw new Error(`absence not found: ${input.id}`);
+      absence["certainty"] = "confirmed";
+      absence["confirmedBy"] = "dev-user";
+      absence["revision"] = (absence["revision"] as number) + 1;
+      return structuredClone(absence);
+    },
+
+    async getPendingEvents(input) {
+      return {
+        items: structuredClone(
+          state.events.filter(
+            (e) =>
+              e["certainty"] === "tentative" &&
+              typeof e["startsOn"] === "string" &&
+              typeof e["endsOn"] === "string" &&
+              (e["startsOn"] as string) <= input.to &&
+              input.from <= (e["endsOn"] as string),
+          ),
+        ),
+      };
+    },
+
+    async confirmEvent(input) {
+      const event = state.events.find((e) => e["id"] === input.id);
+      if (!event) throw new Error(`event not found: ${input.id}`);
+      event["certainty"] = "confirmed";
+      event["revision"] = (event["revision"] as number) + 1;
+      return structuredClone(event);
     },
   };
 }

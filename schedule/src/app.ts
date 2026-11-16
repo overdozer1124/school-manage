@@ -67,6 +67,48 @@ const ACTION_NAMES = [
   "getDutyConflicts",
   "waiveConflict",
   "getDutyChangeCandidates",
+  // Issue #39: the settings screens and the confirmation queue.
+  // The definition actions (Issue #27), the view actions (Issue
+  // #32), the duty definition edits (Issue #30), the kind
+  // templates and the pending / confirm relays (Issue #29, with
+  // the event half added in #39) and the shared-master relay all
+  // existed as action layers; this issue serves them over HTTP.
+  "getDefinitions",
+  "upsertTargetGroup",
+  "deleteTargetGroup",
+  "upsertTarget",
+  "deleteTarget",
+  "upsertItemDefinition",
+  "deleteItemDefinition",
+  "upsertLocation",
+  "deleteLocation",
+  "saveSettings",
+  "applyPreset",
+  "getViews",
+  "upsertViewDefinition",
+  "deleteViewDefinition",
+  "updateViewColumnWidth",
+  "getDutyDefinitions",
+  "upsertDutyDefinition",
+  "deleteDutyDefinition",
+  "getDutyAssignments",
+  "setDutyAssignment",
+  "moveEvent",
+  "moveAbsence",
+  "getEventValues",
+  "setEventValues",
+  "getKindTemplates",
+  "upsertKindTemplate",
+  "deleteKindTemplate",
+  "applyDefaultKindTemplates",
+  "getPendingAbsences",
+  "confirmAbsence",
+  "getPendingEvents",
+  "confirmEvent",
+  "getMasters",
+  "createMaster",
+  "updateMaster",
+  "deleteMaster",
 ] as const;
 
 export function createApp(deps?: ScheduleAppDeps) {

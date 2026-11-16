@@ -9,7 +9,9 @@ import {
 import type { CellEditorContext } from "./cells";
 import { DutyPanel } from "./DutyPanel";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
+import { PendingPanel } from "./PendingPanel";
 import { RowsTable, UndecidedSection } from "./RowsTable";
+import { SettingsPanel } from "./SettingsPanel";
 import type { BootstrapData, RangeData } from "./types";
 
 /**
@@ -42,10 +44,16 @@ export function App({
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [pendingOpen, setPendingOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Bumped after a saved write (a cell edit, or a change landed
   // from the duty panel), so the table (and its conflict marks)
   // is read again.
   const [reloadTick, setReloadTick] = useState(0);
+  // Bumped when the settings screens save a definition, so the
+  // bootstrap (views, items, duties) is read again and the table
+  // is drawn from the new definitions (Issue #39).
+  const [bootstrapTick, setBootstrapTick] = useState(0);
 
   const handleError = useCallback(
     (cause: unknown) => {
@@ -82,7 +90,7 @@ export function App({
     return () => {
       cancelled = true;
     };
-  }, [api, handleError]);
+  }, [api, handleError, bootstrapTick]);
 
   const view = useMemo(
     () => bootstrap?.views.find((v) => v.id === viewId) ?? null,
@@ -189,6 +197,21 @@ export function App({
               {range.conflicts.length > 0 && `（警告${range.conflicts.length}件）`}
             </button>
           )}
+          {/* The confirmation queue is the editors' work list
+              (DESIGN-AUTH-TENANCY 4.6): offered to Editor and
+              Admin, never to Viewer. The settings screens are
+              Admin's (definition.write). Both are display
+              choices here — the server checks every action. */}
+          {(bootstrap.role === "Editor" || bootstrap.role === "Admin") && (
+            <button type="button" onClick={() => setPendingOpen(true)}>
+              確認待ち
+            </button>
+          )}
+          {bootstrap.permissions.includes("definition.write") && (
+            <button type="button" onClick={() => setSettingsOpen(true)}>
+              設定
+            </button>
+          )}
         </div>
       </header>
 
@@ -209,6 +232,25 @@ export function App({
           api={api}
           onClose={() => setPanelOpen(false)}
           onChanged={() => setReloadTick((t) => t + 1)}
+        />
+      )}
+      {pendingOpen && (
+        <PendingPanel
+          bootstrap={bootstrap}
+          api={api}
+          onClose={() => setPendingOpen(false)}
+          onChanged={() => setReloadTick((t) => t + 1)}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsPanel
+          bootstrap={bootstrap}
+          api={api}
+          onClose={() => setSettingsOpen(false)}
+          onChanged={() => {
+            setBootstrapTick((t) => t + 1);
+            setReloadTick((t) => t + 1);
+          }}
         />
       )}
     </main>

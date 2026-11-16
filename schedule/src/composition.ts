@@ -1,9 +1,12 @@
 import { createDailyValueActions } from "./dailyValues/actions.js";
+import { createDefinitionActions } from "./definitions/actions.js";
 import { createDutyActions } from "./duties/actions.js";
 import { createHttpDutyPlatformSource } from "./duties/platformSource.js";
 import { createEventActions } from "./events/actions.js";
+import { createMasterRelayActions } from "./masters/actions.js";
 import type { PlatformApiClient } from "./platformClient.js";
 import { createRangeActions } from "./range/actions.js";
+import { createViewActions } from "./views/actions.js";
 
 /** The database handle type, taken from createRangeActions so this
  *  module never imports the raw client (kept behind src/db by lint). */
@@ -18,6 +21,12 @@ type Db = Parameters<typeof createRangeActions>[0];
  * point (index.ts) builds the per-request actions through here,
  * and the wiring test builds them the same way, so the paths the
  * duty source asks for are the paths the server actually uses.
+ *
+ * Issue #39 adds the settings screens' actions: the definition
+ * actions of Issue #27 and the view actions of Issue #32 (both
+ * existed as action layers but were never assembled here), the
+ * shared-master relay, and — inside the event actions — the
+ * confirmation queue's reads and confirms.
  */
 export function createScheduleActions(db: Db, platformClient: PlatformApiClient, cookie: string) {
   const dutyPlatform = createHttpDutyPlatformSource(platformClient, cookie);
@@ -30,5 +39,9 @@ export function createScheduleActions(db: Db, platformClient: PlatformApiClient,
     // layer and the wiring tests exercise one assembly.
     ...createEventActions(db, platformClient),
     ...createDailyValueActions(db),
+    // Issue #39: the settings screens and the confirmation queue.
+    ...createDefinitionActions(db),
+    ...createViewActions(db),
+    ...createMasterRelayActions(platformClient),
   };
 }

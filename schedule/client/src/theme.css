@@ -507,3 +507,73 @@ body {
     max-width: none;
   }
 }
+
+/* The settings screens (Issue #39): the duty panel's shell, one
+   size wider, with one section per definition kind. Forms are
+   plain stacked labels; lists keep the panel's row rhythm. */
+.settings-panel {
+  max-width: 880px;
+}
+
+.settings-section {
+  border-top: 1px solid var(--border);
+  padding: 8px 0 16px;
+}
+
+.settings-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.settings-form label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+
+.settings-checks {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.settings-checks legend {
+  font-size: 12px;
+  color: var(--dim);
+  padding: 0 4px;
+}
+
+.settings-group {
+  margin-bottom: 12px;
+}
+
+.settings-preview {
+  width: auto;
+  margin: 4px 0 8px;
+}

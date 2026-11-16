@@ -10,6 +10,7 @@ import { createTargetResolver, loadItemWithOptions } from "../dailyValues/target
 import { validateDailyValue } from "../dailyValues/value.js";
 import {
   confirmAbsenceInputSchema,
+  confirmEventInputSchema,
   createAbsenceInputSchema,
   createEventInputSchema,
   deleteAbsenceInputSchema,
@@ -20,6 +21,7 @@ import {
   moveAbsenceInputSchema,
   moveEventInputSchema,
   pendingAbsencesInputSchema,
+  pendingEventsInputSchema,
   setEventValuesInputSchema,
   updateAbsenceInputSchema,
   updateEventInputSchema,
@@ -268,6 +270,59 @@ export function createEventActions(db: Db, platformClient: PlatformApiClient) {
         input.cookie,
         { revision: input.revision },
       );
+    }),
+
+    /**
+     * The event half of the confirmation queue (Issue #39). The
+     * platform built the queue for absences only (Issue #25), so
+     * a pending event — a Viewer's registration the platform let
+     * through as tentative, or one of Issue #35's provisional
+     * entries (kind "other" carrying an absence template's name,
+     * saved tentative until a roster name replaces the typed
+     * one) — is found by reading the range with the staff
+     * audience and keeping the tentative records. The platform
+     * still judges the read: a caller it will not show the
+     * events to gets its refusal as-is.
+     */
+    getPendingEvents: platformAction("event.confirm", async ({ request }) => {
+      const input = pendingEventsInputSchema.parse(request);
+      const body = await relay(
+        "GET",
+        `${EVENTS_PATH}?from=${input.from}&to=${input.to}&audience=staff`,
+        input.cookie,
+      );
+      const items = (body as { items?: unknown } | null)?.items;
+      const records = Array.isArray(items)
+        ? items.filter(
+            (item): item is Record<string, unknown> =>
+              typeof item === "object" && item !== null && !Array.isArray(item),
+          )
+        : [];
+      return { items: records.filter((record) => record["certainty"] === "tentative") };
+    }),
+
+    /**
+     * Confirming an event (Issue #39): the platform has no
+     * confirm endpoint for events and keeps no confirmed-by
+     * stamp on them (that bookkeeping is the absences' flow,
+     * Issue #25), so this is the move pattern — read the current
+     * record, write it back with only the certainty changed. A
+     * change since the caller's revision surfaces as the
+     * platform's 409, as-is. Confirming a provisional entry does
+     * not turn it into an absence: it stays the event it is,
+     * now confirmed; the conversion to an absence still happens
+     * by replacing the typed name with a roster name in the
+     * cell (Issue #35).
+     */
+    confirmEvent: platformAction("event.confirm", async ({ request }) => {
+      const input = confirmEventInputSchema.parse(request);
+      const path = `${EVENTS_PATH}/${encodeURIComponent(input.id)}`;
+      const current = await readRecord(path, input.cookie);
+      return relay("PUT", path, input.cookie, {
+        ...current,
+        certainty: "confirmed",
+        revision: input.revision,
+      });
     }),
 
     // --- Additional items (this database) --------------------------

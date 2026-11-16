@@ -448,6 +448,27 @@ export function columnLabel(column: ViewColumnData, bootstrap: BootstrapData): s
 /** This month's undecided / month-precision events (scenario 9):
  *  the groups whose month is the anchor's month, plus the fully
  *  undecided group (month null), which every month shows. */
+/** The school year (April–March) a date belongs to. */
+export function schoolYearOf(date: string): number {
+  const year = Number(date.slice(0, 4));
+  const month = Number(date.slice(5, 7));
+  return month >= 4 ? year : year - 1;
+}
+
+/**
+ * The window the confirmation queue reads pending events over
+ * (Issue #39): the previous, current and next school years,
+ * whole. The platform's range read matches an undecided event
+ * only when the range covers its whole school year, so the
+ * window is built from school years, not from days around
+ * today; a tentative event outside these three years is not in
+ * the queue (it still shows in its month table, as tentative).
+ */
+export function pendingRange(today: string): { from: string; to: string } {
+  const year = schoolYearOf(today);
+  return { from: `${year - 1}-04-01`, to: `${year + 2}-03-31` };
+}
+
 export function undecidedForMonth(range: RangeData, anchor: string): Record<string, unknown>[] {
   const month = anchor.slice(0, 7);
   const out: Record<string, unknown>[] = [];
