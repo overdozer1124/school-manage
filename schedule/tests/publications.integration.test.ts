@@ -541,7 +541,7 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
     expect(error).toBeInstanceOf(PlatformRelayError);
     expect(error).toMatchObject({ status: 409 });
     expect((error as PlatformRelayError).body).toEqual({
-      error: "発行した版があるビューは削除できません。使わないビューは一覧から外してください",
+      error: "発行した版があるビューは削除できません",
     });
 
     // The view and its publications are untouched.

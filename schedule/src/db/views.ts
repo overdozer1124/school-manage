@@ -142,7 +142,7 @@ export async function deleteViewDefinition(db: Db, schoolId: string, id: string)
       throw new PlatformRelayError({
         status: 409,
         body: {
-          error: "発行した版があるビューは削除できません。使わないビューは一覧から外してください",
+          error: "発行した版があるビューは削除できません",
         },
       });
     }
