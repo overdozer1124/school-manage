@@ -1,5 +1,20 @@
 import { datesInRange, weekdayOf } from "@school-manage/calendar-types";
 import type { RelaySaveResult, ScheduleApi } from "./api";
+import {
+  absenceLineText,
+  columnLabel,
+  dailyCellText,
+  dayAttributeText,
+  dayMark,
+  dutyCellLines,
+  eventTimeText,
+  eventTitle,
+  monthEndOf,
+  monthStartOf,
+  provisionalLineText,
+  provisionalTemplateOf,
+  weekdayLabel,
+} from "./lib";
 import type {
   BootstrapData,
   DailyValueData,
@@ -11,6 +26,8 @@ import type {
   ItemDefinitionData,
   LocationData,
   MastersData,
+  PrintSettingsData,
+  PublicationData,
   RangeData,
   RangeDayData,
   SchoolSettingsData,
@@ -498,6 +515,179 @@ function fixtureProvisionals(): Record<string, unknown>[] {
   ];
 }
 
+function escHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+const PRINT_FONT_SIZES: Record<PrintSettingsData["fontScale"], string> = {
+  small: "9px",
+  medium: "10.5px",
+  large: "12px",
+};
+
+/**
+ * The issued document of the dev adapter (Issue #40): a mirror
+ * of the server's print renderer over the adapter's own range,
+ * so the publishing panel can be exercised by hand exactly as
+ * against the real server. The audience rules are applied the
+ * way getRange applies them on the server: a non-staff view's
+ * document holds no staff-only events, no absences and no duty
+ * names. The document is built once, at publish time, and the
+ * stored string is what later reads return — later edits to the
+ * fixture state do not reach it, as on the server.
+ */
+function buildDevDocument(input: {
+  bootstrap: BootstrapData;
+  view: ViewDefinitionData;
+  range: RangeData;
+  targetMonth: string;
+  versionLabel: string;
+  publishedAt: Date;
+  settings: PrintSettingsData;
+}): string {
+  const { bootstrap, view, range, settings } = input;
+  const staffView = view.audience === "staff";
+  const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
+  const hasMovement = columns.some((c) => {
+    const item = bootstrap.itemDefinitions.find((i) => i.id === c.itemDefinitionId);
+    return c.sourceKind === "daily_item" && item?.key === "staff_movement";
+  });
+  const cellLines = (day: RangeDayData, column: (typeof columns)[number]): string[] => {
+    if (column.sourceKind === "event_category") {
+      return [
+        ...day.events
+          .filter((e) => staffView || e["visibility"] !== "staff_only")
+          .filter((e) => !(hasMovement && provisionalTemplateOf(e, bootstrap)))
+          .map((e) => `${eventTimeText(e)}${eventTitle(e)}`),
+        ...(staffView ? day.absences.map((a) => absenceLineText(a, bootstrap)) : []),
+      ];
+    }
+    if (column.sourceKind === "daily_item") {
+      const item = bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
+      if (item?.valueType === "event_list") {
+        if (item.key === "staff_movement") {
+          return [
+            ...day.events
+              .filter((e) => provisionalTemplateOf(e, bootstrap) !== null)
+              .map((e) => provisionalLineText(e)),
+            ...(staffView ? day.absences.map((a) => absenceLineText(a, bootstrap)) : []),
+          ];
+        }
+        const bound =
+          bootstrap.kindTemplates.find((t) => t.key === item.key || t.kindCode === item.key) ??
+          null;
+        if (bound?.subjectKind === "absence") {
+          return [
+            ...day.events
+              .filter((e) => provisionalTemplateOf(e, bootstrap)?.key === bound.key)
+              .map((e) => provisionalLineText(e)),
+            ...(staffView
+              ? day.absences
+                  .filter((a) => a["kind"] === bound.kindCode)
+                  .map((a) => absenceLineText(a, bootstrap))
+              : []),
+          ];
+        }
+        const kindCode = bound?.kindCode ?? "event";
+        return day.events
+          .filter((e) => e["kind"] === kindCode)
+          .map((e) => `${eventTimeText(e)}${eventTitle(e)}`);
+      }
+      const text = dailyCellText(day, column, bootstrap);
+      return text === "" ? [] : [text];
+    }
+    if (column.sourceKind === "duty") {
+      if (!staffView) return [];
+      return dutyCellLines(day, column, bootstrap, range.conflicts).map(
+        (line) => `${line.text}${line.swapped ? "（交代）" : ""}`,
+      );
+    }
+    const text = dayAttributeText(day);
+    return text === "" ? [] : [text];
+  };
+  const monthText = `${input.targetMonth.slice(0, 4)}年${Number(input.targetMonth.slice(5, 7))}月`;
+  const publishedText = input.publishedAt.toLocaleString("ja-JP");
+  const head = columns
+    .map((column) => `<th scope="col">${escHtml(columnLabel(column, bootstrap))}</th>`)
+    .join("");
+  const rows = range.days
+    .map((day) => {
+      const mark = dayMark(day, bootstrap.masters.dayPatterns);
+      const cells = columns
+        .map(
+          (column) =>
+            `<td>${cellLines(day, column)
+              .map((line) => `<div>${escHtml(line)}</div>`)
+              .join("")}</td>`,
+        )
+        .join("");
+      return `<tr${mark.closed ? ' class="closed"' : ""}><th scope="row" class="date-cell kind-${mark.kind}"><span class="date-num">${Number(day.date.slice(8, 10))}</span> <span class="date-weekday">（${weekdayLabel(day.date)}）</span>${mark.sub ? `<span class="date-sub">${escHtml(mark.sub)}</span>` : ""}</th>${cells}</tr>`;
+    })
+    .join("\n");
+  const undecided = range.undecided.filter(
+    (group) => group.month === input.targetMonth || group.month === null,
+  );
+  const undecidedHtml =
+    undecided.length > 0
+      ? `<section class="undecided"><h2>その月の未定</h2><ul>${undecided
+          .flatMap((group) =>
+            group.events.map(
+              (event) =>
+                `<li>${escHtml(eventTitle(event))}（${event["datePrecision"] === "undecided" ? "時期未定" : "月のみ確定"}）</li>`,
+            ),
+          )
+          .join("")}</ul></section>`
+      : "";
+  return `<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>${escHtml(bootstrap.school.name ?? "行事予定")} ${escHtml(monthText)} 行事予定表（${escHtml(input.versionLabel)}）</title>
+<style>
+@page {
+  size: ${settings.paper} ${settings.orientation};
+  margin: ${settings.marginMm}mm;
+  @bottom-center { content: counter(page) " / " counter(pages); font-size: 9px; color: #555; }
+}
+body { font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans CJK JP", "Yu Gothic", sans-serif; font-size: ${PRINT_FONT_SIZES[settings.fontScale]}; color: #111; margin: 0; }
+header.print-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; border-bottom: 2px solid #333; padding-bottom: 4px; margin-bottom: 6px; }
+header.print-head h1 { font-size: 1.5em; margin: 0; }
+header.print-head .meta { text-align: right; white-space: nowrap; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border: 1px solid #999; padding: 2px 4px; vertical-align: top; text-align: left; }
+thead th { background: #eee; }
+tr.closed { background: #f3f4f6; }
+.date-cell { white-space: nowrap; width: 92px; }
+.date-num { font-weight: 600; }
+.kind-sat .date-num, .kind-sat .date-weekday { color: #2563eb; }
+.kind-holiday .date-num, .kind-holiday .date-weekday { color: #b91c1c; }
+.date-sub { display: block; font-size: 0.85em; color: #555; white-space: normal; }
+section.undecided { margin-top: 10px; }
+section.undecided h2 { font-size: 1.1em; margin: 0 0 4px; }
+section.undecided ul { margin: 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+<header class="print-head">
+<h1>${escHtml(bootstrap.school.name ?? "行事予定")} ${escHtml(monthText)} 行事予定表</h1>
+<div class="meta"><div>${escHtml(view.name)}</div><div>版：${escHtml(input.versionLabel)}</div><div>発行：${escHtml(publishedText)}</div></div>
+</header>
+<table>
+<thead><tr><th scope="col" class="date-cell">日</th>${head}</tr></thead>
+<tbody>
+${rows}
+</tbody>
+</table>
+${undecidedHtml}
+</body>
+</html>
+`;
+}
+
 export function createDevApi(): ScheduleApi {
   // The definition state of this adapter instance (Issue #39):
   // the settings screens edit these copies, and getBootstrap /
@@ -586,6 +776,14 @@ export function createDevApi(): ScheduleApi {
   const changes: DutyChangeData[] = [];
   const waivers = new Set<string>();
   let changeSeq = 0;
+
+  // The issued publications of this adapter instance (Issue
+  // #40): the version records, newest first, and their stored
+  // documents by id. A document is built once at publish time
+  // and never rebuilt, as on the server.
+  const publications: PublicationData[] = [];
+  const publicationDocuments = new Map<string, string>();
+  let publicationSeq = 0;
 
   const ensureAssignment = (date: string): DutyAssignmentData | null => {
     if (!isClassDay(date)) return null;
@@ -773,75 +971,83 @@ export function createDevApi(): ScheduleApi {
         return {};
     }
   };
+  const devRange = async (input: {
+    from: string;
+    to: string;
+    viewId: string;
+  }): Promise<RangeData> => {
+    const view =
+      boot.views.find((v) => v.id === input.viewId) ?? (boot.views[0] as ViewDefinitionData);
+    const dates = datesInRange(input.from, input.to);
+    valueSeq = 0;
+    return {
+      view: structuredClone(view),
+      from: input.from,
+      to: input.to,
+      days: dates.map((date) => {
+        const base = devDay(date);
+        return {
+          ...base,
+          events: state.events.filter(
+            (e) =>
+              typeof e["startsOn"] === "string" &&
+              typeof e["endsOn"] === "string" &&
+              (e["startsOn"] as string) <= date &&
+              date <= (e["endsOn"] as string),
+          ),
+          absences: state.absences.filter(
+            (a) =>
+              typeof a["fromDate"] === "string" &&
+              typeof a["toDate"] === "string" &&
+              (a["fromDate"] as string) <= date &&
+              date <= (a["toDate"] as string),
+          ),
+          dailyValues: state.daily.get(date) ?? base.dailyValues,
+        };
+      }),
+      undecided: [
+        {
+          month: "2026-11",
+          events: [
+            {
+              id: "ev-undecided-month",
+              kind: "event",
+              title: "作品展",
+              datePrecision: "month",
+              startsOn: "2026-11-15",
+              endsOn: "2026-11-15",
+              certainty: "tentative",
+              visibility: "guardian",
+            },
+          ],
+        },
+        {
+          month: null,
+          events: [
+            {
+              id: "ev-undecided-year",
+              kind: "event",
+              title: "研究発表会",
+              datePrecision: "undecided",
+              startsOn: "2026-04-01",
+              endsOn: "2026-04-01",
+              certainty: "tentative",
+              visibility: "guardian",
+            },
+          ],
+        },
+      ],
+      eventValues: [],
+      conflicts: view.audience === "staff" ? deriveConflicts(input.from, input.to) : [],
+    } satisfies RangeData;
+  };
+
   return {
     async getBootstrap() {
       return bootstrapNow();
     },
     async getRange(input) {
-      const view =
-        boot.views.find((v) => v.id === input.viewId) ?? (boot.views[0] as ViewDefinitionData);
-      const dates = datesInRange(input.from, input.to);
-      valueSeq = 0;
-      return {
-        view: structuredClone(view),
-        from: input.from,
-        to: input.to,
-        days: dates.map((date) => {
-          const base = devDay(date);
-          return {
-            ...base,
-            events: state.events.filter(
-              (e) =>
-                typeof e["startsOn"] === "string" &&
-                typeof e["endsOn"] === "string" &&
-                (e["startsOn"] as string) <= date &&
-                date <= (e["endsOn"] as string),
-            ),
-            absences: state.absences.filter(
-              (a) =>
-                typeof a["fromDate"] === "string" &&
-                typeof a["toDate"] === "string" &&
-                (a["fromDate"] as string) <= date &&
-                date <= (a["toDate"] as string),
-            ),
-            dailyValues: state.daily.get(date) ?? base.dailyValues,
-          };
-        }),
-        undecided: [
-          {
-            month: "2026-11",
-            events: [
-              {
-                id: "ev-undecided-month",
-                kind: "event",
-                title: "作品展",
-                datePrecision: "month",
-                startsOn: "2026-11-15",
-                endsOn: "2026-11-15",
-                certainty: "tentative",
-                visibility: "guardian",
-              },
-            ],
-          },
-          {
-            month: null,
-            events: [
-              {
-                id: "ev-undecided-year",
-                kind: "event",
-                title: "研究発表会",
-                datePrecision: "undecided",
-                startsOn: "2026-04-01",
-                endsOn: "2026-04-01",
-                certainty: "tentative",
-                visibility: "guardian",
-              },
-            ],
-          },
-        ],
-        eventValues: [],
-        conflicts: view.audience === "staff" ? deriveConflicts(input.from, input.to) : [],
-      } satisfies RangeData;
+      return devRange(input);
     },
     async createEvent(input): Promise<RelaySaveResult> {
       const record = { ...input.event, revision: 1 };
@@ -1389,7 +1595,93 @@ export function createDevApi(): ScheduleApi {
       event["revision"] = (event["revision"] as number) + 1;
       return structuredClone(event);
     },
+
+    // --- Issue #40: publishing -------------------------------
+
+    async createPublication(input) {
+      const view = boot.views.find((v) => v.id === input.viewId);
+      if (!view) throw new Error(`view definition not found: ${input.viewId}`);
+      const settings = resolveDevPrintSettings(view.printSettings, input.printSettings);
+      const anchor = `${input.targetMonth}-15`;
+      const range = await devRange({
+        from: monthStartOf(anchor),
+        to: monthEndOf(anchor),
+        viewId: view.id,
+      });
+      const publishedAt = new Date();
+      const documentHtml = buildDevDocument({
+        bootstrap: bootstrapNow(),
+        view,
+        range,
+        targetMonth: input.targetMonth,
+        versionLabel: input.versionLabel,
+        publishedAt,
+        settings,
+      });
+      publicationSeq += 1;
+      const publication: PublicationData = {
+        id: `pub-${publicationSeq}`,
+        viewDefinitionId: view.id,
+        targetMonth: input.targetMonth,
+        versionLabel: input.versionLabel,
+        publishedAt: publishedAt.toISOString(),
+        publishedBy: "dev-user",
+        snapshotNote: input.note ?? null,
+        printSettings: settings,
+        documentFormat: "html",
+      };
+      publications.unshift(publication);
+      publicationDocuments.set(publication.id, documentHtml);
+      return structuredClone(publication);
+    },
+
+    async getPublications(input) {
+      return structuredClone(
+        publications.filter((p) => !input?.viewId || p.viewDefinitionId === input.viewId),
+      );
+    },
+
+    async getPublication(input) {
+      const publication = publications.find((p) => p.id === input.id);
+      if (!publication) throw new Error(`publication not found: ${input.id}`);
+      return {
+        ...structuredClone(publication),
+        documentHtml: publicationDocuments.get(publication.id) ?? "",
+      };
+    },
   };
+}
+
+/** The dev adapter's print-settings resolution: the DESIGN
+ *  9.1 defaults, the view's own print_settings over them, then
+ *  the publisher's choices — the server's order. */
+function resolveDevPrintSettings(
+  viewSettings: Record<string, unknown> | null,
+  override?: Partial<PrintSettingsData>,
+): PrintSettingsData {
+  const resolved: PrintSettingsData = {
+    paper: "A4",
+    orientation: "landscape",
+    marginMm: 10,
+    fontScale: "medium",
+  };
+  if (viewSettings) {
+    if (viewSettings["paper"] === "A4" || viewSettings["paper"] === "A3") {
+      resolved.paper = viewSettings["paper"];
+    }
+    if (viewSettings["orientation"] === "landscape" || viewSettings["orientation"] === "portrait") {
+      resolved.orientation = viewSettings["orientation"];
+    }
+    if (typeof viewSettings["marginMm"] === "number") resolved.marginMm = viewSettings["marginMm"];
+    if (
+      viewSettings["fontScale"] === "small" ||
+      viewSettings["fontScale"] === "medium" ||
+      viewSettings["fontScale"] === "large"
+    ) {
+      resolved.fontScale = viewSettings["fontScale"];
+    }
+  }
+  return { ...resolved, ...(override ?? {}) };
 }
 
 /** Whether the page should use the development adapter: a build

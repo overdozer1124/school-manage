@@ -12,6 +12,9 @@ import type {
   MasterKindData,
   MastersData,
   PendingRecord,
+  PrintSettingsData,
+  PublicationData,
+  PublicationDocumentData,
   RangeData,
   RotationPlanCellData,
   TargetGroupData,
@@ -195,6 +198,18 @@ export interface ScheduleApi {
   confirmAbsence(input: { id: string; revision: number }): Promise<PendingRecord>;
   getPendingEvents(input: { from: string; to: string }): Promise<{ items: PendingRecord[] }>;
   confirmEvent(input: { id: string; revision: number }): Promise<PendingRecord>;
+  // Issue #40: issuing a month table as a versioned document.
+  // Issuing is the publish permission's (the server checks);
+  // the list and the document are view.read.
+  createPublication(input: {
+    viewId: string;
+    targetMonth: string;
+    versionLabel: string;
+    note?: string | null;
+    printSettings?: Partial<PrintSettingsData>;
+  }): Promise<PublicationData>;
+  getPublications(input?: { viewId?: string }): Promise<PublicationData[]>;
+  getPublication(input: { id: string }): Promise<PublicationDocumentData>;
 }
 
 export interface ScheduleApiOptions {
@@ -293,6 +308,9 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     confirmAbsence: (input) => call<PendingRecord>("confirmAbsence", input),
     getPendingEvents: (input) => call<{ items: PendingRecord[] }>("getPendingEvents", input),
     confirmEvent: (input) => call<PendingRecord>("confirmEvent", input),
+    createPublication: (input) => call<PublicationData>("createPublication", input),
+    getPublications: (input) => call<PublicationData[]>("getPublications", input ?? {}),
+    getPublication: (input) => call<PublicationDocumentData>("getPublication", input),
   };
 }
 

@@ -60,6 +60,14 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" ? value : null;
 }
 
+async function platformItems(
+  platformClient: PlatformApiClient,
+  path: string,
+  cookie: string,
+): Promise<Record<string, unknown>[]> {
+  return itemsOf(unwrapPlatformResult(await platformClient.getJson(path, cookie)));
+}
+
 /**
  * The day a range reports for one date; every date gets one. The
  * platform's record wins when one exists — the record itself,
@@ -87,6 +95,221 @@ function dayFor(
     weekdaySwap: null,
     note: null,
     source: "default",
+  };
+}
+
+/**
+ * The getRange bundle itself, apart from the action wrapper:
+ * Issue #40's publishing renders its document from exactly this
+ * bundle, so the issued paper and the screen are drawn from one
+ * computation and cannot drift apart (DESIGN schedule 9.1).
+ */
+export async function computeRange(
+  db: Db,
+  platformClient: PlatformApiClient,
+  dutyPlatform: DutyPlatformSource | undefined,
+  schoolId: string,
+  input: { from: string; to: string; viewId: string; cookie: string },
+): Promise<RangeResult> {
+  const dates = datesInRange(input.from, input.to);
+  if (dates.length > MAX_RANGE_DAYS) {
+    throw new Error(
+      `range is too long: ${dates.length} days (one call covers at most ${MAX_RANGE_DAYS})`,
+    );
+  }
+
+  const view = (await viewsStore.getViews(db, schoolId)).find((v) => v.id === input.viewId);
+  if (!view) {
+    throw new Error(`view definition not found: ${input.viewId}`);
+  }
+  const staffView = view.audience === "staff";
+  const rank = viewAudienceRank(view.audience as Audience);
+  // Conflicts are staff dynamics, like the duties themselves:
+  // a staff view derives them, so it needs the duty platform
+  // source — and refuses explicitly without one, exactly as
+  // getDutyConflicts does (Issue #69). A non-staff view never
+  // derives them and never needs the source.
+  if (staffView && !dutyPlatform) {
+    throw new Error("conflict derivation needs the platform source, which is not configured");
+  }
+
+  const range = `from=${input.from}&to=${input.to}`;
+  const [
+    definitionSet,
+    dayRecords,
+    holidayRecords,
+    events,
+    absenceRecords,
+    dailyValues,
+    assignments,
+    conflicts,
+  ] = await Promise.all([
+    definitionsStore.getDefinitionSet(db, schoolId),
+    platformItems(platformClient, `${DAYS_PATH}?${range}`, input.cookie),
+    platformItems(platformClient, `${HOLIDAYS_PATH}?${range}`, input.cookie),
+    platformItems(
+      platformClient,
+      `${EVENTS_PATH}?${range}&audience=${view.audience}`,
+      input.cookie,
+    ),
+    // Absences are staff dynamics (DESIGN schedule 5.2
+    // scenario 8): a non-staff view never receives them, so
+    // the platform is not even asked.
+    staffView ? platformItems(platformClient, `${ABSENCES_PATH}?${range}`, input.cookie) : [],
+    dailyValuesStore.getDailyValues(db, schoolId, {
+      from: input.from,
+      to: input.to,
+    }),
+    // Duties name people; they belong to staff views only
+    // (DESIGN-AUTH-TENANCY 4.5), like the duty columns below.
+    staffView ? dutiesStore.getAssignments(db, schoolId, { from: input.from, to: input.to }) : [],
+    // The same derivation getDutyConflicts runs, over the
+    // same range (Issue #69). For a non-staff view this is
+    // empty and the duty source is not asked for absences
+    // at all.
+    staffView
+      ? deriveDutyConflictsForRange(db, dutyPlatform, schoolId, {
+          from: input.from,
+          to: input.to,
+        })
+      : [],
+  ]);
+
+  // The view's own filter (Issue #32): which columns the
+  // audience sees, and which daily items may appear at all.
+  // The pure functions read slices (the database rows carry
+  // the enum fields as text), so they judge slices and the
+  // full rows are kept by id.
+  const itemSlices = definitionSet.itemDefinitions as unknown as readonly Pick<
+    AudienceItem,
+    "id" | "defaultVisibility"
+  >[];
+  const keptColumns = audienceColumns(
+    view.columns.map((column): AudienceColumn & { id: string } => ({
+      id: column.id,
+      sourceKind: column.sourceKind as AudienceColumn["sourceKind"],
+      itemDefinitionId: column.itemDefinitionId,
+      dutyDefinitionId: column.dutyDefinitionId,
+    })),
+    itemSlices,
+    rank,
+  );
+  const keptColumnIds = new Set(keptColumns.map((column) => column.id));
+  const columns = view.columns.filter((column) => keptColumnIds.has(column.id));
+  const allowedItemIds = new Set(
+    audienceItems(itemSlices, keptColumns, rank).map((item) => item.id),
+  );
+
+  const dayByDate = new Map<string, Record<string, unknown>>();
+  for (const record of dayRecords) {
+    const date = stringField(record, "date");
+    if (date) dayByDate.set(date, record);
+  }
+  const holidaysByDate = new Map<string, Record<string, unknown>[]>();
+  for (const record of holidayRecords) {
+    const date = stringField(record, "date");
+    if (!date) continue;
+    const list = holidaysByDate.get(date) ?? [];
+    list.push(record);
+    holidaysByDate.set(date, list);
+  }
+
+  const days: RangeDay[] = dates.map((date) => ({
+    date,
+    day: dayFor(date, dayByDate.get(date), (holidaysByDate.get(date) ?? []).length > 0),
+    holidays: holidaysByDate.get(date) ?? [],
+    events: [],
+    absences: [],
+    dailyValues: [],
+    dutyAssignments: [],
+  }));
+  const dayIndex = new Map(days.map((day, i) => [day.date, i]));
+  const pushOn = (date: string, key: "events" | "absences", record: Record<string, unknown>) => {
+    const i = dayIndex.get(date);
+    if (i !== undefined) days[i]?.[key].push(record);
+  };
+
+  // Events: day and range precision are placed on their days;
+  // month and undecided precision are that month's (or the
+  // school year's) undecided events, kept apart (scenario 9).
+  const undecidedByMonth = new Map<string | null, Record<string, unknown>[]>();
+  for (const event of events) {
+    const precision = stringField(event, "datePrecision");
+    if (precision === "month" || precision === "undecided") {
+      const startsOn = stringField(event, "startsOn");
+      const month = precision === "month" && startsOn ? startsOn.slice(0, 7) : null;
+      const list = undecidedByMonth.get(month) ?? [];
+      list.push(event);
+      undecidedByMonth.set(month, list);
+      continue;
+    }
+    const span = eventDateSpan({
+      datePrecision: (precision ?? "day") as DatePrecision,
+      startsOn: stringField(event, "startsOn"),
+      endsOn: stringField(event, "endsOn"),
+    });
+    if (!span) continue;
+    for (const date of dates) {
+      if (date >= span.start && date <= span.end) pushOn(date, "events", event);
+    }
+  }
+  const undecided: RangeUndecided[] = [...undecidedByMonth.entries()]
+    .sort(([a], [b]) => ((a ?? "9999") < (b ?? "9999") ? -1 : 1))
+    .map(([month, monthEvents]) => ({ month, events: monthEvents }));
+
+  for (const absence of absenceRecords) {
+    const fromDate = stringField(absence, "fromDate");
+    const toDate = stringField(absence, "toDate");
+    if (!fromDate || !toDate) continue;
+    for (const date of dates) {
+      if (date >= fromDate && date <= toDate) pushOn(date, "absences", absence);
+    }
+  }
+  for (const value of dailyValues) {
+    if (!allowedItemIds.has(value.itemDefinitionId)) continue;
+    const i = dayIndex.get(value.date);
+    if (i !== undefined) days[i]?.dailyValues.push(value);
+  }
+  for (const assignment of assignments) {
+    const i = dayIndex.get(assignment.date);
+    if (i !== undefined) days[i]?.dutyAssignments.push(assignment);
+  }
+
+  // Additional items for everything in the result, in two
+  // queries. An absence the platform showed in its restricted
+  // shape (no purpose field) contributes none — the platform's
+  // judgment, read off the shape, exactly as getEventValues
+  // does; an item the audience may not see contributes none
+  // either.
+  const absenceById = new Map<string, Record<string, unknown>>();
+  for (const absence of absenceRecords) {
+    const id = stringField(absence, "id");
+    if (id) absenceById.set(id, absence);
+  }
+  const eventIds = events
+    .map((event) => stringField(event, "id"))
+    .filter((id): id is string => id !== null);
+  const absenceIds = [...absenceById.keys()];
+  const [eventValueRows, absenceValueRows] = await Promise.all([
+    eventValuesStore.getEventValuesForSubjects(db, schoolId, "event", eventIds),
+    eventValuesStore.getEventValuesForSubjects(db, schoolId, "absence", absenceIds),
+  ]);
+  const eventValues = [
+    ...eventValueRows,
+    ...absenceValueRows.filter((row) => {
+      const absence = absenceById.get(row.subjectId);
+      return absence !== undefined && "purpose" in absence;
+    }),
+  ].filter((row) => allowedItemIds.has(row.itemDefinitionId));
+
+  return {
+    view: { ...view, columns },
+    from: input.from,
+    to: input.to,
+    days,
+    undecided,
+    eventValues,
+    conflicts,
   };
 }
 
@@ -122,217 +345,10 @@ export function createRangeActions(
   platformClient: PlatformApiClient,
   dutyPlatform?: DutyPlatformSource,
 ) {
-  async function platformItems(path: string, cookie: string): Promise<Record<string, unknown>[]> {
-    return itemsOf(unwrapPlatformResult(await platformClient.getJson(path, cookie)));
-  }
-
   return defineActions({
     getRange: scheduleAction("view.read", async ({ auth, request }): Promise<RangeResult> => {
       const input = getRangeInputSchema.parse(request);
-      const dates = datesInRange(input.from, input.to);
-      if (dates.length > MAX_RANGE_DAYS) {
-        throw new Error(
-          `range is too long: ${dates.length} days (one call covers at most ${MAX_RANGE_DAYS})`,
-        );
-      }
-
-      const view = (await viewsStore.getViews(db, auth.schoolId)).find(
-        (v) => v.id === input.viewId,
-      );
-      if (!view) {
-        throw new Error(`view definition not found: ${input.viewId}`);
-      }
-      const staffView = view.audience === "staff";
-      const rank = viewAudienceRank(view.audience as Audience);
-      // Conflicts are staff dynamics, like the duties themselves:
-      // a staff view derives them, so it needs the duty platform
-      // source — and refuses explicitly without one, exactly as
-      // getDutyConflicts does (Issue #69). A non-staff view never
-      // derives them and never needs the source.
-      if (staffView && !dutyPlatform) {
-        throw new Error("conflict derivation needs the platform source, which is not configured");
-      }
-
-      const range = `from=${input.from}&to=${input.to}`;
-      const [
-        definitionSet,
-        dayRecords,
-        holidayRecords,
-        events,
-        absenceRecords,
-        dailyValues,
-        assignments,
-        conflicts,
-      ] = await Promise.all([
-        definitionsStore.getDefinitionSet(db, auth.schoolId),
-        platformItems(`${DAYS_PATH}?${range}`, input.cookie),
-        platformItems(`${HOLIDAYS_PATH}?${range}`, input.cookie),
-        platformItems(`${EVENTS_PATH}?${range}&audience=${view.audience}`, input.cookie),
-        // Absences are staff dynamics (DESIGN schedule 5.2
-        // scenario 8): a non-staff view never receives them, so
-        // the platform is not even asked.
-        staffView ? platformItems(`${ABSENCES_PATH}?${range}`, input.cookie) : [],
-        dailyValuesStore.getDailyValues(db, auth.schoolId, {
-          from: input.from,
-          to: input.to,
-        }),
-        // Duties name people; they belong to staff views only
-        // (DESIGN-AUTH-TENANCY 4.5), like the duty columns below.
-        staffView
-          ? dutiesStore.getAssignments(db, auth.schoolId, { from: input.from, to: input.to })
-          : [],
-        // The same derivation getDutyConflicts runs, over the
-        // same range (Issue #69). For a non-staff view this is
-        // empty and the duty source is not asked for absences
-        // at all.
-        staffView
-          ? deriveDutyConflictsForRange(db, dutyPlatform, auth.schoolId, {
-              from: input.from,
-              to: input.to,
-            })
-          : [],
-      ]);
-
-      // The view's own filter (Issue #32): which columns the
-      // audience sees, and which daily items may appear at all.
-      // The pure functions read slices (the database rows carry
-      // the enum fields as text), so they judge slices and the
-      // full rows are kept by id.
-      const itemSlices = definitionSet.itemDefinitions as unknown as readonly Pick<
-        AudienceItem,
-        "id" | "defaultVisibility"
-      >[];
-      const keptColumns = audienceColumns(
-        view.columns.map((column): AudienceColumn & { id: string } => ({
-          id: column.id,
-          sourceKind: column.sourceKind as AudienceColumn["sourceKind"],
-          itemDefinitionId: column.itemDefinitionId,
-          dutyDefinitionId: column.dutyDefinitionId,
-        })),
-        itemSlices,
-        rank,
-      );
-      const keptColumnIds = new Set(keptColumns.map((column) => column.id));
-      const columns = view.columns.filter((column) => keptColumnIds.has(column.id));
-      const allowedItemIds = new Set(
-        audienceItems(itemSlices, keptColumns, rank).map((item) => item.id),
-      );
-
-      const dayByDate = new Map<string, Record<string, unknown>>();
-      for (const record of dayRecords) {
-        const date = stringField(record, "date");
-        if (date) dayByDate.set(date, record);
-      }
-      const holidaysByDate = new Map<string, Record<string, unknown>[]>();
-      for (const record of holidayRecords) {
-        const date = stringField(record, "date");
-        if (!date) continue;
-        const list = holidaysByDate.get(date) ?? [];
-        list.push(record);
-        holidaysByDate.set(date, list);
-      }
-
-      const days: RangeDay[] = dates.map((date) => ({
-        date,
-        day: dayFor(date, dayByDate.get(date), (holidaysByDate.get(date) ?? []).length > 0),
-        holidays: holidaysByDate.get(date) ?? [],
-        events: [],
-        absences: [],
-        dailyValues: [],
-        dutyAssignments: [],
-      }));
-      const dayIndex = new Map(days.map((day, i) => [day.date, i]));
-      const pushOn = (
-        date: string,
-        key: "events" | "absences",
-        record: Record<string, unknown>,
-      ) => {
-        const i = dayIndex.get(date);
-        if (i !== undefined) days[i]?.[key].push(record);
-      };
-
-      // Events: day and range precision are placed on their days;
-      // month and undecided precision are that month's (or the
-      // school year's) undecided events, kept apart (scenario 9).
-      const undecidedByMonth = new Map<string | null, Record<string, unknown>[]>();
-      for (const event of events) {
-        const precision = stringField(event, "datePrecision");
-        if (precision === "month" || precision === "undecided") {
-          const startsOn = stringField(event, "startsOn");
-          const month = precision === "month" && startsOn ? startsOn.slice(0, 7) : null;
-          const list = undecidedByMonth.get(month) ?? [];
-          list.push(event);
-          undecidedByMonth.set(month, list);
-          continue;
-        }
-        const span = eventDateSpan({
-          datePrecision: (precision ?? "day") as DatePrecision,
-          startsOn: stringField(event, "startsOn"),
-          endsOn: stringField(event, "endsOn"),
-        });
-        if (!span) continue;
-        for (const date of dates) {
-          if (date >= span.start && date <= span.end) pushOn(date, "events", event);
-        }
-      }
-      const undecided: RangeUndecided[] = [...undecidedByMonth.entries()]
-        .sort(([a], [b]) => ((a ?? "9999") < (b ?? "9999") ? -1 : 1))
-        .map(([month, monthEvents]) => ({ month, events: monthEvents }));
-
-      for (const absence of absenceRecords) {
-        const fromDate = stringField(absence, "fromDate");
-        const toDate = stringField(absence, "toDate");
-        if (!fromDate || !toDate) continue;
-        for (const date of dates) {
-          if (date >= fromDate && date <= toDate) pushOn(date, "absences", absence);
-        }
-      }
-      for (const value of dailyValues) {
-        if (!allowedItemIds.has(value.itemDefinitionId)) continue;
-        const i = dayIndex.get(value.date);
-        if (i !== undefined) days[i]?.dailyValues.push(value);
-      }
-      for (const assignment of assignments) {
-        const i = dayIndex.get(assignment.date);
-        if (i !== undefined) days[i]?.dutyAssignments.push(assignment);
-      }
-
-      // Additional items for everything in the result, in two
-      // queries. An absence the platform showed in its restricted
-      // shape (no purpose field) contributes none — the platform's
-      // judgment, read off the shape, exactly as getEventValues
-      // does; an item the audience may not see contributes none
-      // either.
-      const absenceById = new Map<string, Record<string, unknown>>();
-      for (const absence of absenceRecords) {
-        const id = stringField(absence, "id");
-        if (id) absenceById.set(id, absence);
-      }
-      const eventIds = events
-        .map((event) => stringField(event, "id"))
-        .filter((id): id is string => id !== null);
-      const absenceIds = [...absenceById.keys()];
-      const [eventValueRows, absenceValueRows] = await Promise.all([
-        eventValuesStore.getEventValuesForSubjects(db, auth.schoolId, "event", eventIds),
-        eventValuesStore.getEventValuesForSubjects(db, auth.schoolId, "absence", absenceIds),
-      ]);
-      const eventValues = [
-        ...eventValueRows,
-        ...absenceValueRows.filter((row) => {
-          const absence = absenceById.get(row.subjectId);
-          return absence !== undefined && "purpose" in absence;
-        }),
-      ].filter((row) => allowedItemIds.has(row.itemDefinitionId));
-
-      return {
-        view: { ...view, columns },
-        from: input.from,
-        to: input.to,
-        days,
-        undecided,
-        eventValues,
-        conflicts,
-      };
+      return computeRange(db, platformClient, dutyPlatform, auth.schoolId, input);
     }),
 
     getBootstrap: scheduleAction("view.read", async ({ auth, request }) => {
@@ -349,13 +365,13 @@ export function createRangeActions(
         dutyDefinitions,
       ] = await Promise.all([
         unwrapPlatformResult(await platformClient.getJson(ME_PATH, input.cookie)),
-        platformItems(`${MASTERS_PATH}/staff`, input.cookie),
-        platformItems(`${MASTERS_PATH}/grades`, input.cookie),
-        platformItems(`${MASTERS_PATH}/day-patterns`, input.cookie),
+        platformItems(platformClient, `${MASTERS_PATH}/staff`, input.cookie),
+        platformItems(platformClient, `${MASTERS_PATH}/grades`, input.cookie),
+        platformItems(platformClient, `${MASTERS_PATH}/day-patterns`, input.cookie),
         // The school's absence subdivisions (the leave step of the
         // quick-entry popover, DESIGN schedule 6.5): the platform
         // owns them (Issue #25), so they are read like the masters.
-        platformItems(SUBDIVISIONS_PATH, input.cookie),
+        platformItems(platformClient, SUBDIVISIONS_PATH, input.cookie),
         viewsStore.getViews(db, auth.schoolId),
         definitionsStore.getDefinitionSet(db, auth.schoolId),
         templatesStore.getKindTemplates(db, auth.schoolId),
