@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
+import { QuickPopover, type QuickPopoverTarget } from "./QuickPopover";
 import {
   absenceLineText,
   axisEntries,
@@ -351,12 +352,21 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
   const [editDraft, setEditDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The entry the quick-entry popover is detailing (Issue #36),
+  // set by the Enter that just created it.
+  const [popover, setPopover] = useState<QuickPopoverTarget | null>(null);
 
   // Only the arriving seed matters; the draft is the person's own
   // from then on, so the effect keys on the seed alone.
   useEffect(() => {
     if (seedText && draft === "") setDraft(seedText);
   }, [seedText]);
+
+  // The popover belongs to this cell's turn at input: when another
+  // cell takes over it closes — what its steps saved stands (6.5).
+  useEffect(() => {
+    if (!active) setPopover(null);
+  }, [active]);
 
   useEffect(() => {
     // A Viewer's absence input is their own name from the start.
@@ -388,8 +398,20 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
     setBusy(true);
     setNotice(null);
     try {
+      // The record Enter just made, when it is a settled entry:
+      // the quick-entry popover (Issue #36) opens on it below. A
+      // provisional entry — a placeholder name, a title-only trip —
+      // gets none: its person is not settled, and the popover's
+      // steps exist to detail a settled entry. A school whose
+      // default input behaviour is the modal gets none either
+      // (the modal itself is a later issue; DESIGN schedule 6.5).
+      let created: { subjectKind: "event" | "absence"; record: Record<string, unknown> } | null =
+        null;
       if (template.subjectKind === "event") {
-        await editor.api.createEvent({ event: buildEventRecord(text, template, day.date) });
+        const result = await editor.api.createEvent({
+          event: buildEventRecord(text, template, day.date),
+        });
+        created = { subjectKind: "event", record: result.record };
       } else if (inputMode === "title") {
         // A title-only entry is held as an event, which a Viewer
         // may not create: their absence input is their own name.
@@ -405,9 +427,10 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
           return;
         }
         if (matched) {
-          await editor.api.createAbsence({
+          const result = await editor.api.createAbsence({
             absence: buildAbsenceRecord(matched.id, template, day.date, bootstrap.role),
           });
+          created = { subjectKind: "absence", record: result.record };
         } else {
           await editor.api.createEvent({ event: buildFreeTextEntry(text, template, day.date) });
         }
@@ -416,6 +439,9 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
       // ready for the next one; a failure keeps the text (below).
       setDraft("");
       editor.onSaved();
+      if (created && bootstrap.inputOpener === "popover") {
+        setPopover({ subjectKind: created.subjectKind, template, record: created.record });
+      }
     } catch (cause) {
       fail(cause);
     } finally {
@@ -750,6 +776,16 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
         <p className="cell-notice" role="alert">
           {notice}
         </p>
+      )}
+      {popover && (
+        <QuickPopover
+          target={popover}
+          bootstrap={bootstrap}
+          api={editor.api}
+          onSaved={editor.onSaved}
+          onUnauthorizedError={editor.onUnauthorizedError}
+          onClose={() => setPopover(null)}
+        />
       )}
     </div>
   );

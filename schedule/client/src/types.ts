@@ -118,6 +118,47 @@ export interface DutyDefinitionData {
   rotation: { personIds: string[]; changeWeekdays: string[] | null } | null;
 }
 
+/** A registered place (DESIGN schedule 4.5.1), as getBootstrap
+ *  returns it from this app's own locations master: the quick-entry
+ *  popover's location step offers these, and a place typed freely
+ *  is kept as the event's location text instead (Issue #36). */
+export interface LocationData {
+  id: string;
+  name: string;
+  kind: string | null;
+  sort: number;
+  isActive: boolean;
+}
+
+/** One of the school's absence subdivision definitions, as the
+ *  platform keeps them (Issue #25): under a fixed absence kind
+ *  (code), the school's own key and word （年休 under leave). The
+ *  quick-entry popover's subdivision step offers the ones under
+ *  the entry's kind, by label (Issue #36). */
+export interface AbsenceSubdivisionData {
+  id: string;
+  code: string;
+  key: string;
+  label: string;
+}
+
+/** One additional item value of a platform record (Issue #29), in
+ *  the row shape getEventValues returns: the typed value columns
+ *  mirror the daily values'. */
+export interface EventValueData {
+  id: string;
+  itemDefinitionId: string;
+  targetId: string | null;
+  targetRef: TargetRefData | null;
+  valueText: string | null;
+  valueTime: string | null;
+  valueTimeEnd: string | null;
+  valueNumber: number | null;
+  valueBoolean: boolean | null;
+  valueOptionId: string | null;
+  valuePersonId: string | null;
+}
+
 export interface BootstrapData {
   school: { id: string; name: string | null };
   userId: string;
@@ -129,6 +170,14 @@ export interface BootstrapData {
   targetGroups: TargetGroupData[];
   kindTemplates: KindTemplateData[];
   dutyDefinitions: DutyDefinitionData[];
+  /** The quick-entry popover's raw materials (Issue #36). */
+  locations: LocationData[];
+  absenceSubdivisions: AbsenceSubdivisionData[];
+  /** The school's default input behaviour (DESIGN schedule 6.5):
+   *  after Enter, open the quick-entry popover, or — for schools
+   *  that prefer the detail modal — not. The modal itself arrives
+   *  with its own issue; "modal" here only keeps the popover shut. */
+  inputOpener: "popover" | "modal";
   masters: {
     staff: MasterEntry[];
     grades: MasterEntry[];
