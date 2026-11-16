@@ -49,6 +49,7 @@ export interface ItemDefinitionData {
   targetPlatformAxis: string | null;
   granularity: string;
   defaultVisibility: string;
+  isActive?: boolean;
   sort: number;
   options: ItemOptionData[];
 }
@@ -281,6 +282,44 @@ export interface ApplyRotationResultData {
   skipped: number;
   assignments: DutyAssignmentData[];
 }
+
+/** The school's settings row (Issue #27): how cell input opens
+ *  (Issue #36's popover or the modal) and which absence kinds
+ *  count for duty conflicts (Issue #31; null counts every kind). */
+export interface SchoolSettingsData {
+  inputOpener: "popover" | "modal";
+  dutyConflictAbsenceKinds: string[] | null;
+}
+
+/** The whole definition set, as getDefinitions returns it
+ *  (Issue #39): what the settings screen edits. */
+export interface DefinitionSetData {
+  settings: SchoolSettingsData | null;
+  targetGroups: TargetGroupData[];
+  itemDefinitions: ItemDefinitionData[];
+  locations: LocationData[];
+}
+
+/** The shared masters, as the master relay returns them
+ *  (Issue #39): the platform's records, one list per kind. The
+ *  records stay MasterEntry-shaped — the platform owns their
+ *  fields and validates every write. */
+export interface MastersData {
+  staff: MasterEntry[];
+  grade: MasterEntry[];
+  class: MasterEntry[];
+  special_needs_class: MasterEntry[];
+  day_pattern: MasterEntry[];
+}
+
+/** The master kinds the settings screen edits, in list order. */
+export type MasterKindData = keyof MastersData;
+
+/** One row of the confirmation queue (Issue #39): a tentative
+ *  platform record — an absence from the platform's pending
+ *  list, or an event the relay kept from its range read. The
+ *  record stays opaque; the panel reads the fields it draws. */
+export type PendingRecord = Record<string, unknown>;
 
 export interface RangeData {
   view: ViewDefinitionData;

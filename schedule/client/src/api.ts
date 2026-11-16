@@ -1,12 +1,22 @@
 import type {
   ApplyRotationResultData,
   BootstrapData,
+  DefinitionSetData,
   DutyChangeData,
   DutyConflictData,
+  DutyDefinitionData,
   EventValueData,
+  ItemDefinitionData,
+  KindTemplateData,
+  LocationData,
+  MasterKindData,
+  MastersData,
+  PendingRecord,
   RangeData,
   RotationPlanCellData,
+  TargetGroupData,
   TargetRefData,
+  ViewDefinitionData,
 } from "./types";
 
 /**
@@ -134,6 +144,57 @@ export interface ScheduleApi {
     reason?: string;
   }): Promise<unknown>;
   getDutyChangeCandidates(input: { assignmentId: string }): Promise<string[]>;
+  // Issue #39: the settings screens. Definitions, views and duty
+  // definitions are this database's own rows (the server checks
+  // definition.write — Admin only); locations are master.write;
+  // settings and preset application are school.admin.
+  getDefinitions(): Promise<DefinitionSetData>;
+  upsertItemDefinition(input: Record<string, unknown>): Promise<ItemDefinitionData>;
+  deleteItemDefinition(input: { id: string }): Promise<{ deleted: true }>;
+  upsertTargetGroup(input: Record<string, unknown>): Promise<TargetGroupData>;
+  deleteTargetGroup(input: { id: string }): Promise<{ deleted: true }>;
+  upsertTarget(input: Record<string, unknown>): Promise<unknown>;
+  deleteTarget(input: { id: string }): Promise<{ deleted: true }>;
+  upsertLocation(input: Record<string, unknown>): Promise<LocationData>;
+  deleteLocation(input: { id: string }): Promise<{ deleted: true }>;
+  saveSettings(input: {
+    inputOpener: "popover" | "modal";
+    dutyConflictAbsenceKinds?: string[] | null;
+  }): Promise<unknown>;
+  applyPreset(input: {
+    preset: "elementary_no_bus" | "elementary_bus" | "junior_high";
+  }): Promise<unknown>;
+  upsertViewDefinition(input: Record<string, unknown>): Promise<ViewDefinitionData>;
+  deleteViewDefinition(input: { id: string }): Promise<{ deleted: true }>;
+  upsertDutyDefinition(input: Record<string, unknown>): Promise<DutyDefinitionData>;
+  deleteDutyDefinition(input: { id: string }): Promise<{ deleted: true }>;
+  upsertKindTemplate(input: Record<string, unknown>): Promise<KindTemplateData>;
+  deleteKindTemplate(input: { id: string }): Promise<{ deleted: true }>;
+  applyDefaultKindTemplates(): Promise<unknown>;
+  // The shared masters, relayed to the platform (the platform
+  // judges every write). Records are opaque: the platform owns
+  // their shape.
+  getMasters(): Promise<MastersData>;
+  createMaster(input: {
+    kind: MasterKindData;
+    record: Record<string, unknown>;
+  }): Promise<Record<string, unknown>>;
+  updateMaster(input: {
+    kind: MasterKindData;
+    id: string;
+    record: Record<string, unknown>;
+  }): Promise<Record<string, unknown>>;
+  deleteMaster(input: {
+    kind: MasterKindData;
+    id: string;
+    revision: number;
+  }): Promise<{ deleted: true }>;
+  // The confirmation queue (DESIGN-AUTH-TENANCY 4.6): tentative
+  // absences and events, each settled by confirming or deleting.
+  getPendingAbsences(): Promise<{ items: PendingRecord[] }>;
+  confirmAbsence(input: { id: string; revision: number }): Promise<PendingRecord>;
+  getPendingEvents(input: { from: string; to: string }): Promise<{ items: PendingRecord[] }>;
+  confirmEvent(input: { id: string; revision: number }): Promise<PendingRecord>;
 }
 
 export interface ScheduleApiOptions {
@@ -206,6 +267,32 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     getDutyConflicts: (input) => call<DutyConflictData[]>("getDutyConflicts", input),
     waiveConflict: (input) => call<unknown>("waiveConflict", input),
     getDutyChangeCandidates: (input) => call<string[]>("getDutyChangeCandidates", input),
+    getDefinitions: () => call<DefinitionSetData>("getDefinitions", {}),
+    upsertItemDefinition: (input) => call<ItemDefinitionData>("upsertItemDefinition", input),
+    deleteItemDefinition: (input) => call<{ deleted: true }>("deleteItemDefinition", input),
+    upsertTargetGroup: (input) => call<TargetGroupData>("upsertTargetGroup", input),
+    deleteTargetGroup: (input) => call<{ deleted: true }>("deleteTargetGroup", input),
+    upsertTarget: (input) => call<unknown>("upsertTarget", input),
+    deleteTarget: (input) => call<{ deleted: true }>("deleteTarget", input),
+    upsertLocation: (input) => call<LocationData>("upsertLocation", input),
+    deleteLocation: (input) => call<{ deleted: true }>("deleteLocation", input),
+    saveSettings: (input) => call<unknown>("saveSettings", input),
+    applyPreset: (input) => call<unknown>("applyPreset", input),
+    upsertViewDefinition: (input) => call<ViewDefinitionData>("upsertViewDefinition", input),
+    deleteViewDefinition: (input) => call<{ deleted: true }>("deleteViewDefinition", input),
+    upsertDutyDefinition: (input) => call<DutyDefinitionData>("upsertDutyDefinition", input),
+    deleteDutyDefinition: (input) => call<{ deleted: true }>("deleteDutyDefinition", input),
+    upsertKindTemplate: (input) => call<KindTemplateData>("upsertKindTemplate", input),
+    deleteKindTemplate: (input) => call<{ deleted: true }>("deleteKindTemplate", input),
+    applyDefaultKindTemplates: () => call<unknown>("applyDefaultKindTemplates", {}),
+    getMasters: () => call<MastersData>("getMasters", {}),
+    createMaster: (input) => call<Record<string, unknown>>("createMaster", input),
+    updateMaster: (input) => call<Record<string, unknown>>("updateMaster", input),
+    deleteMaster: (input) => call<{ deleted: true }>("deleteMaster", input),
+    getPendingAbsences: () => call<{ items: PendingRecord[] }>("getPendingAbsences", {}),
+    confirmAbsence: (input) => call<PendingRecord>("confirmAbsence", input),
+    getPendingEvents: (input) => call<{ items: PendingRecord[] }>("getPendingEvents", input),
+    confirmEvent: (input) => call<PendingRecord>("confirmEvent", input),
   };
 }
 

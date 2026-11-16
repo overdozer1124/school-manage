@@ -120,6 +120,34 @@ export const pendingAbsencesInputSchema = z.object({
 });
 export type PendingAbsencesInput = z.infer<typeof pendingAbsencesInputSchema>;
 
+/**
+ * The pending events of the confirmation queue (Issue #39). The
+ * platform has no pending list for events — the queue of
+ * DESIGN-AUTH-TENANCY 4.6 was built for absences in Issue #25 —
+ * so the relay reads the events of a range with the staff
+ * audience and keeps the tentative ones. The range is part of
+ * the input because the platform's range read is the only list
+ * it offers: an undecided event matches only when the range
+ * covers its whole school year, so the caller names a window of
+ * whole school years (the screen uses the previous, current and
+ * next school year).
+ */
+export const pendingEventsInputSchema = z
+  .object({
+    cookie: nonEmptyString,
+    from: dateStringSchema,
+    to: dateStringSchema,
+  })
+  .refine((v) => v.from <= v.to, { message: "from must not be after to" });
+export type PendingEventsInput = z.infer<typeof pendingEventsInputSchema>;
+
+/** Confirming an event is the move pattern with the certainty
+ *  changed (Issue #39): the platform has no confirm endpoint for
+ *  events, so the relay reads the record and writes it back with
+ *  certainty "confirmed" under the caller's revision. */
+export const confirmEventInputSchema = confirmAbsenceInputSchema;
+export type ConfirmEventInput = z.infer<typeof confirmEventInputSchema>;
+
 export const setEventValuesInputSchema = z.object({
   /** The caller's platform cookie: saving values alone asks the
    *  platform's write-check first (Issue #29 review), like every
