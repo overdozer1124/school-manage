@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { isValidTimeString } from "@school-manage/calendar-types";
+import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
+import { isCommitEnter } from "./cells";
 import { ClockPicker } from "./ClockPicker";
 import { absenceLineText, eventTitle, matchStaffByName, normalizeName } from "./lib";
 import type {
@@ -54,6 +55,20 @@ type Assignee =
   | { kind: "staff"; staffId: string; role: string | null }
   | { kind: "free_text"; name: string; role: string | null };
 
+/** A value settled by the very keystroke or click that confirms
+ *  a step — a highlighted suggestion, a subdivision button, a
+ *  clock text committed by its Enter — passed to the confirm so
+ *  the save reads the settled value itself, never the state the
+ *  choice has only just queued. */
+interface StepOverride {
+  text?: string;
+  key?: string | null;
+  people?: Assignee[];
+  holderId?: string;
+  timeStart?: string;
+  timeEnd?: string;
+}
+
 function stringField(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === "string" && value !== "" ? value : null;
@@ -62,12 +77,6 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
 function revisionOf(record: Record<string, unknown>): number | null {
   const value = record["revision"];
   return typeof value === "number" ? value : null;
-}
-
-/** A plain Enter, never the Enter that confirms an IME
- *  conversion (the same rule as the cells', PR #75). */
-function isPlainEnter(e: ReactKeyboardEvent): boolean {
-  return e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229;
 }
 
 function assigneesOf(record: Record<string, unknown>): Assignee[] {
@@ -221,6 +230,20 @@ export function QuickPopover({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [onClose]);
 
+  // Esc closes the popover wherever the focus sits (6.5): the
+  // root's own key handler covers focus inside the popover, and
+  // this document-level one covers the rest — a step that holds
+  // no focusable control of its own must not strand the keyboard.
+  // An Esc that cancels an IME conversion is the conversion's,
+  // not the popover's.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.isComposing) onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   // The item step reads the record's current values when it opens.
   useEffect(() => {
     if (step?.kind !== "item" || itemValues !== null) return;
@@ -334,22 +357,17 @@ export function QuickPopover({
   };
 
   /** Saves the current step if it has unsaved changes; true when
-   *  the popover may move on (saved, or nothing to save). A choice
-   *  made by the very keystroke or click that confirms — a
-   *  highlighted suggestion, a subdivision button — is passed as
-   *  an override, so the save reads the chosen value itself and
-   *  never the state the choice has only just queued. */
-  const confirmStep = async (
-    s: PopStep,
-    override?: { text?: string; key?: string | null; people?: Assignee[]; holderId?: string },
-  ): Promise<boolean> => {
+   *  the popover may move on (saved, or nothing to save). */
+  const confirmStep = async (s: PopStep, override?: StepOverride): Promise<boolean> => {
     if (busy) return false;
     const overridden =
       override !== undefined &&
       ((s.kind === "location" && override.text !== undefined) ||
         (s.kind === "subdivision" && "key" in override) ||
         (s.kind === "person" &&
-          (override.people !== undefined || override.holderId !== undefined)));
+          (override.people !== undefined || override.holderId !== undefined)) ||
+        (s.kind === "time" &&
+          (override.timeStart !== undefined || override.timeEnd !== undefined)));
     if (!overridden && !stepDirty(s)) return true;
     setBusy(true);
     setNotice(null);
@@ -391,13 +409,19 @@ export function QuickPopover({
           return true;
         }
         case "time": {
+          const start = override?.timeStart ?? timeStart;
+          const end = override?.timeEnd ?? timeEnd;
           if (timeMode === "clock") {
-            if (!isValidTimeString(timeStart)) {
+            if (!isValidTimeString(start)) {
               setNotice("開始時刻を HH:MM の形で入力してください");
               return false;
             }
-            if (timeEnd !== "" && !isValidTimeString(timeEnd)) {
+            if (end !== "" && !isValidTimeString(end)) {
               setNotice("終了時刻を HH:MM の形で入力してください");
+              return false;
+            }
+            if (end !== "" && timeToMinutes(end) <= timeToMinutes(start)) {
+              setNotice("終了は開始より後の時刻にしてください");
               return false;
             }
           }
@@ -406,7 +430,7 @@ export function QuickPopover({
               ? { kind: "all_day" }
               : timeMode === "am" || timeMode === "pm"
                 ? { kind: "half_day", half: timeMode }
-                : { kind: "clock", startsAt: timeStart, endsAt: timeEnd || null };
+                : { kind: "clock", startsAt: start, endsAt: end || null };
           return await saveRecord({ time });
         }
       }
@@ -418,12 +442,7 @@ export function QuickPopover({
     }
   };
 
-  const goNext = async (override?: {
-    text?: string;
-    key?: string | null;
-    people?: Assignee[];
-    holderId?: string;
-  }) => {
+  const goNext = async (override?: StepOverride) => {
     if (!step) return;
     if (!(await confirmStep(step, override))) return;
     if (stepIndex + 1 < steps.length) setStepIndex(stepIndex + 1);
@@ -490,7 +509,7 @@ export function QuickPopover({
       setPersonHi((h) => (h + dir + personSuggestions.length) % personSuggestions.length);
       return;
     }
-    if (!isPlainEnter(e)) return;
+    if (!isCommitEnter(e)) return;
     e.preventDefault();
     const highlighted = personSuggestions[personHi];
     const name = (highlighted?.name as string | undefined) ?? personText.trim();
@@ -537,7 +556,7 @@ export function QuickPopover({
       setLocationHi((h) => (h + dir + locationSuggestions.length) % locationSuggestions.length);
       return;
     }
-    if (!isPlainEnter(e)) return;
+    if (!isCommitEnter(e)) return;
     e.preventDefault();
     const highlighted = locationSuggestions[locationHi];
     if (highlighted && normalizeName(highlighted.name) !== normalizeName(locationText)) {
@@ -558,6 +577,37 @@ export function QuickPopover({
     step.kind === "item"
       ? bootstrap.itemDefinitions.find((i) => i.id === step.itemDefinitionId)
       : undefined;
+
+  // ---- time step pieces ----------------------------------------
+  const timeModes: TimeMode[] =
+    subjectKind === "absence" ? ["all_day", "am", "pm", "clock"] : ["all_day", "clock"];
+
+  /** The kind chips are the time step's own control (6.5): the
+   *  selected kind's chip holds the focus when the step opens,
+   *  the arrow keys move the selection — and the focus with it —
+   *  across the kinds, and Enter confirms the step. */
+  const onTimeChipsKeyDown = (e: ReactKeyboardEvent) => {
+    if (
+      e.key === "ArrowLeft" ||
+      e.key === "ArrowRight" ||
+      e.key === "ArrowUp" ||
+      e.key === "ArrowDown"
+    ) {
+      e.preventDefault();
+      const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1;
+      const next =
+        timeModes[(timeModes.indexOf(timeMode) + dir + timeModes.length) % timeModes.length] ??
+        timeMode;
+      setTimeMode(next);
+      const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>("button"));
+      buttons[timeModes.indexOf(next)]?.focus();
+      return;
+    }
+    if (isCommitEnter(e)) {
+      e.preventDefault();
+      void goNext();
+    }
+  };
 
   return (
     <div
@@ -749,7 +799,7 @@ export function QuickPopover({
                 disabled={busy || itemValues === null}
                 onChange={(e) => setItemText(e.target.value)}
                 onKeyDown={(e) => {
-                  if (isPlainEnter(e)) {
+                  if (isCommitEnter(e)) {
                     e.preventDefault();
                     void goNext();
                   }
@@ -777,14 +827,17 @@ export function QuickPopover({
 
         {step.kind === "time" && (
           <div>
-            <div className="kind-chips" role="group" aria-label={step.label}>
-              {(subjectKind === "absence"
-                ? (["all_day", "am", "pm", "clock"] as TimeMode[])
-                : (["all_day", "clock"] as TimeMode[])
-              ).map((mode) => (
+            <div
+              className="kind-chips"
+              role="group"
+              aria-label={step.label}
+              onKeyDown={onTimeChipsKeyDown}
+            >
+              {timeModes.map((mode) => (
                 <button
                   key={mode}
                   type="button"
+                  autoFocus={timeMode === mode}
                   aria-pressed={timeMode === mode}
                   className={timeMode === mode ? "chip selected" : "chip"}
                   onClick={() => setTimeMode(mode)}
@@ -801,14 +854,22 @@ export function QuickPopover({
             </div>
             {timeMode === "clock" && (
               <>
+                {/* No autoFocus on the pickers: the step's focus
+                    stays on the kind chips above, so the arrow
+                    keys keep moving across the kinds even after
+                    時刻指定 opens the pickers. */}
                 <ClockPicker
                   label="開始"
                   value={timeStart}
-                  autoFocus
                   onChange={setTimeStart}
-                  onEnter={() => void goNext()}
+                  onEnter={(value) => void goNext({ timeStart: value })}
                 />
-                <ClockPicker label="終了" value={timeEnd} onChange={setTimeEnd} />
+                <ClockPicker
+                  label="終了"
+                  value={timeEnd}
+                  onChange={setTimeEnd}
+                  onEnter={(value) => void goNext({ timeEnd: value })}
+                />
               </>
             )}
           </div>

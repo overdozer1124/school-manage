@@ -464,6 +464,118 @@ describe("quick-entry popover (Issue #36)", () => {
       expect(within(cell(DATE, 1)).getByText("生徒指導担当")).toBeInTheDocument(),
     );
   });
+
+  /** Jumps to the time step by its heading and chooses 時刻指定;
+   *  returns the start time's direct-entry field. */
+  async function openClockStep(dialog: HTMLElement) {
+    fireEvent.click(within(dialog).getByRole("button", { name: "3. 時間" }));
+    fireEvent.click(await within(dialog).findByRole("button", { name: "時刻指定" }));
+    return within(dialog).findByLabelText("開始（直接入力）");
+  }
+
+  const clockSave = (calls: ReturnType<typeof makeFakeApi>["calls"]) =>
+    calls.updateEvent.find(
+      (c) => (c.event["time"] as { kind?: string } | undefined)?.kind === "clock",
+    );
+
+  it("a directly typed start time saves on a single Enter", async () => {
+    const { calls } = await renderApp();
+    const dialog = await createEventWithPopover("運動会");
+    const startInput = await openClockStep(dialog);
+    fireEvent.change(startInput, { target: { value: "09:30" } });
+    fireEvent.keyDown(startInput, { key: "Enter" });
+    // One Enter is enough: the confirm saves the value the
+    // keystroke itself committed, not the state queued behind it.
+    await waitFor(() => expect(clockSave(calls)).toBeDefined());
+    expect(clockSave(calls)?.event["time"]).toEqual({
+      kind: "clock",
+      startsAt: "09:30",
+      endsAt: null,
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(within(cell(DATE, 0)).getByText("09:30 運動会")).toBeInTheDocument();
+  });
+
+  it("a directly typed end time saves on a single Enter", async () => {
+    const { calls } = await renderApp();
+    const dialog = await createEventWithPopover("運動会");
+    const startInput = await openClockStep(dialog);
+    fireEvent.change(startInput, { target: { value: "09:30" } });
+    fireEvent.blur(startInput);
+    const endInput = within(dialog).getByLabelText("終了（直接入力）");
+    fireEvent.change(endInput, { target: { value: "11:00" } });
+    fireEvent.keyDown(endInput, { key: "Enter" });
+    await waitFor(() => expect(clockSave(calls)).toBeDefined());
+    expect(clockSave(calls)?.event["time"]).toEqual({
+      kind: "clock",
+      startsAt: "09:30",
+      endsAt: "11:00",
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("the time step holds the focus: arrows switch the kind and Enter confirms", async () => {
+    const { calls } = await renderApp();
+    const dialog = await createEventWithPopover("運動会");
+    // From the person step an empty Enter moves on; from the
+    // location step Enter takes the highlighted place, saves it,
+    // and lands on the time step.
+    fireEvent.keyDown(within(dialog).getByLabelText("担当者"), { key: "Enter" });
+    const locationInput = await within(dialog).findByLabelText("場所");
+    fireEvent.keyDown(locationInput, { key: "Enter" });
+    await waitFor(() => expect(calls.updateEvent).toHaveLength(1));
+    expect(calls.updateEvent[0]?.event).toMatchObject({ locationId: "loc-gym" });
+
+    // The selected kind's chip holds the focus (6.5), so the
+    // keyboard is never stranded on this step.
+    const allDayChip = await within(dialog).findByRole("button", { name: "終日" });
+    await waitFor(() => expect(document.activeElement).toBe(allDayChip));
+
+    // The arrows move the selection — and the focus — across
+    // the kinds; the pickers open under 時刻指定 without the
+    // focus leaving the chips.
+    fireEvent.keyDown(allDayChip, { key: "ArrowRight" });
+    const clockChip = within(dialog).getByRole("button", { name: "時刻指定" });
+    expect(clockChip).toHaveAttribute("aria-pressed", "true");
+    expect(document.activeElement).toBe(clockChip);
+    expect(within(dialog).getByLabelText("開始（直接入力）")).toBeInTheDocument();
+    fireEvent.keyDown(clockChip, { key: "ArrowLeft" });
+    expect(allDayChip).toHaveAttribute("aria-pressed", "true");
+    expect(document.activeElement).toBe(allDayChip);
+
+    // Enter on the chip confirms the step; the time step is the
+    // last one, so the popover closes, with nothing more saved.
+    fireEvent.keyDown(allDayChip, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(calls.updateEvent).toHaveLength(1);
+  });
+
+  it("Esc closes the popover even when the keydown never reaches it", async () => {
+    await renderApp();
+    const dialog = await createEventWithPopover("運動会");
+    expect(dialog).toBeInTheDocument();
+    // The keydown is dispatched outside the popover (focus lost
+    // to the page): Esc is heard at the document level too.
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("an end time earlier than the start is stopped on screen", async () => {
+    const { calls } = await renderApp();
+    const dialog = await createEventWithPopover("運動会");
+    const startInput = await openClockStep(dialog);
+    fireEvent.change(startInput, { target: { value: "10:00" } });
+    fireEvent.blur(startInput);
+    const endInput = within(dialog).getByLabelText("終了（直接入力）");
+    fireEvent.change(endInput, { target: { value: "09:00" } });
+    fireEvent.blur(endInput);
+    fireEvent.click(within(dialog).getByRole("button", { name: "確定" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "終了は開始より後の時刻にしてください",
+    );
+    expect(clockSave(calls)).toBeUndefined();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
 });
 
 describe("clock picker (Issue #36)", () => {
@@ -497,5 +609,17 @@ describe("clock picker (Issue #36)", () => {
     fireEvent.change(input, { target: { value: "13:05" } });
     fireEvent.blur(input);
     expect(onChange).toHaveBeenLastCalledWith("13:05");
+  });
+
+  it("the text field's Enter hands the committed value to onEnter", () => {
+    const onChange = vi.fn();
+    const onEnter = vi.fn();
+    render(<ClockPicker label="開始" value="" onChange={onChange} onEnter={onEnter} />);
+    const input = screen.getByLabelText("開始（直接入力）");
+    fireEvent.change(input, { target: { value: "09:30" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onChange).toHaveBeenLastCalledWith("09:30");
+    expect(onEnter).toHaveBeenCalledTimes(1);
+    expect(onEnter).toHaveBeenCalledWith("09:30");
   });
 });

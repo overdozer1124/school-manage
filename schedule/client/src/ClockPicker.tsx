@@ -1,4 +1,5 @@
-import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useState } from "react";
+import { isCommitEnter } from "./cells";
 
 /**
  * The analog clock picker (DESIGN schedule 6.3), ported from the
@@ -11,9 +12,11 @@ import { useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
  *
  * The value is "HH:MM" or "" (no time). Picking on the dial and
  * committing the text both go through onChange; the text input
- * also reports a plain Enter through onEnter, so a surrounding
- * step flow can treat it as its own confirm — an Enter that only
- * confirms an IME conversion never counts (PR #75's rule).
+ * also reports a plain Enter through onEnter, passing the value
+ * the commit just settled, so a surrounding step flow saves that
+ * value itself and never the state the commit has only just
+ * queued — an Enter that only confirms an IME conversion never
+ * counts (PR #75's rule).
  */
 export function ClockPicker({
   label,
@@ -25,7 +28,7 @@ export function ClockPicker({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  onEnter?: () => void;
+  onEnter?: (value: string) => void;
   autoFocus?: boolean;
 }) {
   const [mode, setMode] = useState<"hour" | "minute">("hour");
@@ -49,20 +52,25 @@ export function ClockPicker({
     onChange(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
   };
 
-  const commitText = (raw: string) => {
+  /** Settles the typed text: a HH:MM entry (or an empty one)
+   *  goes through onChange in normalized form; anything else is
+   *  discarded and the settled value is the one already held.
+   *  Returns the settled value, so an Enter can hand it on. */
+  const commitText = (raw: string): string => {
     const m = raw.trim().match(/^(\d{1,2})[:：](\d{1,2})$/);
+    let next = value;
     if (m) {
       const h = Math.min(23, Number(m[1]));
       const min = Math.min(59, Number(m[2]));
-      onChange(`${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`);
+      next = `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+      onChange(next);
     } else if (raw.trim() === "") {
-      onChange("");
+      next = "";
+      onChange(next);
     }
     setText(null);
+    return next;
   };
-
-  const isPlainEnter = (e: ReactKeyboardEvent) =>
-    e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229;
 
   const positions = (count: number) =>
     Array.from({ length: count }, (_, i) => {
@@ -84,9 +92,8 @@ export function ClockPicker({
           onChange={(e) => setText(e.target.value)}
           onBlur={(e) => commitText(e.target.value)}
           onKeyDown={(e) => {
-            if (isPlainEnter(e)) {
-              commitText((e.target as HTMLInputElement).value);
-              onEnter?.();
+            if (isCommitEnter(e)) {
+              onEnter?.(commitText((e.target as HTMLInputElement).value));
             }
           }}
         />
