@@ -24,6 +24,23 @@ export async function findSchoolIdBySlug(db: Db, slug: string): Promise<string |
   return rows[0]?.schoolId ?? null;
 }
 
+/** The cache row for one school, or null when this server has
+ *  never synced that school. Token issuance checks this (Issue
+ *  #41 re-review): a token whose school has no row could never
+ *  answer — the public route resolves the URL's slug through
+ *  this cache and would find nothing — so issuance refuses
+ *  instead of handing out a URL that stays a 404. */
+export async function findSchoolCacheById(
+  db: Db,
+  schoolId: string,
+): Promise<{ schoolId: string; name: string; slug: string } | null> {
+  const rows = await db
+    .select({ schoolId: schoolCache.schoolId, name: schoolCache.name, slug: schoolCache.slug })
+    .from(schoolCache)
+    .where(eq(schoolCache.schoolId, schoolId));
+  return rows[0] ?? null;
+}
+
 /** Records (or refreshes) one school's name and slug. */
 export async function upsertSchoolCache(
   db: Db,

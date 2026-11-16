@@ -23,9 +23,11 @@ export const createPublicViewTokenInputSchema = z.object({
   viewId: nonEmptyString,
   /** The caller's cookie, injected by the HTTP layer. Issuing
    *  syncs the school cache (name and slug) from the platform
-   *  with it, best-effort; the field stays optional so a caller
-   *  without one can still issue — the sync is skipped, never
-   *  the issuance refused. */
+   *  with it, best-effort. The field stays optional: without
+   *  one no sync runs, and issuance then stands or falls on
+   *  the cache row an earlier sync left — a school with no row
+   *  on record is refused either way, because its URL could
+   *  never resolve its slug (Issue #41 re-review). */
   cookie: z.string().optional(),
 });
 export type CreatePublicViewTokenInput = z.infer<typeof createPublicViewTokenInputSchema>;

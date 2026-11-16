@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -14,6 +15,7 @@ import {
 } from "@school-manage/calendar-types";
 import { createScheduleActions, createSchedulePublicActions } from "../src/composition.js";
 import { createDb, type Db } from "../src/db/client.js";
+import { schoolCache } from "../src/db/schema.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { createPlatformApiClient, PlatformRelayError } from "../src/platformClient.js";
 import { hashPublicToken } from "../src/publicViews/actions.js";
@@ -102,6 +104,10 @@ class FakePlatform {
     "day-patterns": [{ id: "pattern-a", code: "A", name: "A日課" }],
   };
   subdivisions: Record_[] = [{ id: "subdiv-annual", code: "leave", key: "annual", label: "年休" }];
+  /** When true, /auth/me answers 503: for the school-cache
+   *  sync at token issuance, the platform does not answer
+   *  (Issue #41 re-review). */
+  failMe = false;
 
   fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const raw = String(input).replace("http://platform.test", "");
@@ -170,6 +176,7 @@ class FakePlatform {
       return jsonResponse(201, record);
     }
     if (method === "GET" && path === "/platform/api/v1/auth/me") {
+      if (this.failMe) return jsonResponse(503, { error: "基盤が応答しません" });
       return jsonResponse(200, {
         user: { id: "user-41", name: "先生A" },
         school: { schoolId: SCHOOL, name: "テスト学校", slug: "test" },
@@ -577,6 +584,66 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
       .catch((e: unknown) => e);
     expect(noToken).toBeInstanceOf(PlatformRelayError);
     expect((noToken as PlatformRelayError).status).toBe(404);
+  });
+
+  it("issuing stands or falls on the school cache row when the sync cannot refresh it", async () => {
+    // The public route resolves a URL's slug through the school
+    // cache, so a token for a school with no cache row would
+    // answer 404 forever (Issue #41 re-review). The sync is
+    // best-effort, but issuance judges the row afterwards.
+    const downFake = new FakePlatform();
+    downFake.failMe = true;
+    const downActions = createScheduleActions(
+      db,
+      createPlatformApiClient({ baseUrl: "http://platform.test", fetchImpl: downFake.fetch }),
+      COOKIE,
+    );
+    const countTokens = async () =>
+      (
+        (await actions.getPublicViewTokens.run(auth("Admin"), {
+          viewId: "view-guardian",
+        })) as Record_[]
+      ).length;
+
+    // Sync failing and no row on record: issuance refuses with
+    // the reason, and stores nothing.
+    await db.delete(schoolCache).where(eq(schoolCache.schoolId, SCHOOL));
+    const before = await countTokens();
+    const refused = await downActions.createPublicViewToken
+      .run(auth("Admin"), { viewId: "view-guardian", cookie: COOKIE })
+      .catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(PlatformRelayError);
+    expect((refused as PlatformRelayError).status).toBe(400);
+    expect((refused as PlatformRelayError).body).toEqual({
+      error: "学校の情報を確認できませんでした。もう一度お試しください",
+    });
+    expect(await countTokens()).toBe(before);
+    expect(await schoolCacheStore.findSchoolIdBySlug(db, "test")).toBeNull();
+
+    // Sync still failing, but a row is on record (an earlier
+    // sync put it there): the URL can resolve its slug, so
+    // issuance stands.
+    await schoolCacheStore.upsertSchoolCache(db, {
+      schoolId: SCHOOL,
+      name: "テスト学校",
+      slug: "test",
+    });
+    const issued = (await downActions.createPublicViewToken.run(auth("Admin"), {
+      viewId: "view-guardian",
+      cookie: COOKIE,
+    })) as Record_;
+    expect(typeof issued["token"]).toBe("string");
+
+    // And with the platform answering again, a missing row is
+    // no obstacle: the sync fills it and issuance proceeds as
+    // it always did.
+    await db.delete(schoolCache).where(eq(schoolCache.schoolId, SCHOOL));
+    const reissued = (await actions.createPublicViewToken.run(auth("Admin"), {
+      viewId: "view-guardian",
+      cookie: COOKIE,
+    })) as Record_;
+    expect(typeof reissued["token"]).toBe("string");
+    expect(await schoolCacheStore.findSchoolIdBySlug(db, "test")).toBe(SCHOOL);
   });
 
   it("the public actions cannot be registered where secure actions are required", () => {
