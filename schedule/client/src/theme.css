@@ -232,6 +232,317 @@ body {
   color: var(--sun);
 }
 
+/* The entry cell anchors the quick-entry popover (Issue #36):
+ * the popover is positioned against the cell, so the table's own
+ * scroll carries it along. */
+.entry-cell {
+  position: relative;
+}
+
+/* The quick-entry popover (Issue #36; DESIGN schedule 6.5): a
+ * card beside the cell, walking the kind template's steps. At
+ * the screen's edges it flips above the cell or aligns to the
+ * cell's right side (the flip classes QuickPopover measures). */
+.quick-popover {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  width: 300px;
+  max-width: 90vw;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  font-size: 13px;
+}
+
+.quick-popover.flip-up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+.quick-popover.flip-right {
+  left: auto;
+  right: 0;
+}
+
+.quick-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.quick-popover-title {
+  font-weight: 600;
+}
+
+.quick-popover-head button {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 6px;
+}
+
+.quick-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.quick-steps .step-head {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.quick-steps .step-head.current {
+  background: var(--accent);
+  color: var(--surface);
+  border-color: var(--accent);
+}
+
+.quick-step-body input,
+.quick-step-body select {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.quick-people {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.quick-people li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 4px 1px 8px;
+  background: var(--bg);
+}
+
+.quick-people button {
+  border: none;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.quick-current {
+  margin: 0 0 6px;
+  color: var(--dim);
+}
+
+.quick-suggestions,
+.quick-options {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.quick-suggestions button,
+.quick-options button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.quick-suggestions button.highlighted,
+.quick-suggestions button:hover,
+.quick-options button:hover {
+  background: var(--bg);
+  border-color: var(--border);
+}
+
+.quick-options button.selected {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.quick-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.quick-popover-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.quick-popover-foot button {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.quick-popover-foot button:disabled {
+  color: var(--dim);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.quick-foot-actions {
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* The clock picker (DESIGN schedule 6.3), ported with the
+ * prototype's component: a text field, an AM/PM head, and the
+ * 180px dial of hour and 5-minute buttons. */
+.clock-picker {
+  margin-top: 6px;
+}
+
+.clock-picker-label {
+  display: block;
+  font-size: 12px;
+  color: var(--dim);
+  margin-bottom: 2px;
+}
+
+.clock-picker-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.clock-picker-row .clock-picker-input {
+  width: 90px;
+  flex: none;
+}
+
+.clock-picker-row button,
+.clock-dial-head button,
+.clock-dial-foot button {
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.clock-dial-box {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  background: var(--bg);
+}
+
+.clock-dial-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.clock-dial-head button.selected,
+.clock-dial-foot button.selected {
+  background: var(--accent);
+  color: var(--surface);
+  border-color: var(--accent);
+}
+
+.clock-dial-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.clock-dial {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  margin: 0 auto;
+}
+
+.clock-dial-face {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+}
+
+.clock-dial .clock-num {
+  position: absolute;
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0 -16px;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.clock-dial .clock-num:hover {
+  border-color: var(--border);
+}
+
+.clock-dial .clock-num.selected {
+  background: var(--accent);
+  color: var(--surface);
+}
+
+.clock-dial-foot {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.clock-dial-foot .clock-dial-close {
+  margin-left: auto;
+}
+
 .undecided {
   margin-top: 20px;
 }

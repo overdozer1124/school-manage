@@ -41,6 +41,7 @@ const EVENTS_PATH = "/platform/api/v1/calendar/events";
 const ABSENCES_PATH = "/platform/api/v1/calendar/absences";
 const ME_PATH = "/platform/api/v1/auth/me";
 const MASTERS_PATH = "/platform/api/v1/masters";
+const SUBDIVISIONS_PATH = "/platform/api/v1/calendar/absence-subdivisions";
 
 /** The `items` of a platform list answer, as opaque records: the
  *  platform validated them against the shared schemas at its own
@@ -336,23 +337,36 @@ export function createRangeActions(
 
     getBootstrap: scheduleAction("view.read", async ({ auth, request }) => {
       const input = getBootstrapInputSchema.parse(request);
-      const [me, staff, grades, dayPatterns, views, definitionSet, kindTemplates, dutyDefinitions] =
-        await Promise.all([
-          unwrapPlatformResult(await platformClient.getJson(ME_PATH, input.cookie)),
-          platformItems(`${MASTERS_PATH}/staff`, input.cookie),
-          platformItems(`${MASTERS_PATH}/grades`, input.cookie),
-          platformItems(`${MASTERS_PATH}/day-patterns`, input.cookie),
-          viewsStore.getViews(db, auth.schoolId),
-          definitionsStore.getDefinitionSet(db, auth.schoolId),
-          templatesStore.getKindTemplates(db, auth.schoolId),
-          // The duty definitions (with their rotation rules) name
-          // the table's duty columns and drive the duty panel
-          // (Issue #38). They are this database's own rows, read
-          // like the views and item definitions; duties belong to
-          // staff screens, and getBootstrap serves staff only
-          // (view.read, DESIGN-AUTH-TENANCY 4.5).
-          dutiesStore.getDutyDefinitions(db, auth.schoolId),
-        ]);
+      const [
+        me,
+        staff,
+        grades,
+        dayPatterns,
+        subdivisions,
+        views,
+        definitionSet,
+        kindTemplates,
+        dutyDefinitions,
+      ] = await Promise.all([
+        unwrapPlatformResult(await platformClient.getJson(ME_PATH, input.cookie)),
+        platformItems(`${MASTERS_PATH}/staff`, input.cookie),
+        platformItems(`${MASTERS_PATH}/grades`, input.cookie),
+        platformItems(`${MASTERS_PATH}/day-patterns`, input.cookie),
+        // The school's absence subdivisions (the leave step of the
+        // quick-entry popover, DESIGN schedule 6.5): the platform
+        // owns them (Issue #25), so they are read like the masters.
+        platformItems(SUBDIVISIONS_PATH, input.cookie),
+        viewsStore.getViews(db, auth.schoolId),
+        definitionsStore.getDefinitionSet(db, auth.schoolId),
+        templatesStore.getKindTemplates(db, auth.schoolId),
+        // The duty definitions (with their rotation rules) name
+        // the table's duty columns and drive the duty panel
+        // (Issue #38). They are this database's own rows, read
+        // like the views and item definitions; duties belong to
+        // staff screens, and getBootstrap serves staff only
+        // (view.read, DESIGN-AUTH-TENANCY 4.5).
+        dutiesStore.getDutyDefinitions(db, auth.schoolId),
+      ]);
       const school = (me as { school?: { name?: unknown } } | null)?.school;
       const permissions = Object.entries(schedulePermissions)
         .filter(([, roles]) => (roles as readonly string[]).includes(auth.role))
@@ -371,6 +385,16 @@ export function createRangeActions(
         targetGroups: definitionSet.targetGroups,
         kindTemplates,
         dutyDefinitions,
+        // The quick-entry popover's raw materials (Issue #36): the
+        // school's registered places for the location step, the
+        // platform's subdivision definitions for the leave step,
+        // and the school's default input behaviour (DESIGN
+        // schedule 6.5: popover or modal, school_settings since
+        // Issue #27 — a school with no settings row yet takes the
+        // schema's default, the popover).
+        locations: definitionSet.locations,
+        absenceSubdivisions: subdivisions,
+        inputOpener: definitionSet.settings?.inputOpener ?? "popover",
         masters: { staff, grades, dayPatterns },
       };
     }),

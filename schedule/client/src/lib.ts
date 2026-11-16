@@ -586,7 +586,14 @@ export function absenceLineText(
   const purpose = stringField(absence, "purpose");
   if (template?.displaySource === "person") {
     const subdivision = stringField(absence, "subdivisionKey");
-    return subdivision ? `${name}（${subdivision}）` : name;
+    if (!subdivision) return name;
+    // The bracket shows the school's word for the classification,
+    // not the stored key (Issue #36): the platform's subdivision
+    // definitions ride along in the bootstrap for exactly this.
+    const label =
+      bootstrap.absenceSubdivisions.find((s) => s.code === kind && s.key === subdivision)?.label ??
+      subdivision;
+    return `${name}（${label}）`;
   }
   if (template?.displaySource === "person_title") {
     return purpose ? `${name} ${purpose}` : name;

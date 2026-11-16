@@ -117,6 +117,14 @@ const unusedWrites = {
   confirmEvent: async (): Promise<never> => {
     throw new Error("not used");
   },
+  // The quick-input popover's event values (Issue #36) are not
+  // exercised by these tests either.
+  getEventValues: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  setEventValues: async (): Promise<never> => {
+    throw new Error("not used");
+  },
 };
 
 // Duty marks and the duty panel (Issue #38): a conflicted

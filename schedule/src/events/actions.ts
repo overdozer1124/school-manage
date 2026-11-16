@@ -275,14 +275,16 @@ export function createEventActions(db: Db, platformClient: PlatformApiClient) {
     /**
      * The event half of the confirmation queue (Issue #39). The
      * platform built the queue for absences only (Issue #25), so
-     * a pending event — a Viewer's registration the platform let
-     * through as tentative, or one of Issue #35's provisional
-     * entries (kind "other" carrying an absence template's name,
-     * saved tentative until a roster name replaces the typed
-     * one) — is found by reading the range with the staff
-     * audience and keeping the tentative records. The platform
-     * still judges the read: a caller it will not show the
-     * events to gets its refusal as-is.
+     * a pending event is found by reading the range with the
+     * staff audience and keeping the tentative records. Only
+     * absences turn tentative through a Viewer's registration —
+     * events are written by writers (Editor and above) — so a
+     * tentative event is one of Issue #35's provisional entries
+     * (kind "other" carrying an absence template's name, saved
+     * tentative until a roster name replaces the typed one) or
+     * one a writer entered as tentative. The platform still
+     * judges the read: a caller it will not show the events to
+     * gets its refusal as-is.
      */
     getPendingEvents: platformAction("event.confirm", async ({ request }) => {
       const input = pendingEventsInputSchema.parse(request);

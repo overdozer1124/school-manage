@@ -76,6 +76,8 @@ describe("401 / 403 handling", () => {
       deleteAbsence: fail,
       setDailyValue: fail,
       deleteDailyValue: fail,
+      getEventValues: fail,
+      setEventValues: fail,
       previewRotation: fail,
       applyRotation: fail,
       proposeDutyChange: fail,

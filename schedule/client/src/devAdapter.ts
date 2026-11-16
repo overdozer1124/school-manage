@@ -7,6 +7,7 @@ import type {
   DutyAssignmentData,
   DutyChangeData,
   DutyConflictData,
+  EventValueData,
   ItemDefinitionData,
   LocationData,
   MastersData,
@@ -203,6 +204,31 @@ export const DEV_BOOTSTRAP: BootstrapData = {
       rotation: { personIds: STAFF.map((s) => s.id), changeWeekdays: null },
     },
   ],
+  // The quick-entry popover's raw materials (Issue #36): a few
+  // registered places, the platform's shipped leave subdivisions
+  // (packages/calendar-types defaultLeaveSubdivisions), and the
+  // default input behaviour — the popover.
+  locations: [
+    { id: "loc-gym", name: "体育館", kind: null, sort: 1, isActive: true },
+    { id: "loc-music", name: "音楽室", kind: null, sort: 2, isActive: true },
+    { id: "loc-field", name: "運動場", kind: null, sort: 3, isActive: true },
+  ],
+  absenceSubdivisions: [
+    ["annual", "年休"],
+    ["sick", "病休"],
+    ["special", "特休"],
+    ["summer_special", "夏特"],
+    ["nursing", "看護"],
+    ["duty_exempt", "職専免"],
+    ["compensatory", "振休"],
+    ["other", "その他"],
+  ].map(([key, label]) => ({
+    id: `subdiv-leave-${key}`,
+    code: "leave",
+    key: key as string,
+    label: label as string,
+  })),
+  inputOpener: "popover",
   masters: {
     staff: STAFF,
     grades: GRADES,
@@ -401,7 +427,9 @@ function fixtureAbsences(): Record<string, unknown>[] {
       toDate: "2026-11-13",
       kind: "leave",
       purpose: null,
-      subdivisionKey: "年休",
+      // The stored key; the cell line resolves it to the school's
+      // word （年休） through the bootstrap's subdivisions.
+      subdivisionKey: "annual",
     },
     {
       ...base,
@@ -695,7 +723,10 @@ export function createDevApi(): ScheduleApi {
     ],
     absences: fixtureAbsences(),
     daily: new Map<string, DailyValueData[]>(),
+    // A record's additional items (Issue #36), keyed by subject.
+    eventValues: new Map<string, EventValueData[]>(),
   };
+  let eventValueSeq = 0;
 
   /** The day's stored daily values, seeded from the fixture on
    *  first write (reads alone never copy them into the state). */
@@ -894,6 +925,37 @@ export function createDevApi(): ScheduleApi {
       if (index < 0) throw new Error("daily value not found");
       values.splice(index, 1);
       return { deleted: true as const };
+    },
+    // The quick-entry popover's item step (Issue #36): a record's
+    // additional items, held in memory like the rest of the state
+    // and rewritten as one set, as the server's action does.
+    async getEventValues(input) {
+      return structuredClone(state.eventValues.get(input.subjectId) ?? []);
+    },
+    async setEventValues(input) {
+      const rows: EventValueData[] = input.values.map((entry) => {
+        const itemDef = DEV_BOOTSTRAP.itemDefinitions.find((i) => i.id === entry.itemDefinitionId);
+        if (!itemDef) throw new Error(`item definition not found: ${entry.itemDefinitionId}`);
+        const columns = columnsFor(itemDef, entry.value);
+        return {
+          id: `evv-${++eventValueSeq}`,
+          itemDefinitionId: entry.itemDefinitionId,
+          targetId: entry.target?.axis === "app" ? entry.target.id : null,
+          targetRef:
+            entry.target && entry.target.axis !== "app"
+              ? { axis: entry.target.axis, id: entry.target.id }
+              : null,
+          valueText: columns.valueText ?? null,
+          valueTime: columns.valueTime ?? null,
+          valueTimeEnd: columns.valueTimeEnd ?? null,
+          valueNumber: columns.valueNumber ?? null,
+          valueBoolean: columns.valueBoolean ?? null,
+          valueOptionId: columns.valueOptionId ?? null,
+          valuePersonId: columns.valuePersonId ?? null,
+        };
+      });
+      state.eventValues.set(input.subjectId, rows);
+      return structuredClone(rows);
     },
 
     async previewRotation(input) {
