@@ -1,5 +1,6 @@
 import { createApp } from "./app.js";
 import { loadAuthConfig } from "./auth/config.js";
+import { loadPublicReadConfig } from "./publicRead/routes.js";
 import {
   createAbsenceStoreFromEnv,
   createAbsenceSubdivisionStoreFromEnv,
@@ -33,6 +34,14 @@ createApp({
   events: { config: authConfig, authStore: store, eventStore },
   calendar: { config: authConfig, authStore: store, dayStore, holidayStore },
   absences: { config: authConfig, authStore: store, absenceStore, subdivisionStore },
+  publicRead: {
+    authStore: store,
+    dayStore,
+    holidayStore,
+    eventStore,
+    masterStore,
+    ...loadPublicReadConfig(),
+  },
 }).listen(port, () => {
   console.log(`platform listening on port ${port}`);
 });

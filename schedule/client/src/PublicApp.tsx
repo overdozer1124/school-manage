@@ -46,6 +46,7 @@ export function PublicApp({ api }: { api: PublicApi }) {
   const [anchor, setAnchor] = useState<string>(() => todayText());
   const [range, setRange] = useState<RangeData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
   const [rangeError, setRangeError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -60,7 +61,11 @@ export function PublicApp({ api }: { api: PublicApi }) {
         // A revoked or unknown token, or any other refusal, is
         // the same face to a reader: this URL cannot be used.
         // There is no sign-in to send them to — the URL is the
-        // whole credential.
+        // whole credential. The one different face is a 503: the
+        // server itself cannot answer now (Issue #82 review), so
+        // the reader is told to come back later instead of being
+        // told their URL is dead.
+        setUnavailable(e instanceof ApiError && e.status === 503);
         setError(
           e instanceof UnauthorizedError || e instanceof ApiError
             ? e.message
@@ -96,6 +101,16 @@ export function PublicApp({ api }: { api: PublicApi }) {
   const tableBoot = useMemo(() => (boot ? asTableBootstrap(boot) : null), [boot]);
 
   if (error) {
+    if (unavailable) {
+      return (
+        <div className="schedule-app">
+          <main className="notice" role="alert">
+            <h1>ただいま表示できません</h1>
+            <p>しばらく待ってから、もう一度開いてください。</p>
+          </main>
+        </div>
+      );
+    }
     return (
       <div className="schedule-app">
         <main className="notice" role="alert">

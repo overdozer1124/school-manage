@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   AuthAccessError,
   type AuthContext,
@@ -19,6 +19,7 @@ import { schoolCache } from "../src/db/schema.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { createPlatformApiClient, PlatformRelayError } from "../src/platformClient.js";
 import { hashPublicToken } from "../src/publicViews/actions.js";
+import { createPublicPlatformClient } from "../src/publicViews/publicPlatform.js";
 import * as tokensStore from "../src/db/publicTokens.js";
 import * as schoolCacheStore from "../src/db/schoolCache.js";
 
@@ -29,9 +30,17 @@ import * as schoolCacheStore from "../src/db/schoolCache.js";
 // is judged on top of it: what the public bundle must never carry
 // (duties, names, assignees, absences) is absent even though the
 // school's data holds all of it for the staff view of the same day.
+//
+// Since Issue #82 the public actions read through the platform's
+// public-read path, with the service credential and the school and
+// audience named — the fake serves that path the way the real
+// platform does (credential checked, staff audience refused, the
+// public response shapes), and the member paths stay for the
+// staff-side actions the setup drives.
 const url = process.env.SCHEDULE_DATABASE_URL;
 
 const COOKIE = "platform_session=test-token";
+const PUBLIC_TOKEN = "public-read-test-token";
 const SCHOOL = "school-41";
 const DATE = "2027-10-02";
 const FROM = "2027-10-01";
@@ -104,6 +113,9 @@ class FakePlatform {
     "day-patterns": [{ id: "pattern-a", code: "A", name: "A日課" }],
   };
   subdivisions: Record_[] = [{ id: "subdiv-annual", code: "leave", key: "annual", label: "年休" }];
+  /** Every request the fake received, as "METHOD /path" (no query),
+   *  so a test can judge which paths a layer actually called. */
+  requests: string[] = [];
   /** When true, /auth/me answers 503: for the school-cache
    *  sync at token issuance, the platform does not answer
    *  (Issue #41 re-review). */
@@ -115,15 +127,96 @@ class FakePlatform {
     const params = new URLSearchParams(query);
     const method = init?.method ?? "GET";
     const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record_) : null;
-    return Promise.resolve(this.route(method, path as string, params, body));
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    this.requests.push(`${method} ${path}`);
+    return Promise.resolve(this.route(method, path as string, params, body, headers));
   };
+
+  /** The public shape of a record, as the real platform's
+   *  public-read path answers it: no school id, no revision, no
+   *  creator / updater stamps. */
+  private publicShape(record: Record_): Record_ {
+    const shaped = { ...record };
+    delete shaped["schoolId"];
+    delete shaped["revision"];
+    delete shaped["createdBy"];
+    delete shaped["updatedBy"];
+    delete shaped["updatedVia"];
+    return shaped;
+  }
+
+  /** The platform's public-read path (Issue #82), as the real one
+   *  serves it: the service credential is checked first, the
+   *  audience must be a public one, and the school is the one the
+   *  request names. Returns null when the path is not this path's. */
+  private publicReadRoute(
+    method: string,
+    path: string,
+    params: URLSearchParams,
+    headers: Record<string, string>,
+  ): Response | null {
+    if (!path.startsWith("/platform/api/v1/public-read/")) return null;
+    if (headers["authorization"] !== `Bearer ${PUBLIC_TOKEN}`) {
+      return jsonResponse(401, { error: "認証が必要です" });
+    }
+    const audience = params.get("audience");
+    if (audience !== "guardian" && audience !== "student" && audience !== "public") {
+      return jsonResponse(400, { error: "入力が正しくありません" });
+    }
+    if (params.get("schoolId") !== SCHOOL) {
+      return jsonResponse(404, { error: "見つかりません" });
+    }
+    const from = params.get("from") ?? "";
+    const to = params.get("to") ?? "";
+    if (method === "GET" && path === "/platform/api/v1/public-read/school") {
+      return jsonResponse(200, { schoolId: SCHOOL, name: "テスト学校", slug: "test" });
+    }
+    if (method === "GET" && path === "/platform/api/v1/public-read/calendar/days") {
+      return jsonResponse(200, {
+        items: this.days
+          .filter((d) => (d.date as string) >= from && (d.date as string) <= to)
+          .map((d) => this.publicShape(d)),
+      });
+    }
+    if (method === "GET" && path === "/platform/api/v1/public-read/calendar/holidays") {
+      return jsonResponse(200, {
+        items: this.holidays
+          .filter((h) => (h.date as string) >= from && (h.date as string) <= to)
+          .map((h) => this.publicShape(h)),
+      });
+    }
+    if (method === "GET" && path === "/platform/api/v1/public-read/calendar/events") {
+      const inRange = [...this.events.values()].filter((e) =>
+        eventInRange(
+          e as { datePrecision: "day"; startsOn: string | null; endsOn: string | null },
+          from,
+          to,
+        ),
+      );
+      const visible = filterVisible(
+        inRange as { visibility: "staff_only" }[],
+        audience,
+      ) as Record_[];
+      const items = visible.map((event) =>
+        this.publicShape(forAudience(event as { assignees: unknown[] }, audience) as Record_),
+      );
+      return jsonResponse(200, { items });
+    }
+    if (method === "GET" && path === "/platform/api/v1/public-read/masters/grades") {
+      return jsonResponse(200, { items: this.masters["grades"] ?? [] });
+    }
+    return jsonResponse(404, { error: "見つかりません" });
+  }
 
   private route(
     method: string,
     path: string,
     params: URLSearchParams,
     body: Record_ | null,
+    headers: Record<string, string> = {},
   ): Response {
+    const publicRead = this.publicReadRoute(method, path, params, headers);
+    if (publicRead) return publicRead;
     const from = params.get("from") ?? "";
     const to = params.get("to") ?? "";
     if (method === "GET" && path === "/platform/api/v1/calendar/days") {
@@ -219,6 +312,7 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
   let db: Db;
   let actions: ReturnType<typeof createScheduleActions>;
   let publicActions: ReturnType<typeof createSchedulePublicActions>;
+  let fake: FakePlatform;
   let guardianToken = "";
   let guardianTokenId = "";
 
@@ -233,13 +327,20 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     db = created.db;
     queryClient = created.queryClient;
     await runMigrations(db);
-    const fake = new FakePlatform();
+    fake = new FakePlatform();
     const client = createPlatformApiClient({
       baseUrl: "http://platform.test",
       fetchImpl: fake.fetch,
     });
     actions = createScheduleActions(db, client, COOKIE);
-    publicActions = createSchedulePublicActions(db, client);
+    publicActions = createSchedulePublicActions(
+      db,
+      createPublicPlatformClient({
+        baseUrl: "http://platform.test",
+        serviceToken: PUBLIC_TOKEN,
+        fetchImpl: fake.fetch,
+      }),
+    );
     const adminA = auth("Admin");
     const editorA = auth("Editor");
 
@@ -501,14 +602,42 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     expect(itemIds).not.toContain("item-staff-note");
     const contact = values.find((v) => v["itemDefinitionId"] === "item-contact") as Record_;
     expect(contact["valuePersonId"]).toBeNull();
+    // The values' creator / updater stamps are person ids too:
+    // they do not ride along (Issue #82).
+    const lunch = values.find((v) => v["itemDefinitionId"] === "item-lunch") as Record_;
+    expect(lunch["createdBy"]).toBeUndefined();
+    expect(lunch["updatedBy"]).toBeUndefined();
     // Nothing in the whole payload names a person or a duty.
     const text = JSON.stringify(range);
     expect(text).not.toContain("先生A");
     expect(text).not.toContain("teacher-a1");
+    expect(text).not.toContain("user-41");
     expect(text).not.toContain("職員会議");
     expect(text).not.toContain("職員だけのメモ");
     expect(text).not.toContain("日直");
     expect(text).not.toContain("年休");
+  });
+
+  it("the public actions read through the public-read path and never call /auth/me", async () => {
+    // Issue #82: the school's name, the holidays, the grades and
+    // the range's platform reads all go to the public-read path,
+    // with the service credential — the session-shaped member
+    // paths (and /auth/me above all, which a session-less read
+    // cannot answer) are not called at all.
+    fake.requests.length = 0;
+    await publicActions.getPublicBootstrap.run({ token: guardianToken, slug: "test" });
+    await publicActions.getPublicRange.run({
+      token: guardianToken,
+      slug: "test",
+      from: FROM,
+      to: TO,
+    });
+    expect(fake.requests.length).toBeGreaterThan(0);
+    for (const entry of fake.requests) {
+      expect(entry).toContain("/platform/api/v1/public-read/");
+    }
+    expect(fake.requests.some((entry) => entry.includes("/auth/me"))).toBe(false);
+    expect(fake.requests.some((entry) => entry.includes("/calendar/absences"))).toBe(false);
   });
 
   it("an unknown token is a 404 and a revoked token is a 401", async () => {
@@ -644,6 +773,55 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     })) as Record_;
     expect(typeof reissued["token"]).toBe("string");
     expect(await schoolCacheStore.findSchoolIdBySlug(db, "test")).toBe(SCHOOL);
+  });
+
+  it("a platform that refuses the service credential answers 503, not the token's 401", async () => {
+    // Issue #82 review: when the two servers' service
+    // credentials disagree, the platform's public-read path
+    // answers 401. That is an operations fault, and the public
+    // actions must not pass the 401 on to the reader — it is
+    // the revoked token's face, and this token is not revoked.
+    // They answer 503 instead, and the fault reaches the server
+    // log without the credential's value in it. The token's own
+    // verdicts are untouched: they are given before any platform
+    // call (the revoked token's 401 above is one).
+    const misconfigured = createSchedulePublicActions(
+      db,
+      createPublicPlatformClient({
+        baseUrl: "http://platform.test",
+        serviceToken: "not-the-platforms-token",
+        fetchImpl: fake.fetch,
+      }),
+    );
+    const logged: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      logged.push(args);
+    });
+    try {
+      const bootError = await misconfigured.getPublicBootstrap
+        .run({ token: guardianToken, slug: "test" })
+        .catch((e: unknown) => e);
+      expect(bootError).toBeInstanceOf(PlatformRelayError);
+      expect((bootError as PlatformRelayError).status).toBe(503);
+      expect((bootError as PlatformRelayError).body).toEqual({
+        error: "ただいま表示できません",
+      });
+
+      const rangeError = await misconfigured.getPublicRange
+        .run({ token: guardianToken, slug: "test", from: FROM, to: TO })
+        .catch((e: unknown) => e);
+      expect(rangeError).toBeInstanceOf(PlatformRelayError);
+      expect((rangeError as PlatformRelayError).status).toBe(503);
+      expect((rangeError as PlatformRelayError).body).toEqual({
+        error: "ただいま表示できません",
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logged.length).toBeGreaterThan(0);
+    const logText = JSON.stringify(logged);
+    expect(logText).not.toContain("not-the-platforms-token");
+    expect(logText).not.toContain(PUBLIC_TOKEN);
   });
 
   it("the public actions cannot be registered where secure actions are required", () => {
