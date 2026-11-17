@@ -12,16 +12,19 @@ import { ABSENCE_KINDS, newRowId, Section, type SectionCtx } from "./shared";
  * the absence modal and the quick-entry popover offer, through
  * the bootstrap the App reads again after every save.
  *
- * There is no stored display order to edit: the platform returns
- * the definitions by kind, then by key, and the modal offers
- * them in that order — so the key is the order, and the form
- * says so. A key is chosen only when a classification is added:
- * absences name their classification by its key, so the
- * platform cannot move a key a record already uses, and the
- * form never offers to change an existing one (only the name
- * is editable). Deleting a classification an absence still
- * uses is the platform's call to refuse; the refusal arrives
- * as a wording the panel's error line can show as-is.
+ * Each classification carries its own display order within its
+ * kind (Issue #91): the platform returns the definitions by
+ * kind, then that order, and the modal offers them in it. The
+ * 上へ・下へ buttons move a row within its kind and rewrite
+ * the kind's orders as steps of ten, so a move is one save per
+ * row whose number changed. A key is chosen only when a
+ * classification is added: absences name their classification
+ * by its key, so the platform cannot move a key a record
+ * already uses, and the form never offers to change an existing
+ * one (only the name is editable). Deleting a classification
+ * an absence still uses is the platform's call to refuse; the
+ * refusal arrives as a wording the panel's error line can show
+ * as-is.
  */
 export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
   const { subdivisions, setSubdivisions, api, run, busy, deleteButton, setNotice } = ctx;
@@ -38,6 +41,38 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
     setSubdivisions(items);
   };
 
+  /** Moves a classification one step within its kind (Issue
+   *  #91): the kind's rows are renumbered in steps of ten in
+   *  their new order, and every row whose number changed is
+   *  saved, so the stored order and the shown order cannot
+   *  drift apart even if two rows shared a number. */
+  const move = (rows: AbsenceSubdivisionData[], record: AbsenceSubdivisionData, dir: -1 | 1) =>
+    void run(async () => {
+      const index = rows.findIndex((s) => s.id === record.id);
+      const target = index + dir;
+      if (index < 0 || target < 0 || target >= rows.length) return;
+      const reordered = [...rows];
+      const [moved] = reordered.splice(index, 1);
+      if (!moved) return;
+      reordered.splice(target, 0, moved);
+      for (const [i, row] of reordered.entries()) {
+        const sort = (i + 1) * 10;
+        if (row.sort === sort) continue;
+        await api.updateSubdivision({
+          id: row.id,
+          record: {
+            id: row.id,
+            code: row.code,
+            key: row.key,
+            label: row.label,
+            revision: row.revision,
+            sort,
+          },
+        });
+      }
+      await refresh();
+    });
+
   const openForm = (code: string, record: AbsenceSubdivisionData | null) =>
     setForm({
       id: record?.id ?? null,
@@ -50,7 +85,7 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
   return (
     <Section title="休暇分類（不在の分類）">
       <p className="dim">
-        不在の分類は共通基盤の定義です。並びは種類・キーの順で決まり、モーダルの選択肢もこの順に出ます。キーは追加のときに決めるもので、あとから変更はできません（名前は変更できます）。
+        不在の分類は共通基盤の定義です。並びは種類ごとに付けた順番で決まり、モーダルの選択肢もこの順に出ます。「上へ」「下へ」で順番を変えられます。キーは追加のときに決めるもので、あとから変更はできません（名前は変更できます）。
       </p>
       {ABSENCE_KINDS.map((kind) => {
         const rows = (subdivisions ?? []).filter((s) => s.code === kind.code);
@@ -58,11 +93,25 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
           <div key={kind.code}>
             <h4>{kind.label}</h4>
             <ul className="settings-list">
-              {rows.map((record) => (
+              {rows.map((record, index) => (
                 <li key={record.id}>
                   <span>
                     {record.label}（キー：{record.key}）
                   </span>{" "}
+                  <button
+                    type="button"
+                    disabled={busy || index === 0}
+                    onClick={() => move(rows, record, -1)}
+                  >
+                    上へ
+                  </button>{" "}
+                  <button
+                    type="button"
+                    disabled={busy || index === rows.length - 1}
+                    onClick={() => move(rows, record, 1)}
+                  >
+                    下へ
+                  </button>{" "}
                   <button type="button" disabled={busy} onClick={() => openForm(kind.code, record)}>
                     編集
                   </button>{" "}

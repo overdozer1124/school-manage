@@ -240,20 +240,24 @@ export const DEV_BOOTSTRAP: BootstrapData = {
     { id: "loc-music", name: "音楽室", kind: null, sort: 2, isActive: true },
     { id: "loc-field", name: "運動場", kind: null, sort: 3, isActive: true },
   ],
+  // The shipped defaults carry the platform's apply-defaults
+  // order (Issue #91): 年休・特休・夏特・病休・看護・振休・
+  // 職専免・その他, in steps of ten.
   absenceSubdivisions: [
-    ["annual", "年休"],
-    ["sick", "病休"],
-    ["special", "特休"],
-    ["summer_special", "夏特"],
-    ["nursing", "看護"],
-    ["duty_exempt", "職専免"],
-    ["compensatory", "振休"],
-    ["other", "その他"],
-  ].map(([key, label]) => ({
+    ["annual", "年休", 10],
+    ["special", "特休", 20],
+    ["summer_special", "夏特", 30],
+    ["sick", "病休", 40],
+    ["nursing", "看護", 50],
+    ["compensatory", "振休", 60],
+    ["duty_exempt", "職専免", 70],
+    ["other", "その他", 80],
+  ].map(([key, label, sort]) => ({
     id: `subdiv-leave-${key}`,
     code: "leave",
     key: key as string,
     label: label as string,
+    sort: sort as number,
     revision: 1,
   })),
   inputOpener: "popover",
@@ -783,9 +787,19 @@ export function createDevApi(): ScheduleApi {
     ],
   };
 
+  // The platform's subdivision order (Issue #91): by kind,
+  // then the school's sort, then key. The bootstrap's
+  // subdivisions come from the platform's list on the real
+  // path, so both reads sort the boot copy the same way.
+  const subdivisionsInOrder = (): AbsenceSubdivisionData[] =>
+    [...boot.absenceSubdivisions].sort((a, b) =>
+      a.code === b.code ? a.sort - b.sort || (a.key < b.key ? -1 : 1) : a.code < b.code ? -1 : 1,
+    );
+
   const bootstrapNow = (): BootstrapData =>
     structuredClone({
       ...boot,
+      absenceSubdivisions: subdivisionsInOrder(),
       masters: {
         staff: mastersState.staff.map((s) => ({ id: String(s["id"]), name: String(s["name"]) })),
         grades: mastersState.grade.map((g) => ({ id: String(g["id"]), name: String(g["name"]) })),
@@ -1685,10 +1699,7 @@ export function createDevApi(): ScheduleApi {
     // classification an absence still uses are refused, with
     // the relay's sentences.
     async getSubdivisions() {
-      const items = [...boot.absenceSubdivisions].sort((a, b) =>
-        a.code === b.code ? (a.key < b.key ? -1 : 1) : a.code < b.code ? -1 : 1,
-      );
-      return { items: structuredClone(items) };
+      return { items: structuredClone(subdivisionsInOrder()) };
     },
 
     async createSubdivision(input) {
@@ -1701,7 +1712,14 @@ export function createDevApi(): ScheduleApi {
       ) {
         throw new Error("同じ種類で同じキーの分類がすでにあります");
       }
-      const record = { ...input.record, revision: 1 };
+      // A create that names no sort goes after its kind's
+      // current entries, as on the platform.
+      const sort =
+        input.record.sort ??
+        boot.absenceSubdivisions
+          .filter((s) => s.code === input.record.code)
+          .reduce((max, s) => Math.max(max, s.sort), 0) + 10;
+      const record = { ...input.record, sort, revision: 1 };
       boot.absenceSubdivisions.push(record);
       return structuredClone(record);
     },
@@ -1723,7 +1741,10 @@ export function createDevApi(): ScheduleApi {
       ) {
         throw new Error("同じ種類で同じキーの分類がすでにあります");
       }
-      const record = { ...input.record, revision: existing.revision + 1 };
+      // The stored record is the base: a field the update does
+      // not name — the sort, when a rename sends none — keeps
+      // its stored value, as on the platform (Issue #91).
+      const record = { ...existing, ...input.record, revision: existing.revision + 1 };
       boot.absenceSubdivisions[index] = record;
       return structuredClone(record);
     },
@@ -1745,24 +1766,28 @@ export function createDevApi(): ScheduleApi {
     },
 
     async applyDefaultSubdivisions() {
-      const defaults: [string, string][] = [
-        ["annual", "年休"],
-        ["sick", "病休"],
-        ["special", "特休"],
-        ["summer_special", "夏特"],
-        ["nursing", "看護"],
-        ["duty_exempt", "職専免"],
-        ["compensatory", "振休"],
-        ["other", "その他"],
+      // The platform's defaults, with their apply-defaults sort
+      // values (Issue #91), in the order the platform's list
+      // defines them.
+      const defaults: [string, string, number][] = [
+        ["annual", "年休", 10],
+        ["sick", "病休", 40],
+        ["special", "特休", 20],
+        ["summer_special", "夏特", 30],
+        ["nursing", "看護", 50],
+        ["duty_exempt", "職専免", 70],
+        ["compensatory", "振休", 60],
+        ["other", "その他", 80],
       ];
       const created: AbsenceSubdivisionData[] = [];
-      for (const [key, label] of defaults) {
+      for (const [key, label, sort] of defaults) {
         if (boot.absenceSubdivisions.some((s) => s.code === "leave" && s.key === key)) continue;
         const record: AbsenceSubdivisionData = {
           id: `subdiv-leave-${key}`,
           code: "leave",
           key,
           label,
+          sort,
           revision: 1,
         };
         boot.absenceSubdivisions.push(record);

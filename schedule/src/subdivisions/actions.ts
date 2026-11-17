@@ -25,9 +25,13 @@ const SUBDIVISIONS_PATH = "/platform/api/v1/calendar/absence-subdivisions";
  *  a revision conflict always carries the current record, and
  *  that answer passes through untouched) into the specific
  *  reason, in the platform's own refusal shape so the settings
- *  screen shows it as-is. */
+ *  screen shows it as-is. Since Issue #91 the platform names
+ *  the reason in the body's `code` (duplicate / in_use /
+ *  key_in_use), and the translation follows it; a 409 without
+ *  a code takes the caller's fallback wording, as before. */
 const IN_USE_MESSAGE = "この分類は不在で使われているため削除できません";
 const DUPLICATE_MESSAGE = "同じ種類で同じキーの分類がすでにあります";
+const KEY_IN_USE_MESSAGE = "この分類は不在で使われているためキーは変更できません";
 
 /**
  * The absence-subdivision relay (Issue #84): the settings screen
@@ -55,13 +59,17 @@ export function createSubdivisionRelayActions(platformClient: PlatformApiClient)
     path: string,
     cookie: string,
     body?: unknown,
-    conflictMessage?: string,
+    conflictMessages?: Record<string, string>,
   ): Promise<unknown> {
     const result: PlatformApiResult = await platformClient.requestJson(method, path, cookie, body);
-    if (result.status === 409 && conflictMessage) {
-      const bodyObject = result.body as { latest?: unknown } | null;
+    if (result.status === 409 && conflictMessages) {
+      const bodyObject = result.body as { latest?: unknown; code?: unknown } | null;
       if (!bodyObject || typeof bodyObject !== "object" || !("latest" in bodyObject)) {
-        throw new PlatformRelayError({ status: 409, body: { error: conflictMessage } });
+        const code = typeof bodyObject?.code === "string" ? bodyObject.code : undefined;
+        const message = (code && conflictMessages[code]) ?? conflictMessages["*"];
+        if (message) {
+          throw new PlatformRelayError({ status: 409, body: { error: message } });
+        }
       }
     }
     return unwrapPlatformResult(result);
@@ -75,7 +83,9 @@ export function createSubdivisionRelayActions(platformClient: PlatformApiClient)
 
     createSubdivision: scheduleAction("school.admin", async ({ request }) => {
       const input = createSubdivisionInputSchema.parse(request);
-      return relay("POST", SUBDIVISIONS_PATH, input.cookie, input.record, DUPLICATE_MESSAGE);
+      return relay("POST", SUBDIVISIONS_PATH, input.cookie, input.record, {
+        "*": DUPLICATE_MESSAGE,
+      });
     }),
 
     updateSubdivision: scheduleAction("school.admin", async ({ request }) => {
@@ -88,7 +98,7 @@ export function createSubdivisionRelayActions(platformClient: PlatformApiClient)
         `${SUBDIVISIONS_PATH}/${encodeURIComponent(input.id)}`,
         input.cookie,
         input.record,
-        DUPLICATE_MESSAGE,
+        { duplicate: DUPLICATE_MESSAGE, key_in_use: KEY_IN_USE_MESSAGE, "*": DUPLICATE_MESSAGE },
       );
     }),
 
@@ -99,7 +109,7 @@ export function createSubdivisionRelayActions(platformClient: PlatformApiClient)
         `${SUBDIVISIONS_PATH}/${encodeURIComponent(input.id)}`,
         input.cookie,
         { revision: input.revision },
-        IN_USE_MESSAGE,
+        { "*": IN_USE_MESSAGE },
       );
       return { deleted: true };
     }),

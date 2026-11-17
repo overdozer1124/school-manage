@@ -78,6 +78,10 @@ describe.skipIf(!url)("staff absences", () => {
     revision?: number;
     certainty?: string;
     subdivisionKey?: string;
+    key?: string;
+    label?: string;
+    sort?: number;
+    code?: string;
     items?: EntryJson[];
     latest?: Record<string, unknown>;
     error?: string;
@@ -1039,5 +1043,126 @@ describe.skipIf(!url)("staff absences", () => {
     expect(moved.json.fromDate).toBe("2026-11-12");
     expect(moved.json.toDate).toBe("2026-11-13");
     expect(moved.json.revision).toBe(2);
+  });
+
+  it("lists the subdivisions in the school's sort order, and a changed sort moves them (Issue #91)", async () => {
+    // School B starts empty: the defaults land with the
+    // apply-defaults order, not the key's alphabetical one —
+    // その他 is last, not in the middle.
+    const seeded = await api("POST", `${SUBDIVISIONS}/apply-defaults`, {
+      cookie: editorB(),
+      body: {},
+    });
+    expect(seeded.status).toBe(201);
+    expect(seeded.json.items).toHaveLength(8);
+
+    const list = await api("GET", SUBDIVISIONS, { cookie: editorB() });
+    expect(list.status).toBe(200);
+    expect(list.json.items?.map((i) => i.label)).toEqual([
+      "年休",
+      "特休",
+      "夏特",
+      "病休",
+      "看護",
+      "振休",
+      "職専免",
+      "その他",
+    ]);
+    expect(list.json.items?.map((i) => i.sort)).toEqual([10, 20, 30, 40, 50, 60, 70, 80]);
+
+    // Move その他 to the front: the list follows the new sort.
+    const other = list.json.items?.find((i) => i.key === "other");
+    if (!other?.id || !other.revision) throw new Error("no その他 in school B");
+    const moved = await api("PUT", `${SUBDIVISIONS}/${other.id}`, {
+      cookie: editorB(),
+      body: {
+        id: other.id,
+        code: "leave",
+        key: "other",
+        label: "その他",
+        sort: 5,
+        revision: other.revision,
+      },
+    });
+    expect(moved.status).toBe(200);
+    expect(moved.json.sort).toBe(5);
+
+    const after = await api("GET", SUBDIVISIONS, { cookie: editorB() });
+    expect(after.json.items?.map((i) => i.label)).toEqual([
+      "その他",
+      "年休",
+      "特休",
+      "夏特",
+      "病休",
+      "看護",
+      "振休",
+      "職専免",
+    ]);
+
+    // A create that names no sort is appended after its kind
+    // (the current last sort is 職専免's 70, so it lands at 80),
+    // and an update that names none keeps the stored sort.
+    const appended = await api("POST", SUBDIVISIONS, {
+      cookie: editorB(),
+      body: { id: "subdiv-b-care", code: "leave", key: "care", label: "介護" },
+    });
+    expect(appended.status).toBe(201);
+    expect(appended.json.sort).toBe(80);
+    const renamed = await api("PUT", `${SUBDIVISIONS}/subdiv-b-care`, {
+      cookie: editorB(),
+      body: {
+        id: "subdiv-b-care",
+        code: "leave",
+        key: "care",
+        label: "介護休暇",
+        revision: 1,
+      },
+    });
+    expect(renamed.status).toBe(200);
+    expect(renamed.json.sort).toBe(80);
+    const final = await api("GET", SUBDIVISIONS, { cookie: editorB() });
+    const finalItems = final.json.items ?? [];
+    expect(finalItems[finalItems.length - 1]?.label).toBe("介護休暇");
+  });
+
+  it("answers a key change on a used subdivision with a named 409, not a 500 (Issue #91)", async () => {
+    // School B's 年休， used by an absence.
+    const used = await api("POST", ABSENCES, {
+      cookie: editorB(),
+      body: absenceInput("abs-b-annual", { subdivisionKey: "annual" }),
+    });
+    expect(used.status).toBe(201);
+
+    const list = await api("GET", SUBDIVISIONS, { cookie: editorB() });
+    const annual = list.json.items?.find((i) => i.key === "annual");
+    if (!annual?.id || !annual.revision) throw new Error("no 年休 in school B");
+
+    const keyChange = await api("PUT", `${SUBDIVISIONS}/${annual.id}`, {
+      cookie: editorB(),
+      body: {
+        id: annual.id,
+        code: "leave",
+        key: "nenkyu",
+        label: "年休",
+        sort: annual.sort,
+        revision: annual.revision,
+      },
+    });
+    expect(keyChange.status).toBe(409);
+    expect(keyChange.json.code).toBe("key_in_use");
+
+    // The delete of the same used subdivision is a different
+    // 409, and the two tell each other apart by the code.
+    const deleteInUse = await api("DELETE", `${SUBDIVISIONS}/${annual.id}`, {
+      cookie: editorB(),
+      body: { revision: annual.revision },
+    });
+    expect(deleteInUse.status).toBe(409);
+    expect(deleteInUse.json.code).toBe("in_use");
+
+    // Nothing moved: the key is still annual, still listed.
+    const after = await api("GET", SUBDIVISIONS, { cookie: editorB() });
+    expect(after.json.items?.map((i) => i.key)).toContain("annual");
+    expect(after.json.items?.map((i) => i.key)).not.toContain("nenkyu");
   });
 });
