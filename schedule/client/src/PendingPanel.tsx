@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { ApiError, type ScheduleApi } from "./api";
 import { absenceKindLabel, dayLabel, pendingRange, staffName } from "./lib";
+import { useDialogFocus } from "./useDialogFocus";
 import type { BootstrapData, PendingRecord } from "./types";
 
 /**
@@ -35,6 +36,11 @@ export function PendingPanel({
   /** A settled entry changed the table behind the panel. */
   onChanged: () => void;
 }) {
+  // The shared dialog discipline (Issue #89): initial focus,
+  // the Tab trap, Esc to close and focus restoration on close
+  // live in useDialogFocus.
+  const dialogRef = useDialogFocus<HTMLDivElement>(onClose);
+  const headingId = useId();
   const [absences, setAbsences] = useState<PendingRecord[] | null>(null);
   const [events, setEvents] = useState<PendingRecord[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -89,9 +95,16 @@ export function PendingPanel({
 
   return (
     <div className="duty-panel-overlay">
-      <div className="duty-panel" role="dialog" aria-modal="true" aria-label="確認待ち">
+      <div
+        ref={dialogRef}
+        className="duty-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        tabIndex={-1}
+      >
         <div className="duty-panel-head">
-          <h2>確認待ちの一覧</h2>
+          <h2 id={headingId}>確認待ちの一覧</h2>
           <button type="button" aria-label="閉じる" onClick={onClose}>
             閉じる
           </button>

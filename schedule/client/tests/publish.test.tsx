@@ -22,7 +22,7 @@ describe("publishing panel (Issue #40)", () => {
     await screen.findByText("開発用小学校");
 
     fireEvent.click(screen.getByRole("button", { name: "発行・印刷" }));
-    const dialog = await screen.findByRole("dialog", { name: "発行と印刷" });
+    const dialog = await screen.findByRole("dialog", { name: /発行・印刷（/ });
     const inDialog = within(dialog);
     expect(inDialog.getByText("まだ発行されていません。")).toBeInTheDocument();
 

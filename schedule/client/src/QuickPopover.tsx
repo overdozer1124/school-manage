@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
-import { isCommitEnter, isImeKeyEvent } from "./cells";
+import { isCommitEnter } from "./cells";
+import { useDialogFocus } from "./useDialogFocus";
 import { ClockPicker } from "./ClockPicker";
 import { absenceLineText, eventTitle, matchStaffByName, normalizeName } from "./lib";
 import type {
@@ -185,7 +186,12 @@ export function QuickPopover({
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [placement, setPlacement] = useState({ up: false, right: false });
-  const rootRef = useRef<HTMLDivElement>(null);
+  // The shared dialog discipline (Issue #89): the popover is
+  // treated as a modal dialog while it is open — see the PR
+  // body for the reasoning. useDialogFocus brings the Tab
+  // trap, Esc to close and focus restoration; the ref also
+  // serves the placement and outside-click reads below.
+  const rootRef = useDialogFocus<HTMLDivElement>(onClose);
 
   const step = steps[stepIndex] as PopStep | undefined;
   const subjectKind = target.subjectKind;
@@ -233,20 +239,6 @@ export function QuickPopover({
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [onClose]);
-
-  // Esc closes the popover wherever the focus sits (6.5): the
-  // root's own key handler covers focus inside the popover, and
-  // this document-level one covers the rest — a step that holds
-  // no focusable control of its own must not strand the keyboard.
-  // An Esc that cancels an IME conversion is the conversion's,
-  // not the popover's.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.isComposing) onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
   // The item step reads the record's current values when it opens.
@@ -619,13 +611,9 @@ export function QuickPopover({
       ref={rootRef}
       className={`quick-popover${placement.up ? " flip-up" : ""}${placement.right ? " flip-right" : ""}`}
       role="dialog"
+      aria-modal="true"
       aria-label={`${title}のクイック入力`}
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && !isImeKeyEvent(e)) {
-          e.stopPropagation();
-          onClose();
-        }
-      }}
+      tabIndex={-1}
     >
       <div className="quick-popover-head">
         <span className="quick-popover-title">{title}</span>

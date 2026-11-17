@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
-import { buildFreeTextEntry, buildTitleOnlyEntry, isImeKeyEvent } from "./cells";
+import { buildFreeTextEntry, buildTitleOnlyEntry } from "./cells";
+import { useDialogFocus } from "./useDialogFocus";
 import { eventValueInputOf } from "./QuickPopover";
 import {
   formatIssuedAt,
@@ -87,6 +88,11 @@ export function DetailModal({
   onClose(): void;
 }) {
   const { subjectKind, template } = target;
+  // The shared dialog discipline (Issue #89): initial focus,
+  // the Tab trap, Esc to close (never on an IME conversion's
+  // Esc) and focus restoration on close live in useDialogFocus.
+  const dialogRef = useDialogFocus<HTMLDivElement>(onClose);
+  const headingId = useId();
   const isViewer = bootstrap.role === "Viewer";
   const [record, setRecord] = useState(target.record);
   const recordId = stringField(record, "id") ?? "";
@@ -223,22 +229,6 @@ export function DetailModal({
     };
     // The form opens on one record; the read happens once.
   }, []);
-
-  // Esc closes the modal wherever the focus sits, as with the
-  // quick-entry popover (PR #77): the dialog's own key handler
-  // covers focus inside the modal, and this document-level one
-  // covers the rest — a click on an empty part of the modal can
-  // move focus out to the cell behind it (mousedown moves focus
-  // even though the click itself is stopped), and Esc must still
-  // close the modal from there. An Esc that cancels an IME
-  // conversion is the conversion's, not the modal's.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.isComposing) onClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
 
   const periods = periodChoicesOf(bootstrap, target.dayScheduleId);
   const heading = `${template.name}の詳細`;
@@ -574,20 +564,15 @@ export function DetailModal({
       }}
     >
       <div
+        ref={dialogRef}
         className="duty-panel detail-modal"
         role="dialog"
         aria-modal="true"
-        aria-label={heading}
+        aria-labelledby={headingId}
         tabIndex={-1}
-        onKeyDown={(e) => {
-          if (e.key === "Escape" && !isImeKeyEvent(e)) {
-            e.stopPropagation();
-            onClose();
-          }
-        }}
       >
         <div className="duty-panel-head">
-          <h2>{heading}</h2>
+          <h2 id={headingId}>{heading}</h2>
           <button type="button" onClick={onClose}>
             閉じる
           </button>

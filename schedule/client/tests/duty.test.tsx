@@ -189,7 +189,7 @@ describe("duty marks and the panel, against the development adapter", () => {
 
     // Open the panel and arrange a substitute for the trip day.
     fireEvent.click(screen.getByRole("button", { name: /当番・競合/ }));
-    const dialog = await screen.findByRole("dialog", { name: "当番と競合" });
+    const dialog = await screen.findByRole("dialog", { name: "当番・競合・交代" });
     expect(within(dialog).getByText(/11\/12（木）/)).toBeInTheDocument();
     fireEvent.click(
       within(dialog).getAllByRole("button", { name: "交代を手配する" })[0] as HTMLElement,
@@ -375,7 +375,7 @@ describe("the rotation preview in the panel", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(await screen.findByRole("button", { name: /当番・競合/ }));
-    const dialog = await screen.findByRole("dialog", { name: "当番と競合" });
+    const dialog = await screen.findByRole("dialog", { name: "当番・競合・交代" });
 
     fireEvent.click(within(dialog).getByRole("button", { name: "プレビュー" }));
     expect(

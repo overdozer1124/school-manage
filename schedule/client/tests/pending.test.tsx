@@ -21,7 +21,7 @@ describe("confirmation queue (Issue #39)", () => {
     await screen.findByText("開発用小学校");
 
     fireEvent.click(screen.getByRole("button", { name: "確認待ち" }));
-    const dialog = await screen.findByRole("dialog", { name: "確認待ち" });
+    const dialog = await screen.findByRole("dialog", { name: "確認待ちの一覧" });
     const inDialog = within(dialog);
 
     // The tentative trip (absence) and the two provisionals.

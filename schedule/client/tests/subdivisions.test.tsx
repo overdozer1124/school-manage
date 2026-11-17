@@ -30,7 +30,7 @@ async function openSettings() {
   render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
   await screen.findByText("開発用小学校");
   fireEvent.click(screen.getByRole("button", { name: "設定" }));
-  const dialog = await screen.findByRole("dialog", { name: "設定" });
+  const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
   const inDialog = within(dialog);
   // The section's rows land with the panel's loads.
   await waitFor(() => expect(inDialog.queryByText("年休（キー：annual）")).toBeInTheDocument(), {
@@ -75,7 +75,7 @@ describe("absence subdivisions in the settings (Issue #84)", () => {
 
     fireEvent.click(inDialog.getByRole("button", { name: "閉じる" }));
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "設定" })).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: "設定・マスタ" })).not.toBeInTheDocument(),
     );
 
     // The leave on 11/13: its classification select now offers
