@@ -31,6 +31,21 @@ const unusedWrites = {
   revokePublicViewToken: async (): Promise<never> => {
     throw new Error("not used");
   },
+  getSubdivisions: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  createSubdivision: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  updateSubdivision: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  deleteSubdivision: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  applyDefaultSubdivisions: async (): Promise<never> => {
+    throw new Error("not used");
+  },
   createEvent: async (): Promise<never> => {
     throw new Error("not used");
   },

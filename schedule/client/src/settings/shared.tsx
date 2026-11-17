@@ -1,5 +1,6 @@
 import type { ScheduleApi } from "../api";
 import type {
+  AbsenceSubdivisionData,
   BootstrapData,
   DefinitionSetData,
   DutyDefinitionData,
@@ -148,6 +149,11 @@ export interface SectionCtx {
   setDuties: React.Dispatch<React.SetStateAction<DutyDefinitionData[]>>;
   templates: KindTemplateData[];
   setTemplates: React.Dispatch<React.SetStateAction<KindTemplateData[]>>;
+  /** The school's absence subdivisions (Issue #84), loaded with
+   *  the definitions and masters and kept by the panel, as they
+   *  are the platform's records read through the relay. */
+  subdivisions: AbsenceSubdivisionData[] | null;
+  setSubdivisions: React.Dispatch<React.SetStateAction<AbsenceSubdivisionData[] | null>>;
   reloadDefinitions: () => Promise<void>;
   setNotice: (text: string | null) => void;
 }

@@ -9,6 +9,7 @@ import { createPublicationActions } from "./publications/actions.js";
 import { createPublicActions, createPublicTokenAdminActions } from "./publicViews/actions.js";
 import type { PublicPlatformClient } from "./publicViews/publicPlatform.js";
 import { createRangeActions } from "./range/actions.js";
+import { createSubdivisionRelayActions } from "./subdivisions/actions.js";
 import { createViewActions } from "./views/actions.js";
 
 /** The database handle type, taken from createRangeActions so this
@@ -56,6 +57,10 @@ export function createScheduleActions(db: Db, platformClient: PlatformApiClient,
     // The platform client rides along for the school-cache sync
     // at issuance (the public route's slug check reads it).
     ...createPublicTokenAdminActions(db, platformClient),
+    // Issue #84: the absence subdivisions' relay (school.admin) —
+    // the definitions live in the platform, the settings screen
+    // maintains them through here.
+    ...createSubdivisionRelayActions(platformClient),
   };
 }
 

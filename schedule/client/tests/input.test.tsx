@@ -522,6 +522,21 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
     revokePublicViewToken: async (): Promise<never> => {
       throw new Error("not used");
     },
+    getSubdivisions: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    createSubdivision: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    updateSubdivision: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    deleteSubdivision: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    applyDefaultSubdivisions: async (): Promise<never> => {
+      throw new Error("not used");
+    },
   };
   return { api, calls, control, state };
 }

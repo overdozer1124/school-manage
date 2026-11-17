@@ -119,6 +119,11 @@ describe("401 / 403 handling", () => {
       createPublicViewToken: fail,
       getPublicViewTokens: fail,
       revokePublicViewToken: fail,
+      getSubdivisions: fail,
+      createSubdivision: fail,
+      updateSubdivision: fail,
+      deleteSubdivision: fail,
+      applyDefaultSubdivisions: fail,
     };
   };
 

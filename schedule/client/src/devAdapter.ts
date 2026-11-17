@@ -22,6 +22,7 @@ import {
   weekdayLabel,
 } from "./lib";
 import type {
+  AbsenceSubdivisionData,
   BootstrapData,
   DailyValueData,
   DefinitionSetData,
@@ -252,6 +253,7 @@ export const DEV_BOOTSTRAP: BootstrapData = {
     code: "leave",
     key: key as string,
     label: label as string,
+    revision: 1,
   })),
   inputOpener: "popover",
   masters: {
@@ -1585,6 +1587,101 @@ export function createDevApi(): ScheduleApi {
       const index = list.findIndex((r) => r["id"] === input.id);
       if (index >= 0) list.splice(index, 1);
       return { deleted: true as const };
+    },
+
+    // The absence subdivisions (Issue #84): the settings screen
+    // maintains the boot copy, and getBootstrap reads it back, so
+    // a saved classification is what the absence modal offers —
+    // the same contract as the masters above. The platform's
+    // verdicts are mirrored in its wordings: a duplicate key, a
+    // key change on an existing classification, and a
+    // classification an absence still uses are refused, with
+    // the relay's sentences.
+    async getSubdivisions() {
+      const items = [...boot.absenceSubdivisions].sort((a, b) =>
+        a.code === b.code ? (a.key < b.key ? -1 : 1) : a.code < b.code ? -1 : 1,
+      );
+      return { items: structuredClone(items) };
+    },
+
+    async createSubdivision(input) {
+      if (
+        boot.absenceSubdivisions.some(
+          (s) =>
+            s.id === input.record.id ||
+            (s.code === input.record.code && s.key === input.record.key),
+        )
+      ) {
+        throw new Error("同じ種類で同じキーの分類がすでにあります");
+      }
+      const record = { ...input.record, revision: 1 };
+      boot.absenceSubdivisions.push(record);
+      return structuredClone(record);
+    },
+
+    async updateSubdivision(input) {
+      const index = boot.absenceSubdivisions.findIndex((s) => s.id === input.id);
+      if (index < 0) throw new Error(`subdivision not found: ${input.id}`);
+      const existing = boot.absenceSubdivisions[index] as AbsenceSubdivisionData;
+      if (input.record.revision !== existing.revision) {
+        throw new Error("ほかの人が先に変更しました");
+      }
+      if (input.record.code !== existing.code || input.record.key !== existing.key) {
+        throw new Error("すでにある分類のキーは変更できません");
+      }
+      if (
+        boot.absenceSubdivisions.some(
+          (s) => s.id !== input.id && s.code === input.record.code && s.key === input.record.key,
+        )
+      ) {
+        throw new Error("同じ種類で同じキーの分類がすでにあります");
+      }
+      const record = { ...input.record, revision: existing.revision + 1 };
+      boot.absenceSubdivisions[index] = record;
+      return structuredClone(record);
+    },
+
+    async deleteSubdivision(input) {
+      const record = boot.absenceSubdivisions.find((s) => s.id === input.id);
+      if (!record) throw new Error(`subdivision not found: ${input.id}`);
+      if (input.revision !== record.revision) {
+        throw new Error("ほかの人が先に変更しました");
+      }
+      const inUse = state.absences.some(
+        (a) => a["kind"] === record.code && a["subdivisionKey"] === record.key,
+      );
+      if (inUse) {
+        throw new Error("この分類は不在で使われているため削除できません");
+      }
+      boot.absenceSubdivisions = boot.absenceSubdivisions.filter((s) => s.id !== input.id);
+      return { deleted: true as const };
+    },
+
+    async applyDefaultSubdivisions() {
+      const defaults: [string, string][] = [
+        ["annual", "年休"],
+        ["sick", "病休"],
+        ["special", "特休"],
+        ["summer_special", "夏特"],
+        ["nursing", "看護"],
+        ["duty_exempt", "職専免"],
+        ["compensatory", "振休"],
+        ["other", "その他"],
+      ];
+      const created: AbsenceSubdivisionData[] = [];
+      for (const [key, label] of defaults) {
+        if (boot.absenceSubdivisions.some((s) => s.code === "leave" && s.key === key)) continue;
+        const record: AbsenceSubdivisionData = {
+          id: `subdiv-leave-${key}`,
+          code: "leave",
+          key,
+          label,
+          revision: 1,
+        };
+        boot.absenceSubdivisions.push(record);
+        created.push(record);
+      }
+      return { items: structuredClone(created) };
     },
 
     async getPendingAbsences() {
