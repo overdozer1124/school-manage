@@ -13,7 +13,10 @@ afterEach(cleanup);
 // reads again after every save. The development adapter stands
 // in for the two servers with the platform's verdicts mirrored:
 // a classification an absence still uses cannot be deleted, and
-// the refusal is a wording, not a raw error.
+// the refusal is a wording, not a raw error. An existing
+// classification's key cannot change either — absences name
+// their classification by key, so the form offers the key only
+// when adding, and the adapter refuses a changed key outright.
 
 function cellFor(date: string, columnIndex: number): HTMLElement {
   const row = document.querySelector(`tr[data-date="${date}"]`);
@@ -116,6 +119,45 @@ describe("absence subdivisions in the settings (Issue #84)", () => {
     );
     expect(inDialog.queryByText("年休（キー：annual）")).toBeInTheDocument();
   }, 20000);
+
+  it("an existing classification's key cannot be changed in the edit form", async () => {
+    const { inDialog } = await openSettings();
+
+    fireEvent.click(
+      within(rowOf(inDialog, "年休（キー：annual）")).getByRole("button", { name: "編集" }),
+    );
+    const keyInput = inDialog.getByLabelText("分類のキー") as HTMLInputElement;
+    expect(keyInput).toBeDisabled();
+    expect(keyInput.value).toBe("annual");
+
+    // The name still edits, and the saved row keeps its key.
+    fireEvent.change(inDialog.getByLabelText("分類の名前"), {
+      target: { value: "年次休暇" },
+    });
+    fireEvent.click(inDialog.getByRole("button", { name: "分類を保存" }));
+    await waitFor(
+      () => expect(inDialog.queryByText("年次休暇（キー：annual）")).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+  }, 20000);
+
+  it("the development adapter refuses a key change on an existing classification", async () => {
+    const api = createDevApi();
+    const { items } = await api.getSubdivisions();
+    const annual = items.find((s) => s.key === "annual");
+    if (!annual) throw new Error("no annual subdivision in the fixture");
+    await expect(
+      api.updateSubdivision({ id: annual.id, record: { ...annual, key: "nenkyu" } }),
+    ).rejects.toThrow("すでにある分類のキーは変更できません");
+
+    // A name-only update still goes through, key untouched.
+    const renamed = await api.updateSubdivision({
+      id: annual.id,
+      record: { ...annual, label: "年次休暇" },
+    });
+    expect(renamed.label).toBe("年次休暇");
+    expect(renamed.key).toBe("annual");
+  });
 
   it("applying the defaults brings back a deleted default classification", async () => {
     const { inDialog } = await openSettings();

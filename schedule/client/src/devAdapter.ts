@@ -1593,8 +1593,9 @@ export function createDevApi(): ScheduleApi {
     // maintains the boot copy, and getBootstrap reads it back, so
     // a saved classification is what the absence modal offers —
     // the same contract as the masters above. The platform's
-    // verdicts are mirrored in its wordings: a duplicate key and
-    // a classification an absence still uses are refused, with
+    // verdicts are mirrored in its wordings: a duplicate key, a
+    // key change on an existing classification, and a
+    // classification an absence still uses are refused, with
     // the relay's sentences.
     async getSubdivisions() {
       const items = [...boot.absenceSubdivisions].sort((a, b) =>
@@ -1624,6 +1625,9 @@ export function createDevApi(): ScheduleApi {
       const existing = boot.absenceSubdivisions[index] as AbsenceSubdivisionData;
       if (input.record.revision !== existing.revision) {
         throw new Error("ほかの人が先に変更しました");
+      }
+      if (input.record.code !== existing.code || input.record.key !== existing.key) {
+        throw new Error("すでにある分類のキーは変更できません");
       }
       if (
         boot.absenceSubdivisions.some(

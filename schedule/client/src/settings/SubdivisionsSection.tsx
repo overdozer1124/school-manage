@@ -15,10 +15,13 @@ import { ABSENCE_KINDS, newRowId, Section, type SectionCtx } from "./shared";
  * There is no stored display order to edit: the platform returns
  * the definitions by kind, then by key, and the modal offers
  * them in that order — so the key is the order, and the form
- * says so. Renaming a key an absence already names is the
- * platform's call to refuse, as is deleting a classification an
- * absence still uses; both refusals arrive as wordings the
- * panel's error line can show as-is.
+ * says so. A key is chosen only when a classification is added:
+ * absences name their classification by its key, so the
+ * platform cannot move a key a record already uses, and the
+ * form never offers to change an existing one (only the name
+ * is editable). Deleting a classification an absence still
+ * uses is the platform's call to refuse; the refusal arrives
+ * as a wording the panel's error line can show as-is.
  */
 export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
   const { subdivisions, setSubdivisions, api, run, busy, deleteButton, setNotice } = ctx;
@@ -47,7 +50,7 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
   return (
     <Section title="休暇分類（不在の分類）">
       <p className="dim">
-        不在の分類は共通基盤の定義です。並びは種類・キーの順で、モーダルの選択肢もこの順に出ます。並びを変えるときはキーを変更してください。
+        不在の分類は共通基盤の定義です。並びは種類・キーの順で決まり、モーダルの選択肢もこの順に出ます。キーは追加のときに決めるもので、あとから変更はできません（名前は変更できます）。
       </p>
       {ABSENCE_KINDS.map((kind) => {
         const rows = (subdivisions ?? []).filter((s) => s.code === kind.code);
@@ -120,6 +123,7 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
             <input
               aria-label="分類のキー"
               value={form.key}
+              disabled={form.id !== null}
               onChange={(e) => setForm({ ...form, key: e.target.value })}
             />
           </label>
