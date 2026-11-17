@@ -37,7 +37,7 @@ describe("settings screens (Issue #39)", () => {
     await screen.findByText("開発用小学校");
 
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     // Add the 会議 item definition (scenario 7).
@@ -83,7 +83,7 @@ describe("settings screens (Issue #39)", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     // New item: the default is closed — staff only (DESIGN 9).
@@ -108,7 +108,7 @@ describe("settings screens (Issue #39)", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     // Item definition: its daily values, event values and legend
@@ -141,7 +141,7 @@ describe("settings screens (Issue #39)", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     // Stop 日番 through the edit form's 使用中 checkbox (the
@@ -171,7 +171,7 @@ describe("settings screens (Issue #39)", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     const guardianRow = () => inDialog.getByText("保護者用月表").closest("li") as HTMLElement;
@@ -206,7 +206,7 @@ describe("settings screens (Issue #39)", () => {
     // On request the settings show it again, marked as off the
     // list; bringing it back restores it to both lists.
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog2 = await screen.findByRole("dialog", { name: "設定" });
+    const dialog2 = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog2 = within(dialog2);
     fireEvent.click(inDialog2.getByRole("button", { name: /一覧から外したビューを表示/ }));
     const archivedRow = () => inDialog2.getByText("保護者用月表").closest("li") as HTMLElement;
@@ -234,7 +234,7 @@ describe("settings screens (Issue #39)", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     // The guardian view's block lists the fixture token, issued
@@ -272,7 +272,7 @@ describe("settings screens (Issue #39)", () => {
       render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
       await screen.findByText("開発用小学校");
       fireEvent.click(screen.getByRole("button", { name: "設定" }));
-      const dialog = await screen.findByRole("dialog", { name: "設定" });
+      const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
       const inDialog = within(dialog);
       const viewRow = inDialog.getByText("保護者用月表").closest("li") as HTMLElement;
       const inView = within(viewRow);
@@ -302,7 +302,7 @@ describe("settings screens (Issue #39)", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     fireEvent.click(inDialog.getByRole("button", { name: "教職員を追加" }));
@@ -331,7 +331,7 @@ describe("settings screens (Issue #39)", () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
-    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
     // 給食 is a column of all three seeded views. The delete is

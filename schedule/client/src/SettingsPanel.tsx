@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import type { ScheduleApi } from "./api";
+import { useDialogFocus } from "./useDialogFocus";
 import type {
   AbsenceSubdivisionData,
   BootstrapData,
@@ -59,6 +60,11 @@ export function SettingsPanel({
   /** A saved setting changed the table behind the panel. */
   onChanged: () => void;
 }) {
+  // The shared dialog discipline (Issue #89): initial focus,
+  // the Tab trap, Esc to close and focus restoration on close
+  // live in useDialogFocus.
+  const dialogRef = useDialogFocus<HTMLDivElement>(onClose);
+  const headingId = useId();
   const [defs, setDefs] = useState<DefinitionSetData | null>(null);
   const [masters, setMasters] = useState<MastersData | null>(null);
   const [subdivisions, setSubdivisions] = useState<AbsenceSubdivisionData[] | null>(null);
@@ -170,9 +176,16 @@ export function SettingsPanel({
 
   return (
     <div className="duty-panel-overlay">
-      <div className="duty-panel settings-panel" role="dialog" aria-modal="true" aria-label="設定">
+      <div
+        ref={dialogRef}
+        className="duty-panel settings-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        tabIndex={-1}
+      >
         <div className="duty-panel-head">
-          <h2>設定・マスタ</h2>
+          <h2 id={headingId}>設定・マスタ</h2>
           <button type="button" aria-label="閉じる" onClick={onClose}>
             閉じる
           </button>

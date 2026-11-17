@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import type { ScheduleApi } from "./api";
 import { monthLabel } from "./lib";
+import { useDialogFocus } from "./useDialogFocus";
 import type {
   BootstrapData,
   PrintSettingsData,
@@ -42,6 +43,11 @@ export function PublishPanel({
   anchor: string;
   onClose: () => void;
 }) {
+  // The shared dialog discipline (Issue #89): initial focus,
+  // the Tab trap, Esc to close and focus restoration on close
+  // live in useDialogFocus.
+  const dialogRef = useDialogFocus<HTMLDivElement>(onClose);
+  const headingId = useId();
   const targetMonth = anchor.slice(0, 7);
   const canPublish = bootstrap.permissions.includes("publish");
   const [publications, setPublications] = useState<PublicationData[] | null>(null);
@@ -129,13 +135,15 @@ export function PublishPanel({
   return (
     <div className="duty-panel-overlay">
       <div
+        ref={dialogRef}
         className="duty-panel publish-panel"
         role="dialog"
         aria-modal="true"
-        aria-label="発行と印刷"
+        aria-labelledby={headingId}
+        tabIndex={-1}
       >
         <div className="duty-panel-head">
-          <h2>発行・印刷（{view.name}）</h2>
+          <h2 id={headingId}>発行・印刷（{view.name}）</h2>
           <button type="button" aria-label="閉じる" onClick={onClose}>
             閉じる
           </button>
