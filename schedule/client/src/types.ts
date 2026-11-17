@@ -147,6 +147,10 @@ export interface AbsenceSubdivisionData {
   code: string;
   key: string;
   label: string;
+  /** The school's display order within the kind (Issue #91):
+   *  the settings screen's 上へ・下へ rewrites these, and the
+   *  modal offers the subdivisions in this order. */
+  sort: number;
   /** The platform record's revision: an update or a delete from
    *  the settings screen carries the revision last read (Issue
    *  #84), as the shared masters' edits do. */

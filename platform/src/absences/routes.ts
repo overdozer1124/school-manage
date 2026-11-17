@@ -136,7 +136,17 @@ function handleError(res: Response, error: unknown): void {
     return;
   }
   if (error instanceof AbsenceConflictError) {
-    res.status(409).json({ error: "その操作は現在の状態と競合します" });
+    // A conflict that names its reason carries the code along
+    // (Issue #91): the sentence stays the shared one, but a
+    // caller can tell a subdivision's still-used delete from
+    // a still-used key change, which read the same until now.
+    res
+      .status(409)
+      .json(
+        error.code
+          ? { error: "その操作は現在の状態と競合します", code: error.code }
+          : { error: "その操作は現在の状態と競合します" },
+      );
     return;
   }
   if (error instanceof AbsenceReferenceError) {

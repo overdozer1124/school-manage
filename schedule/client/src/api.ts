@@ -226,11 +226,18 @@ export interface ScheduleApi {
   // revision an update or delete sends back.
   getSubdivisions(): Promise<{ items: AbsenceSubdivisionData[] }>;
   createSubdivision(input: {
-    record: { id: string; code: string; key: string; label: string };
+    record: { id: string; code: string; key: string; label: string; sort?: number };
   }): Promise<AbsenceSubdivisionData>;
   updateSubdivision(input: {
     id: string;
-    record: { id: string; code: string; key: string; label: string; revision: number };
+    record: {
+      id: string;
+      code: string;
+      key: string;
+      label: string;
+      revision: number;
+      sort?: number;
+    };
   }): Promise<AbsenceSubdivisionData>;
   deleteSubdivision(input: { id: string; revision: number }): Promise<{ deleted: true }>;
   applyDefaultSubdivisions(): Promise<{ items: AbsenceSubdivisionData[] }>;

@@ -358,16 +358,26 @@ export const absenceSubdivisionRecordSchema = entityMetaSchema.extend({
   code: absenceKindSchema,
   key: nonEmptyString,
   label: nonEmptyString,
+  /** The school's own display order within the kind (Issue #91):
+   *  lists come back by kind, then this, then key. The key itself
+   *  cannot carry the order — absences name their subdivision by
+   *  key through a composite foreign key, so a key never changes
+   *  once a record uses it. */
+  sort: z.number().int(),
 });
 export type AbsenceSubdivisionRecord = z.infer<typeof absenceSubdivisionRecordSchema>;
 
-/** What a create or update of a subdivision definition sends. */
+/** What a create or update of a subdivision definition sends.
+ *  The sort is optional: a create that omits it is appended after
+ *  its kind's current last entry, and an update that omits it
+ *  keeps the stored order (Issue #91). */
 export const absenceSubdivisionInputSchema = z.object({
   schoolId: nonEmptyString,
   id: nonEmptyString,
   code: absenceKindSchema,
   key: nonEmptyString,
   label: nonEmptyString,
+  sort: z.number().int().min(0).optional(),
 });
 export type AbsenceSubdivisionInput = z.infer<typeof absenceSubdivisionInputSchema>;
 

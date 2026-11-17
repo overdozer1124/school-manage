@@ -63,9 +63,16 @@ export class AbsenceNotFoundError extends Error {
   }
 }
 
-/** The write conflicts with the current state (409). */
+/** The write conflicts with the current state (409). The optional
+ *  code names which conflict it was, for answers that must tell
+ *  two 409s apart (Issue #91: a subdivision delete refused
+ *  because an absence still uses it, versus an update refused
+ *  because it would move a used subdivision's key). */
 export class AbsenceConflictError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
     super(message);
     this.name = "AbsenceConflictError";
   }
@@ -141,15 +148,30 @@ function mapAbsenceWriteError(error: unknown, context: "write" | "remove"): neve
   throw error;
 }
 
-function mapSubdivisionWriteError(error: unknown, context: "write" | "remove"): never {
+function mapSubdivisionWriteError(error: unknown, context: "create" | "update" | "remove"): never {
   const code = pgCode(error);
   if (code === "23505") {
     throw new AbsenceConflictError(
       "a subdivision with the same id or the same kind and key already exists in this school",
+      "duplicate",
     );
   }
-  if (code === "23503" && context === "remove") {
-    throw new AbsenceConflictError("this subdivision is still used by an absence");
+  if (code === "23503") {
+    // The composite foreign key from absences guards the key: a
+    // delete of a used subdivision and an update that moves a
+    // used subdivision's key both land here, and the answer
+    // names which one it was (Issue #91) — before, the update
+    // fell through to a 500. A create names no key an absence
+    // can already use, so its 23503 stays unmapped.
+    if (context === "remove") {
+      throw new AbsenceConflictError("this subdivision is still used by an absence", "in_use");
+    }
+    if (context === "update") {
+      throw new AbsenceConflictError(
+        "this subdivision's key cannot be changed while an absence uses it",
+        "key_in_use",
+      );
+    }
   }
   throw error;
 }
@@ -202,6 +224,7 @@ function subdivisionToRecord(row: AbsenceSubdivisionRow): AbsenceSubdivisionReco
     code: row.code as AbsenceSubdivisionRecord["code"],
     key: row.key,
     label: row.label,
+    sort: row.sort,
   };
 }
 
@@ -226,7 +249,8 @@ export interface AbsenceStore {
 }
 
 export interface AbsenceSubdivisionStore {
-  /** The school's subdivision definitions, by kind then key. */
+  /** The school's subdivision definitions, by kind, then the
+   *  school's own sort order, then key (Issue #91). */
   list(schoolId: string): Promise<AbsenceSubdivisionRecord[]>;
   get(schoolId: string, id: string): Promise<AbsenceSubdivisionRecord | undefined>;
   create(input: AbsenceSubdivisionInput, actor: Actor): Promise<AbsenceSubdivisionRecord>;
@@ -536,6 +560,31 @@ export function createAbsenceStore(db: Db): AbsenceStore {
   };
 }
 
+/**
+ * The sort values apply-defaults stamps on the shipped leave
+ * subdivisions (Issue #91), in steps of ten: the order a school
+ * office reads them in — 年休 first as the everyday leave, then
+ * the special leaves （特休・夏特）, 病休 and 看護， then 振休
+ * (taken against work already done) and 職専免 (an exemption
+ * rather than a leave), and その他 last, instead of the key's
+ * alphabetical order that put その他 in the middle. Rows a
+ * school already has keep their stored sort: apply-defaults is
+ * insert-missing-only, so a school that reordered its list is
+ * never renumbered by reapplying the defaults.
+ */
+const defaultSubdivisionSorts: ReadonlyMap<string, number> = new Map(
+  [
+    "annual",
+    "special",
+    "summer_special",
+    "sick",
+    "nursing",
+    "compensatory",
+    "duty_exempt",
+    "other",
+  ].map((key, index) => [key, (index + 1) * 10] as const),
+);
+
 export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
   async function loadRecord(
     source: Db | Transaction,
@@ -557,7 +606,11 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
         .select()
         .from(absenceSubdivisions)
         .where(eq(absenceSubdivisions.schoolId, schoolId))
-        .orderBy(asc(absenceSubdivisions.code), asc(absenceSubdivisions.key));
+        .orderBy(
+          asc(absenceSubdivisions.code),
+          asc(absenceSubdivisions.sort),
+          asc(absenceSubdivisions.key),
+        );
       return rows.map(subdivisionToRecord);
     },
 
@@ -578,6 +631,23 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
             actor,
           },
           async (tx) => {
+            // A create that names no sort goes after its kind's
+            // current entries (Issue #91), one step of ten past
+            // the last one, like the values apply-defaults and
+            // the migration's backfill write.
+            let sort = input.sort;
+            if (sort === undefined) {
+              const siblings = (await (tx as unknown as LooseSource)
+                .select()
+                .from(absenceSubdivisions as unknown as PgTable)
+                .where(
+                  and(
+                    eq(absenceSubdivisions.schoolId, input.schoolId),
+                    eq(absenceSubdivisions.code, input.code),
+                  ),
+                )) as unknown as AbsenceSubdivisionRow[];
+              sort = siblings.reduce((max, row) => Math.max(max, row.sort), 0) + 10;
+            }
             const inserted = await (tx as unknown as LooseSource)
               .insert(absenceSubdivisions as unknown as PgTable)
               .values({
@@ -586,6 +656,7 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
                 code: input.code,
                 key: input.key,
                 label: input.label,
+                sort,
                 revision: 1,
                 updatedBy: actor.userId,
                 updatedVia: actor.via,
@@ -595,7 +666,7 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
           },
         );
       } catch (error) {
-        mapSubdivisionWriteError(error, "write");
+        mapSubdivisionWriteError(error, "create");
       }
     },
 
@@ -627,6 +698,9 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
                     code: input.code,
                     key: input.key,
                     label: input.label,
+                    // An update that names no sort keeps the
+                    // stored order (Issue #91).
+                    sort: input.sort ?? existing.sort,
                   } as never,
                 },
               )) as unknown as AbsenceSubdivisionRow;
@@ -643,7 +717,7 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
         if (error instanceof AbsenceNotFoundError || error instanceof RevisionConflictError) {
           throw error;
         }
-        mapSubdivisionWriteError(error, "write");
+        mapSubdivisionWriteError(error, "update");
       }
     },
 
@@ -704,6 +778,7 @@ export function createAbsenceSubdivisionStore(db: Db): AbsenceSubdivisionStore {
               code: def.code,
               key: def.key,
               label: def.label,
+              sort: defaultSubdivisionSorts.get(def.key),
             },
             actor,
           ),

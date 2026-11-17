@@ -390,6 +390,11 @@ export const absenceSubdivisions = pgTable(
     key: text("key").notNull(),
     /** The school's own word for the subdivision. */
     label: text("label").notNull(),
+    /** The school's own display order within the kind (Issue #91):
+     *  lists sort by kind, then this, then key. Migration 0010
+     *  backfills the rows that predate the column with values
+     *  that reproduce the old kind-then-key order. */
+    sort: integer("sort").notNull().default(0),
     ...masterMeta,
   },
   (t) => [

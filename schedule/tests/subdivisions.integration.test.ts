@@ -16,21 +16,26 @@ import { createPlatformApiClient, PlatformRelayError } from "../src/platformClie
 // deleted, and a key may exist only once per kind. The fake
 // platform mirrors the real one's answers, including the 409
 // shapes: a revision conflict carries the current record as
-// `latest`, a duplicate or still-used refusal does not.
+// `latest`, a duplicate or still-used refusal does not — and
+// since Issue #91 the bare refusals name their reason in a
+// `code` (duplicate / in_use / key_in_use), which the relay's
+// translation follows.
 const url = process.env.SCHEDULE_DATABASE_URL;
 
 const COOKIE = "platform_session=test-token";
 const SUBDIVISIONS = "/platform/api/v1/calendar/absence-subdivisions";
 const CONFLICT = "その操作は現在の状態と競合します";
-const DEFAULTS: [string, string][] = [
-  ["annual", "年休"],
-  ["sick", "病休"],
-  ["special", "特休"],
-  ["summer_special", "夏特"],
-  ["nursing", "看護"],
-  ["duty_exempt", "職専免"],
-  ["compensatory", "振休"],
-  ["other", "その他"],
+/** The platform's defaults with their apply-defaults sorts
+ *  (Issue #91), in the platform's definition order. */
+const DEFAULTS: [string, string, number][] = [
+  ["annual", "年休", 10],
+  ["sick", "病休", 40],
+  ["special", "特休", 20],
+  ["summer_special", "夏特", 30],
+  ["nursing", "看護", 50],
+  ["duty_exempt", "職専免", 70],
+  ["compensatory", "振休", 60],
+  ["other", "その他", 80],
 ];
 
 function auth(role: Role): AuthContext {
@@ -79,14 +84,15 @@ class FakePlatform {
     if (path === SUBDIVISIONS && method === "GET") {
       const items = [...this.subdivisions.values()].sort((a, b) =>
         a["code"] === b["code"]
-          ? String(a["key"]).localeCompare(String(b["key"]))
+          ? Number(a["sort"] ?? 0) - Number(b["sort"] ?? 0) ||
+            String(a["key"]).localeCompare(String(b["key"]))
           : String(a["code"]).localeCompare(String(b["code"])),
       );
       return jsonResponse(200, { items });
     }
     if (path === `${SUBDIVISIONS}/apply-defaults` && method === "POST") {
       const created: Record<string, unknown>[] = [];
-      for (const [key, label] of DEFAULTS) {
+      for (const [key, label, sort] of DEFAULTS) {
         if (
           [...this.subdivisions.values()].some((r) => r["code"] === "leave" && r["key"] === key)
         ) {
@@ -97,6 +103,7 @@ class FakePlatform {
           code: "leave",
           key,
           label,
+          sort,
           revision: 1,
         };
         this.subdivisions.set(record.id, record);
@@ -106,7 +113,17 @@ class FakePlatform {
     }
     if (path === SUBDIVISIONS && method === "POST") {
       const record = { ...(body ?? {}) };
-      if (this.duplicateOf(record)) return jsonResponse(409, { error: CONFLICT });
+      if (this.duplicateOf(record)) {
+        return jsonResponse(409, { error: CONFLICT, code: "duplicate" });
+      }
+      // A create that names no sort is appended after its kind,
+      // as on the platform.
+      if (typeof record["sort"] !== "number") {
+        record["sort"] =
+          [...this.subdivisions.values()]
+            .filter((r) => r["code"] === record["code"])
+            .reduce((max, r) => Math.max(max, Number(r["sort"] ?? 0)), 0) + 10;
+      }
       const created: Record<string, unknown> = { ...record, revision: 1 };
       this.subdivisions.set(String(created["id"]), created);
       return jsonResponse(201, created);
@@ -119,8 +136,17 @@ class FakePlatform {
         if (body?.["revision"] !== existing["revision"]) {
           return jsonResponse(409, { error: "ほかの人が先に変更しました", latest: existing });
         }
+        // Moving the key of a classification an absence still
+        // names is refused by the foreign key, as on the
+        // platform, and the 409 names it (Issue #91).
+        if (
+          (body?.["key"] !== existing["key"] || body?.["code"] !== existing["code"]) &&
+          this.used.has(`${String(existing["code"])}/${String(existing["key"])}`)
+        ) {
+          return jsonResponse(409, { error: CONFLICT, code: "key_in_use" });
+        }
         if (this.duplicateOf(body ?? {}, one[1] as string)) {
-          return jsonResponse(409, { error: CONFLICT });
+          return jsonResponse(409, { error: CONFLICT, code: "duplicate" });
         }
         const updated = { ...(body ?? {}), revision: (existing["revision"] as number) + 1 };
         this.subdivisions.set(one[1] as string, updated);
@@ -131,7 +157,7 @@ class FakePlatform {
           return jsonResponse(409, { error: "ほかの人が先に変更しました", latest: existing });
         }
         if (this.used.has(`${String(existing["code"])}/${String(existing["key"])}`)) {
-          return jsonResponse(409, { error: CONFLICT });
+          return jsonResponse(409, { error: CONFLICT, code: "in_use" });
         }
         this.subdivisions.delete(one[1] as string);
         return new Response(null, { status: 204 });
@@ -313,5 +339,71 @@ describe.skipIf(!url)("absence subdivision relay (Issue #84)", () => {
       error: "ほかの人が先に変更しました",
       latest: { id: "default-leave-annual" },
     });
+  });
+
+  it("carries the sort through the relay, and the list follows it (Issue #91)", async () => {
+    // Two training classifications whose key order and sort
+    // order disagree: the list takes the sort.
+    await actions.createSubdivision.run(auth("Admin"), {
+      cookie: COOKIE,
+      record: { id: "subdiv-t-zz", code: "training", key: "zz", label: "研修Z", sort: 10 },
+    });
+    await actions.createSubdivision.run(auth("Admin"), {
+      cookie: COOKIE,
+      record: { id: "subdiv-t-aa", code: "training", key: "aa", label: "研修A", sort: 20 },
+    });
+    const trainingKeys = async () => {
+      const listed = (await actions.getSubdivisions.run(auth("Admin"), {
+        cookie: COOKIE,
+      })) as { items: Record<string, unknown>[] };
+      return listed.items.filter((i) => i["code"] === "training").map((i) => i["key"]);
+    };
+    expect(await trainingKeys()).toEqual(["zz", "aa"]);
+
+    const moved = (await actions.updateSubdivision.run(auth("Admin"), {
+      cookie: COOKIE,
+      id: "subdiv-t-zz",
+      record: {
+        id: "subdiv-t-zz",
+        code: "training",
+        key: "zz",
+        label: "研修Z",
+        sort: 30,
+        revision: 1,
+      },
+    })) as Record<string, unknown>;
+    expect(moved["sort"]).toBe(30);
+    expect(await trainingKeys()).toEqual(["aa", "zz"]);
+  });
+
+  it("a key change on a used classification stops with its own reason (Issue #91)", async () => {
+    // leave/annual is still named by an absence (the delete
+    // test above marked it used, and it was never deleted).
+    const error = await actions.updateSubdivision
+      .run(auth("Admin"), {
+        cookie: COOKIE,
+        id: "default-leave-annual",
+        record: {
+          id: "default-leave-annual",
+          code: "leave",
+          key: "nenkyu",
+          label: "年休",
+          sort: 10,
+          revision: 1,
+        },
+      })
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(PlatformRelayError);
+    expect((error as PlatformRelayError).status).toBe(409);
+    expect((error as PlatformRelayError).body).toEqual({
+      error: "この分類は不在で使われているためキーは変更できません",
+    });
+
+    // Nothing was renamed.
+    const listed = (await actions.getSubdivisions.run(auth("Admin"), {
+      cookie: COOKIE,
+    })) as { items: Record<string, unknown>[] };
+    expect(listed.items.map((i) => i["key"])).toContain("annual");
+    expect(listed.items.map((i) => i["key"])).not.toContain("nenkyu");
   });
 });

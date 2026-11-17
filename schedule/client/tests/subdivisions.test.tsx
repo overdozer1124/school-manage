@@ -159,6 +159,75 @@ describe("absence subdivisions in the settings (Issue #84)", () => {
     expect(renamed.key).toBe("annual");
   });
 
+  it("moving a classification in the settings reorders the modal's choices (Issue #91)", async () => {
+    const { inDialog } = await openSettings();
+
+    const rowLabels = () =>
+      [
+        ...inDialog.getByText("休暇", { selector: "h4" }).closest("div")!.querySelectorAll("li"),
+      ].map((li) => li.querySelector("span")?.textContent);
+    // The shipped order is the school's reading order, not the
+    // key's: その他 is last.
+    expect(rowLabels()).toEqual([
+      "年休（キー：annual）",
+      "特休（キー：special）",
+      "夏特（キー：summer_special）",
+      "病休（キー：sick）",
+      "看護（キー：nursing）",
+      "振休（キー：compensatory）",
+      "職専免（キー：duty_exempt）",
+      "その他（キー：other）",
+    ]);
+
+    // The first row cannot move up; moving 年休 down swaps it
+    // with 特休.
+    const annualRow = rowOf(inDialog, "年休（キー：annual）");
+    expect(within(annualRow).getByRole("button", { name: "上へ" })).toBeDisabled();
+    fireEvent.click(within(annualRow).getByRole("button", { name: "下へ" }));
+    await waitFor(() => expect(rowLabels()[0]).toBe("特休（キー：special）"), { timeout: 5000 });
+    expect(rowLabels()[1]).toBe("年休（キー：annual）");
+
+    fireEvent.click(inDialog.getByRole("button", { name: "閉じる" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "設定・マスタ" })).not.toBeInTheDocument(),
+    );
+
+    // The absence modal offers the classifications in the new
+    // order.
+    fireEvent.click(
+      within(cellFor("2026-11-13", 7)).getByRole("button", { name: "佐藤先生（年休）" }),
+    );
+    const leave = await screen.findByRole("dialog", { name: "休暇の詳細" });
+    const select = within(leave).getByLabelText("休暇分類") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.text)).toEqual([
+      "（なし）",
+      "特休",
+      "年休",
+      "夏特",
+      "病休",
+      "看護",
+      "振休",
+      "職専免",
+      "その他",
+    ]);
+  }, 20000);
+
+  it("the development adapter appends a classification created without a sort (Issue #91)", async () => {
+    const api = createDevApi();
+    const created = await api.createSubdivision({
+      record: { id: "subdiv-care", code: "leave", key: "care", label: "介護休暇" },
+    });
+    expect(created.sort).toBe(90);
+    const { items } = await api.getSubdivisions();
+    expect(items[items.length - 1]?.key).toBe("care");
+    // And a rename that sends no sort keeps the stored one.
+    const renamed = await api.updateSubdivision({
+      id: "subdiv-care",
+      record: { ...created, label: "介護休暇（家族）" },
+    });
+    expect(renamed.sort).toBe(90);
+  });
+
   it("applying the defaults brings back a deleted default classification", async () => {
     const { inDialog } = await openSettings();
 
