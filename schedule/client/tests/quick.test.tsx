@@ -93,6 +93,7 @@ function makeBootstrap(inputOpener: "popover" | "modal" = "popover"): BootstrapD
         audience: "staff",
         periodScope: "month",
         printSettings: null,
+        isArchived: false,
         columns: [
           column("col-events", "event_category", null, 1),
           column("col-movement", "daily_item", "item-staff-movement", 2),
@@ -296,6 +297,7 @@ function makeFakeApi(bootstrap: BootstrapData) {
     applyPreset: unused,
     upsertViewDefinition: unused,
     deleteViewDefinition: unused,
+    setViewArchived: unused,
     upsertDutyDefinition: unused,
     deleteDutyDefinition: unused,
     upsertKindTemplate: unused,

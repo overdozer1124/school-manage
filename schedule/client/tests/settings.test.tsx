@@ -167,6 +167,69 @@ describe("settings screens (Issue #39)", () => {
     });
   }, 20000);
 
+  it("a view taken off the list leaves the settings list and the switcher, and comes back whole", async () => {
+    render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const inDialog = within(dialog);
+
+    const guardianRow = () => inDialog.getByText("保護者用月表").closest("li") as HTMLElement;
+    const staffRow = () => inDialog.getByText("職員用月表").closest("li") as HTMLElement;
+
+    // Arming the view's delete spells out what disappears with
+    // it, that a view with issued publications cannot be
+    // deleted at all, and that archiving (Issue #87) is the
+    // non-destructive way to retire it. (Arming the staff view's
+    // delete afterwards disarms this one without deleting.)
+    fireEvent.click(within(guardianRow()).getByRole("button", { name: "削除" }));
+    expect(within(guardianRow()).getByRole("button", { name: "本当に削除" })).toBeInTheDocument();
+    expect(inDialog.getByText(/列の定義と公開URLの記録もすべて消えます/)).toBeInTheDocument();
+    expect(inDialog.getByText(/発行した版があるビューは削除できません/)).toBeInTheDocument();
+    expect(inDialog.getByText(/「一覧から外す」を使ってください/)).toBeInTheDocument();
+    fireEvent.click(within(staffRow()).getByRole("button", { name: "削除" }));
+
+    // Take the guardian view off the list: it leaves the
+    // everyday list at once.
+    fireEvent.click(within(guardianRow()).getByRole("button", { name: "一覧から外す" }));
+    await waitFor(() => expect(inDialog.queryByText("保護者用月表")).not.toBeInTheDocument(), {
+      timeout: 5000,
+    });
+
+    // Behind the panel, the switcher no longer offers it either.
+    fireEvent.click(inDialog.getByRole("button", { name: "閉じる" }));
+    await waitFor(() => {
+      const select = screen.getByLabelText("ビュー") as HTMLSelectElement;
+      expect([...select.options].map((o) => o.textContent)).not.toContain("保護者用月表");
+    });
+
+    // On request the settings show it again, marked as off the
+    // list; bringing it back restores it to both lists.
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog2 = await screen.findByRole("dialog", { name: "設定" });
+    const inDialog2 = within(dialog2);
+    fireEvent.click(inDialog2.getByRole("button", { name: /一覧から外したビューを表示/ }));
+    const archivedRow = () => inDialog2.getByText("保護者用月表").closest("li") as HTMLElement;
+    await waitFor(
+      () => expect(within(archivedRow()).getByText(/一覧から外しています/)).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    fireEvent.click(within(archivedRow()).getByRole("button", { name: "一覧に戻す" }));
+    await waitFor(
+      () =>
+        expect(
+          inDialog2.queryByRole("button", { name: /一覧から外したビューを表示/ }),
+        ).not.toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    expect(inDialog2.getByText("保護者用月表")).toBeInTheDocument();
+    fireEvent.click(inDialog2.getByRole("button", { name: "閉じる" }));
+    await waitFor(() => {
+      const select = screen.getByLabelText("ビュー") as HTMLSelectElement;
+      expect([...select.options].map((o) => o.textContent)).toContain("保護者用月表");
+    });
+  }, 20000);
+
   it("revoking a public URL asks first, and its issued time is shown in local time", async () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");

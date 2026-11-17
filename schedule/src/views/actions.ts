@@ -5,6 +5,7 @@ import { assertOwned, tenantDb } from "../db/tenant.js";
 import { scheduleAction } from "../permissions.js";
 import {
   deleteViewInputSchema,
+  setViewArchivedInputSchema,
   updateColumnWidthInputSchema,
   viewDefinitionInputSchema,
 } from "./types.js";
@@ -50,6 +51,19 @@ export function createViewActions(db: Db) {
         throw new Error(`view definition not found: ${id}`);
       }
       return { deleted: true };
+    }),
+
+    // Taking a view off the list (and bringing it back) is a
+    // definition change like any other: definition.write, Admin
+    // only (Issue #87). It is the non-destructive alternative
+    // the delete refusal points at for views with publications.
+    setViewArchived: scheduleAction("definition.write", async ({ auth, request }) => {
+      const input = setViewArchivedInputSchema.parse(request);
+      const view = await store.setViewArchived(db, auth.schoolId, input.id, input.archived);
+      if (!view) {
+        throw new Error(`view definition not found: ${input.id}`);
+      }
+      return view;
     }),
 
     updateViewColumnWidth: scheduleAction("view.layout", async ({ auth, request }) => {

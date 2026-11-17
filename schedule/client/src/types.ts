@@ -28,6 +28,9 @@ export interface ViewDefinitionData {
   audience: string;
   periodScope: string;
   printSettings: Record<string, unknown> | null;
+  /** Off the everyday list and the view switcher (Issue #87);
+   *  the view, its publications and its public URLs stay. */
+  isArchived: boolean;
   columns: ViewColumnData[];
 }
 

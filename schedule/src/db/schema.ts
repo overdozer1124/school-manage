@@ -541,6 +541,14 @@ export const viewDefinitions = pgTable(
     audience: text("audience").notNull(),
     periodScope: text("period_scope").notNull(),
     printSettings: jsonb("print_settings").$type<Record<string, unknown>>(),
+    /**
+     * is_archived is the remove-from-list switch (Issue #87): an
+     * archived view leaves the settings list's everyday face and
+     * the view switcher, but the row — and everything that names
+     * it, publications above all — stays and stays readable.
+     * Deleting is the destructive operation; this is not.
+     */
+    isArchived: boolean("is_archived").default(false).notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.schoolId, t.id] }),

@@ -22,6 +22,7 @@ const VIEW = {
   audience: "guardian",
   periodScope: "month",
   printSettings: null,
+  isArchived: false,
   columns: [
     {
       id: "col-events",

@@ -71,6 +71,13 @@
       "when": 1794899449646,
       "tag": "0009_duty_definitions_is_active",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794911634698,
+      "tag": "0010_view_definitions_is_archived",
+      "breakpoints": true
     }
   ]
 }

@@ -91,6 +91,7 @@ function makeBootstrap(
         audience: "staff",
         periodScope: "month",
         printSettings: null,
+        isArchived: false,
         columns: [
           {
             id: "col-events",
@@ -460,6 +461,9 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
       throw new Error("not used");
     },
     upsertViewDefinition: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    setViewArchived: async (): Promise<never> => {
       throw new Error("not used");
     },
     deleteViewDefinition: async (): Promise<never> => {
