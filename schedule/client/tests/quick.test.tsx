@@ -148,8 +148,8 @@ function makeBootstrap(inputOpener: "popover" | "modal" = "popover"): BootstrapD
       { id: "loc-music", name: "音楽室", kind: null, sort: 2, isActive: true },
     ],
     absenceSubdivisions: [
-      { id: "subdiv-annual", code: "leave", key: "annual", label: "年休" },
-      { id: "subdiv-sick", code: "leave", key: "sick", label: "病休" },
+      { id: "subdiv-annual", code: "leave", key: "annual", label: "年休", revision: 1 },
+      { id: "subdiv-sick", code: "leave", key: "sick", label: "病休", revision: 1 },
     ],
     inputOpener,
     masters: { staff: STAFF, grades: [], dayPatterns: [] },
@@ -315,6 +315,11 @@ function makeFakeApi(bootstrap: BootstrapData) {
     createPublicViewToken: unused,
     getPublicViewTokens: unused,
     revokePublicViewToken: unused,
+    getSubdivisions: unused,
+    createSubdivision: unused,
+    updateSubdivision: unused,
+    deleteSubdivision: unused,
+    applyDefaultSubdivisions: unused,
   };
   return { api, calls, state };
 }

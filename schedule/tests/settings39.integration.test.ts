@@ -183,6 +183,11 @@ const EXPECTED_ACTIONS = [
   "createPublicViewToken",
   "getPublicViewTokens",
   "revokePublicViewToken",
+  "getSubdivisions",
+  "createSubdivision",
+  "updateSubdivision",
+  "deleteSubdivision",
+  "applyDefaultSubdivisions",
 ];
 
 describe.skipIf(!url)("settings screens' server side (Issue #39)", () => {

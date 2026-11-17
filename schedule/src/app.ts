@@ -168,6 +168,12 @@ const ACTION_NAMES = [
   "createPublicViewToken",
   "getPublicViewTokens",
   "revokePublicViewToken",
+  // Issue #84: the absence subdivisions' relay (school.admin).
+  "getSubdivisions",
+  "createSubdivision",
+  "updateSubdivision",
+  "deleteSubdivision",
+  "applyDefaultSubdivisions",
 ] as const;
 
 /** The public viewing reads (Issue #41): the whole allowlist of

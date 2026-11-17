@@ -141,6 +141,10 @@ export interface AbsenceSubdivisionData {
   code: string;
   key: string;
   label: string;
+  /** The platform record's revision: an update or a delete from
+   *  the settings screen carries the revision last read (Issue
+   *  #84), as the shared masters' edits do. */
+  revision: number;
 }
 
 /** One additional item value of a platform record (Issue #29), in

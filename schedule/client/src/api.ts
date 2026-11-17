@@ -1,4 +1,5 @@
 import type {
+  AbsenceSubdivisionData,
   ApplyRotationResultData,
   BootstrapData,
   DefinitionSetData,
@@ -219,6 +220,19 @@ export interface ScheduleApi {
   createPublicViewToken(input: { viewId: string }): Promise<PublicTokenCreatedData>;
   getPublicViewTokens(input?: { viewId?: string }): Promise<PublicViewTokenData[]>;
   revokePublicViewToken(input: { id: string }): Promise<PublicViewTokenData>;
+  // Issue #84: the absence subdivisions, relayed to the platform
+  // (school.admin's; the server is the judge). Records carry the
+  // revision an update or delete sends back.
+  getSubdivisions(): Promise<{ items: AbsenceSubdivisionData[] }>;
+  createSubdivision(input: {
+    record: { id: string; code: string; key: string; label: string };
+  }): Promise<AbsenceSubdivisionData>;
+  updateSubdivision(input: {
+    id: string;
+    record: { id: string; code: string; key: string; label: string; revision: number };
+  }): Promise<AbsenceSubdivisionData>;
+  deleteSubdivision(input: { id: string; revision: number }): Promise<{ deleted: true }>;
+  applyDefaultSubdivisions(): Promise<{ items: AbsenceSubdivisionData[] }>;
 }
 
 export interface ScheduleApiOptions {
@@ -323,6 +337,12 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     createPublicViewToken: (input) => call<PublicTokenCreatedData>("createPublicViewToken", input),
     getPublicViewTokens: (input) => call<PublicViewTokenData[]>("getPublicViewTokens", input ?? {}),
     revokePublicViewToken: (input) => call<PublicViewTokenData>("revokePublicViewToken", input),
+    getSubdivisions: () => call<{ items: AbsenceSubdivisionData[] }>("getSubdivisions", {}),
+    createSubdivision: (input) => call<AbsenceSubdivisionData>("createSubdivision", input),
+    updateSubdivision: (input) => call<AbsenceSubdivisionData>("updateSubdivision", input),
+    deleteSubdivision: (input) => call<{ deleted: true }>("deleteSubdivision", input),
+    applyDefaultSubdivisions: () =>
+      call<{ items: AbsenceSubdivisionData[] }>("applyDefaultSubdivisions", {}),
   };
 }
 

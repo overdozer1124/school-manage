@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ScheduleApi } from "./api";
 import type {
+  AbsenceSubdivisionData,
   BootstrapData,
   DefinitionSetData,
   DutyDefinitionData,
@@ -13,6 +14,7 @@ import { ItemsSection } from "./settings/ItemDefinitionsSection";
 import { LocationsSection } from "./settings/LocationsSection";
 import { MastersSection } from "./settings/MastersSection";
 import { PresetSection } from "./settings/PresetSection";
+import { SubdivisionsSection } from "./settings/SubdivisionsSection";
 import { TargetsSection } from "./settings/TargetsSection";
 import { TemplatesSection } from "./settings/TemplatesSection";
 import { ViewsSection } from "./settings/ViewsSection";
@@ -59,6 +61,7 @@ export function SettingsPanel({
 }) {
   const [defs, setDefs] = useState<DefinitionSetData | null>(null);
   const [masters, setMasters] = useState<MastersData | null>(null);
+  const [subdivisions, setSubdivisions] = useState<AbsenceSubdivisionData[] | null>(null);
   const [views, setViews] = useState<ViewDefinitionData[]>(bootstrap.views);
   const [duties, setDuties] = useState<DutyDefinitionData[]>(bootstrap.dutyDefinitions);
   const [templates, setTemplates] = useState<KindTemplateData[]>(bootstrap.kindTemplates);
@@ -79,11 +82,12 @@ export function SettingsPanel({
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.getDefinitions(), api.getMasters()])
-      .then(([definitionSet, masterSet]) => {
+    Promise.all([api.getDefinitions(), api.getMasters(), api.getSubdivisions()])
+      .then(([definitionSet, masterSet, subdivisionSet]) => {
         if (cancelled) return;
         setDefs(definitionSet);
         setMasters(masterSet);
+        setSubdivisions(subdivisionSet.items);
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
@@ -158,6 +162,8 @@ export function SettingsPanel({
     setDuties,
     templates,
     setTemplates,
+    subdivisions,
+    setSubdivisions,
     reloadDefinitions,
     setNotice,
   };
@@ -177,7 +183,7 @@ export function SettingsPanel({
           </p>
         )}
         {notice && <p className="cell-notice">{notice}</p>}
-        {defs === null || masters === null ? (
+        {defs === null || masters === null || subdivisions === null ? (
           <p>読み込み中…</p>
         ) : (
           <>
@@ -188,6 +194,7 @@ export function SettingsPanel({
             <DutiesSection ctx={ctx} />
             <ViewsSection ctx={ctx} />
             <TemplatesSection ctx={ctx} />
+            <SubdivisionsSection ctx={ctx} />
             <MastersSection ctx={ctx} />
           </>
         )}
