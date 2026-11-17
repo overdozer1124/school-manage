@@ -116,6 +116,9 @@ describe("401 / 403 handling", () => {
       createPublication: fail,
       getPublications: fail,
       getPublication: fail,
+      createPublicViewToken: fail,
+      getPublicViewTokens: fail,
+      revokePublicViewToken: fail,
     };
   };
 

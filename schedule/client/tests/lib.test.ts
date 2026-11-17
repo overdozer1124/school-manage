@@ -3,6 +3,7 @@ import { DEV_BOOTSTRAP, createDevApi } from "../src/devAdapter";
 import {
   dailyCellText,
   dayMark,
+  formatIssuedAt,
   monthEndOf,
   rangeFor,
   stepAnchor,
@@ -157,6 +158,21 @@ describe("same-value grouping in a cell (Issue #32's pure function)", () => {
     expect(dailyCellText(monday, off, DEV_BOOTSTRAP)).toBe(
       "1年 14:30／2年 14:30／3年 14:30／4年 15:20／5年 15:20／6年 15:20",
     );
+  });
+});
+
+describe("issued-at formatting (Issue #41 review)", () => {
+  it("converts the recorded UTC instant into the reader's zone", () => {
+    // 2026-11-16 21:51 UTC is 2026-11-17 06:51 in Japan: the
+    // date rolls over, which is exactly what slicing the string
+    // got wrong. The zone is pinned, so the answer is the same
+    // on any machine.
+    expect(formatIssuedAt("2026-11-16T21:51:00.000Z", "Asia/Tokyo")).toBe("2026-11-17 06:51");
+    expect(formatIssuedAt("2026-11-16T21:51:00.000Z", "UTC")).toBe("2026-11-16 21:51");
+  });
+
+  it("an unparseable value is shown as it came", () => {
+    expect(formatIssuedAt("not-a-date", "Asia/Tokyo")).toBe("not-a-date");
   });
 });
 

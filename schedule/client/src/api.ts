@@ -15,6 +15,9 @@ import type {
   PrintSettingsData,
   PublicationData,
   PublicationDocumentData,
+  PublicBootstrapData,
+  PublicTokenCreatedData,
+  PublicViewTokenData,
   RangeData,
   RotationPlanCellData,
   TargetGroupData,
@@ -210,6 +213,12 @@ export interface ScheduleApi {
   }): Promise<PublicationData>;
   getPublications(input?: { viewId?: string }): Promise<PublicationData[]>;
   getPublication(input: { id: string }): Promise<PublicationDocumentData>;
+  // Issue #41: public-view tokens (school.admin's; the server is
+  // the judge). The create answer carries the token's value,
+  // shown once.
+  createPublicViewToken(input: { viewId: string }): Promise<PublicTokenCreatedData>;
+  getPublicViewTokens(input?: { viewId?: string }): Promise<PublicViewTokenData[]>;
+  revokePublicViewToken(input: { id: string }): Promise<PublicViewTokenData>;
 }
 
 export interface ScheduleApiOptions {
@@ -311,6 +320,9 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     createPublication: (input) => call<PublicationData>("createPublication", input),
     getPublications: (input) => call<PublicationData[]>("getPublications", input ?? {}),
     getPublication: (input) => call<PublicationDocumentData>("getPublication", input),
+    createPublicViewToken: (input) => call<PublicTokenCreatedData>("createPublicViewToken", input),
+    getPublicViewTokens: (input) => call<PublicViewTokenData[]>("getPublicViewTokens", input ?? {}),
+    revokePublicViewToken: (input) => call<PublicViewTokenData>("revokePublicViewToken", input),
   };
 }
 
@@ -318,4 +330,52 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
  *  platform lives on the same domain, at /login). */
 export function platformLoginUrl(): string {
   return "/login";
+}
+
+// ---- the public viewing client (Issue #41) ------------------------
+
+/** The two reads the public screen makes. There is deliberately
+ *  no way to write through this client: the server's public
+ *  route serves only these two actions, and the token in the
+ *  request body is the whole credential. */
+export interface PublicApi {
+  getPublicBootstrap(): Promise<PublicBootstrapData>;
+  getPublicRange(input: { from: string; to: string }): Promise<RangeData>;
+}
+
+/** The public route's base: the app is served at
+ *  `/{slug}/schedule/…` and the public page at
+ *  `/{slug}/schedule/public-view/{token}`, so the route sits
+ *  beside the page at `/{slug}/schedule/public/`. */
+function publicBaseFromLocation(): string {
+  const path = window.location.pathname;
+  const marker = "/public-view/";
+  const at = path.indexOf(marker);
+  const root = at >= 0 ? path.slice(0, at) : path.replace(/\/[^/]*$/, "");
+  return `${root}/public`;
+}
+
+export function createPublicApi(
+  token: string,
+  options: { baseUrl?: string; fetchImpl?: typeof fetch } = {},
+): PublicApi {
+  const baseUrl = options.baseUrl ?? publicBaseFromLocation();
+  const fetchImpl = options.fetchImpl ?? fetch;
+
+  async function call<T>(action: string, input: Record<string, unknown>): Promise<T> {
+    const res = await fetchImpl(`${baseUrl}/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token, ...input }),
+    });
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (res.status === 401) throw new UnauthorizedError(body?.error);
+    if (!res.ok) throw new ApiError(res.status, body?.error ?? `HTTP ${res.status}`);
+    return body as T;
+  }
+
+  return {
+    getPublicBootstrap: () => call<PublicBootstrapData>("getPublicBootstrap", {}),
+    getPublicRange: (input) => call<RangeData>("getPublicRange", input),
+  };
 }

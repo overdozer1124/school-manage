@@ -812,3 +812,52 @@ export const kindTemplates = pgTable(
 );
 
 export type KindTemplateRow = typeof kindTemplates.$inferSelect;
+
+/**
+ * One public viewing token for one view (DESIGN-AUTH-TENANCY 4.5,
+ * DESIGN schedule 9): the URL a school hands to guardians, students
+ * or the public so the view can be read without an account. Tokens
+ * are per view, not per school, so a guardian token and a student
+ * token can be revoked independently.
+ *
+ * Only the token's hash is stored (SHA-256, hex): the row can prove
+ * a presented token without being able to reproduce it, so a leaked
+ * table does not leak working URLs. The raw token is returned once,
+ * by the issuing action, and never stored or listed again. A token
+ * is live until revoked_at is set; revocation is the answer to
+ * DESIGN schedule 9's rule that knowing a URL is not itself a
+ * permission — a URL that has spread too far can be killed and a
+ * new one issued. The row itself is the record of issue and
+ * revocation (created_by / created_at / revoked_at), the way a
+ * publication row carries its publisher and date.
+ *
+ * Only views whose audience is guardian / student / public may hold
+ * tokens; that rule is checked by the issuing action (it needs the
+ * view's audience, and a database check could not say why). The
+ * view foreign key cascades: a token names a view, and when the
+ * view is deleted its URLs die with it — unlike a publication,
+ * whose issued document must keep naming its view (restrict there).
+ */
+export const publicViewTokens = pgTable(
+  "public_view_tokens",
+  {
+    schoolId: text("school_id").notNull(),
+    id: text("id").notNull(),
+    viewDefinitionId: text("view_definition_id").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.id] }),
+    unique("public_view_tokens_hash_unique").on(t.tokenHash),
+    foreignKey({
+      name: "public_view_tokens_view_fk",
+      columns: [t.schoolId, t.viewDefinitionId],
+      foreignColumns: [viewDefinitions.schoolId, viewDefinitions.id],
+    }).onDelete("cascade"),
+  ],
+);
+
+export type PublicViewTokenRow = typeof publicViewTokens.$inferSelect;

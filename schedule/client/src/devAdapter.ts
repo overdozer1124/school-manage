@@ -1,5 +1,11 @@
 import { datesInRange, weekdayOf } from "@school-manage/calendar-types";
-import type { RelaySaveResult, ScheduleApi } from "./api";
+import {
+  ApiError,
+  UnauthorizedError,
+  type PublicApi,
+  type RelaySaveResult,
+  type ScheduleApi,
+} from "./api";
 import {
   absenceLineText,
   columnLabel,
@@ -28,6 +34,8 @@ import type {
   MastersData,
   PrintSettingsData,
   PublicationData,
+  PublicBootstrapData,
+  PublicViewTokenData,
   RangeData,
   RangeDayData,
   SchoolSettingsData,
@@ -1668,6 +1676,200 @@ export function createDevApi(): ScheduleApi {
       return {
         ...structuredClone(publication),
         documentHtml: publicationDocuments.get(publication.id) ?? "",
+      };
+    },
+
+    // Issue #41: public-view tokens, over the shared fixture
+    // store below (the settings screen and the public screen
+    // read the same rows, as they would on the server).
+    async createPublicViewToken(input) {
+      const view = boot.views.find((v) => v.id === input.viewId);
+      if (!view) throw new Error(`view definition not found: ${input.viewId}`);
+      if (view.audience === "staff") {
+        throw new ApiError(400, "職員用ビューには公開URLを発行できません");
+      }
+      const tokens = loadDevPublicTokens();
+      devPublicTokenSeq += 1;
+      const row: DevPublicToken = {
+        id: `ptok-${devPublicTokenSeq}`,
+        viewDefinitionId: view.id,
+        createdBy: "dev-user",
+        createdAt: new Date().toISOString(),
+        revokedAt: null,
+        token: `dev-${Math.random().toString(36).slice(2, 10)}${Math.random()
+          .toString(36)
+          .slice(2, 10)}`,
+      };
+      tokens.push(row);
+      saveDevPublicTokens();
+      return { ...publicTokenRow(row), token: row.token };
+    },
+
+    async getPublicViewTokens(input) {
+      return loadDevPublicTokens()
+        .filter((t) => !input?.viewId || t.viewDefinitionId === input.viewId)
+        .map(publicTokenRow);
+    },
+
+    async revokePublicViewToken(input) {
+      const tokens = loadDevPublicTokens();
+      const row = tokens.find((t) => t.id === input.id);
+      if (!row) throw new Error(`public view token not found: ${input.id}`);
+      if (!row.revokedAt) {
+        row.revokedAt = new Date().toISOString();
+        saveDevPublicTokens();
+      }
+      return publicTokenRow(row);
+    },
+  };
+}
+
+// ---- public-view tokens (Issue #41, dev fixtures) ----------------
+//
+// The fixture store for the token actions above and the public
+// screen below. Unlike the server — which keeps only each
+// token's hash — the adapter must keep the value itself to
+// resolve the URLs it is asked to open; that is fixture data
+// only, and it lives in sessionStorage so a token issued on the
+// settings screen still opens after the page reloads to the
+// public URL (the two screens are separate page loads). One
+// token comes pre-issued for the guardian view, value
+// "dev-public-token", so the public screen can be opened
+// directly: /{slug}/schedule/public-view/dev-public-token?dev=1.
+interface DevPublicToken extends PublicViewTokenData {
+  token: string;
+}
+
+const DEV_PUBLIC_TOKENS_KEY = "schedule-dev-public-tokens";
+let devPublicTokens: DevPublicToken[] | null = null;
+let devPublicTokenSeq = 1;
+
+function loadDevPublicTokens(): DevPublicToken[] {
+  if (devPublicTokens) return devPublicTokens;
+  let rows: DevPublicToken[] | null = null;
+  try {
+    const raw = sessionStorage.getItem(DEV_PUBLIC_TOKENS_KEY);
+    if (raw) rows = JSON.parse(raw) as DevPublicToken[];
+  } catch {
+    rows = null;
+  }
+  devPublicTokens = rows ?? [
+    {
+      id: "ptok-fixture",
+      viewDefinitionId: "view-month-guardian",
+      createdBy: "dev-user",
+      createdAt: "2026-11-01T09:00:00.000Z",
+      revokedAt: null,
+      token: "dev-public-token",
+    },
+  ];
+  return devPublicTokens;
+}
+
+function saveDevPublicTokens(): void {
+  try {
+    sessionStorage.setItem(DEV_PUBLIC_TOKENS_KEY, JSON.stringify(devPublicTokens));
+  } catch {
+    // Storage can be unavailable (private mode, tests); the
+    // in-memory rows still serve this page.
+  }
+}
+
+function publicTokenRow(row: DevPublicToken): PublicViewTokenData {
+  return {
+    id: row.id,
+    viewDefinitionId: row.viewDefinitionId,
+    createdBy: row.createdBy,
+    createdAt: row.createdAt,
+    revokedAt: row.revokedAt,
+  };
+}
+
+/** The development adapter's public client (Issue #41): the
+ *  token is resolved against the fixture store, and the answers
+ *  are the dev bootstrap / range shaped the way the server's
+ *  public actions shape them — the view's audience filter over
+ *  the events, and no absences, duties, conflicts or person ids
+ *  anywhere. */
+export function createDevPublicApi(tokenValue: string): PublicApi {
+  const inner = createDevApi();
+  const resolve = (): DevPublicToken => {
+    const row = loadDevPublicTokens().find((t) => t.token === tokenValue);
+    if (!row) throw new ApiError(404, "公開URLが見つかりません");
+    if (row.revokedAt) throw new UnauthorizedError("この公開URLは無効化されています");
+    return row;
+  };
+  const publicEvent = (event: Record<string, unknown>): Record<string, unknown> => {
+    const shaped: Record<string, unknown> = { ...event, assignees: [] };
+    delete shaped["createdBy"];
+    delete shaped["updatedBy"];
+    return shaped;
+  };
+  return {
+    async getPublicBootstrap(): Promise<PublicBootstrapData> {
+      const row = resolve();
+      const boot = await inner.getBootstrap();
+      const view =
+        boot.views.find((v) => v.id === row.viewDefinitionId) ??
+        (boot.views[0] as ViewDefinitionData);
+      const itemIds = new Set(
+        view.columns
+          .filter((c) => c.sourceKind === "daily_item" && c.itemDefinitionId)
+          .map((c) => c.itemDefinitionId as string),
+      );
+      const itemDefinitions = boot.itemDefinitions.filter((i) => itemIds.has(i.id));
+      const groupIds = new Set<string>();
+      for (const column of view.columns) {
+        if (column.targetGroupId) groupIds.add(column.targetGroupId);
+      }
+      for (const item of itemDefinitions) {
+        if (item.targetGroupId) groupIds.add(item.targetGroupId);
+      }
+      return {
+        school: { id: boot.school.id, name: boot.school.name ?? "学校" },
+        view: structuredClone(view),
+        itemDefinitions: structuredClone(itemDefinitions),
+        targetGroups: structuredClone(boot.targetGroups.filter((g) => groupIds.has(g.id))),
+        grades: structuredClone(boot.masters.grades),
+        holidays: Object.entries(HOLIDAYS).map(([date, name]) => ({
+          id: `hol-${date}`,
+          date,
+          name,
+          kind: "national_holiday",
+        })),
+      };
+    },
+
+    async getPublicRange(input): Promise<RangeData> {
+      const row = resolve();
+      const boot = await inner.getBootstrap();
+      const view =
+        boot.views.find((v) => v.id === row.viewDefinitionId) ??
+        (boot.views[0] as ViewDefinitionData);
+      const range = await inner.getRange({ ...input, viewId: view.id });
+      const itemIds = new Set(
+        view.columns
+          .filter((c) => c.sourceKind === "daily_item" && c.itemDefinitionId)
+          .map((c) => c.itemDefinitionId as string),
+      );
+      const visible = (e: Record<string, unknown>) => e["visibility"] !== "staff_only";
+      return {
+        ...range,
+        days: range.days.map((day) => ({
+          ...day,
+          events: day.events.filter(visible).map((e) => publicEvent(e)),
+          absences: [],
+          dutyAssignments: [],
+          dailyValues: day.dailyValues
+            .filter((v) => itemIds.has(v.itemDefinitionId))
+            .map((v) => ({ ...v, valuePersonId: null })),
+        })),
+        undecided: range.undecided.map((group) => ({
+          ...group,
+          events: group.events.filter(visible).map((e) => publicEvent(e)),
+        })),
+        eventValues: [],
+        conflicts: [],
       };
     },
   };
