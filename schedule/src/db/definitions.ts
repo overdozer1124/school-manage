@@ -8,6 +8,8 @@ import {
   schoolSettings,
   targetGroups,
   targets,
+  viewColumns,
+  viewDefinitions,
   type ItemDefinitionRow,
   type ItemOptionRow,
   type LocationRow,
@@ -15,6 +17,7 @@ import {
   type TargetGroupRow,
   type TargetRow,
 } from "./schema.js";
+import { PlatformRelayError } from "../platformClient.js";
 import { PRESETS } from "../definitions/presets.js";
 import type {
   ItemDefinitionInput,
@@ -364,11 +367,47 @@ export async function upsertItemDefinition(
 }
 
 export async function deleteItemDefinition(db: Db, schoolId: string, id: string): Promise<boolean> {
-  const rows = await db
-    .delete(itemDefinitions)
-    .where(and(eq(itemDefinitions.schoolId, schoolId), eq(itemDefinitions.id, id)))
-    .returning();
-  return rows.length > 0;
+  try {
+    const rows = await db
+      .delete(itemDefinitions)
+      .where(and(eq(itemDefinitions.schoolId, schoolId), eq(itemDefinitions.id, id)))
+      .returning();
+    return rows.length > 0;
+  } catch (error) {
+    if (pgErrorCode(error) === "23503") {
+      // The item's own rows (options, daily values, event values)
+      // cascade, so the one reference that refuses is a view
+      // column (view_columns_item_fk is no action by design: a
+      // view must not silently lose a column). The refusal is a
+      // 409 carrying the reason and the views that use the item,
+      // in the same shape as the view deletion refusal in
+      // db/views.ts, so it reaches the screen as-is instead of
+      // surfacing as an opaque 500 (Issue #88).
+      const usedBy = await db
+        .select({ name: viewDefinitions.name })
+        .from(viewColumns)
+        .innerJoin(
+          viewDefinitions,
+          and(
+            eq(viewDefinitions.schoolId, viewColumns.schoolId),
+            eq(viewDefinitions.id, viewColumns.viewDefinitionId),
+          ),
+        )
+        .where(and(eq(viewColumns.schoolId, schoolId), eq(viewColumns.itemDefinitionId, id)))
+        .orderBy(asc(viewDefinitions.name));
+      const names = [...new Set(usedBy.map((row) => row.name))];
+      throw new PlatformRelayError({
+        status: 409,
+        body: {
+          error:
+            names.length > 0
+              ? `この項目はビューで使われているので削除できません（使われているビュー：${names.join("、")}）`
+              : "この項目はビューで使われているので削除できません",
+        },
+      });
+    }
+    throw error;
+  }
 }
 
 export async function upsertLocation(

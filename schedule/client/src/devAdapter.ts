@@ -1405,6 +1405,21 @@ export function createDevApi(): ScheduleApi {
     },
 
     async deleteItemDefinition(input) {
+      // The server refuses with a 409 when a view column still
+      // uses the item, naming the views (Issue #88); the refusal
+      // reaches the screen as-is here too.
+      const usedByNames = [
+        ...new Set(
+          boot.views
+            .filter((v) => v.columns.some((c) => c.itemDefinitionId === input.id))
+            .map((v) => v.name),
+        ),
+      ].sort();
+      if (usedByNames.length > 0) {
+        throw new Error(
+          `この項目はビューで使われているので削除できません（使われているビュー：${usedByNames.join("、")}）`,
+        );
+      }
       boot.itemDefinitions = boot.itemDefinitions.filter((i) => i.id !== input.id);
       return { deleted: true as const };
     },

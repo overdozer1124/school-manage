@@ -327,6 +327,31 @@ describe("settings screens (Issue #39)", () => {
     expect(screen.getByRole("button", { name: "確認待ち" })).toBeInTheDocument();
   });
 
+  it("deleting an item a view uses is refused with the server's wording, shown as-is", async () => {
+    render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const inDialog = within(dialog);
+
+    // 給食 is a column of all three seeded views. The delete is
+    // armed, then confirmed; the refusal names the views and the
+    // item stays in the list (Issue #88).
+    const lunchRow = () => inDialog.getByText("給食").closest("li") as HTMLElement;
+    fireEvent.click(within(lunchRow()).getByRole("button", { name: "削除" }));
+    fireEvent.click(within(lunchRow()).getByRole("button", { name: "本当に削除" }));
+    await waitFor(
+      () =>
+        expect(
+          inDialog.getByText(
+            /この項目はビューで使われているので削除できません（使われているビュー：保護者用月表、職員用月表、職員用週表（2週間））/,
+          ),
+        ).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    expect(inDialog.getByText("給食")).toBeInTheDocument();
+  }, 20000);
+
   it("a Viewer sees neither the settings nor the confirmation queue", async () => {
     const api = withRole(createDevApi(), "Viewer", ["view.read", "duty.write"]);
     render(<App api={api} initialAnchor="2026-11-15" />);
