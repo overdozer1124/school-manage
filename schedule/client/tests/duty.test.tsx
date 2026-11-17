@@ -111,6 +111,9 @@ const unusedWrites = {
   deleteViewDefinition: async (): Promise<never> => {
     throw new Error("not used");
   },
+  setViewArchived: async (): Promise<never> => {
+    throw new Error("not used");
+  },
   upsertDutyDefinition: async (): Promise<never> => {
     throw new Error("not used");
   },

@@ -137,6 +137,7 @@ const ACTION_NAMES = [
   "getViews",
   "upsertViewDefinition",
   "deleteViewDefinition",
+  "setViewArchived",
   "updateViewColumnWidth",
   "getDutyDefinitions",
   "upsertDutyDefinition",

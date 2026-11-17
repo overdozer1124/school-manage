@@ -1,0 +1,1 @@
+ALTER TABLE "view_definitions" ADD COLUMN "is_archived" boolean DEFAULT false NOT NULL;

@@ -33,6 +33,19 @@ export function ViewsSection({ ctx }: { ctx: SectionCtx }) {
   } | null>(null);
   const [addKind, setAddKind] = useState("daily_item");
   const [addRef, setAddRef] = useState("");
+  // Archived views (Issue #87) stay out of the everyday list;
+  // this section shows them only on request, so a retired view
+  // can be managed — and brought back — without crowding the
+  // views in use.
+  const [showArchived, setShowArchived] = useState(false);
+  const listed = views.filter((v) => !v.isArchived);
+  const archivedViews = views.filter((v) => v.isArchived);
+
+  const setArchived = (view: ViewDefinitionData, archived: boolean) =>
+    void run(async () => {
+      const saved = await api.setViewArchived({ id: view.id, archived });
+      setViews((list) => list.map((v) => (v.id === saved.id ? saved : v)));
+    });
 
   const openForm = (view: ViewDefinitionData | null) => {
     setForm({
@@ -54,31 +67,59 @@ export function ViewsSection({ ctx }: { ctx: SectionCtx }) {
     dutyDefinitions: ctx.duties,
   };
 
+  const viewRow = (view: ViewDefinitionData) => (
+    <li key={view.id}>
+      <span>
+        {view.name}
+        <span className="dim">
+          （{LAYOUT_LABELS[view.layout] ?? view.layout}／
+          {AUDIENCE_LABELS[view.audience] ?? view.audience}／
+          {PERIOD_SCOPE_LABELS[view.periodScope] ?? view.periodScope}／列{view.columns.length}件
+          {view.isArchived && "／一覧から外しています"}）
+        </span>
+      </span>{" "}
+      <button type="button" disabled={busy} onClick={() => openForm(view)}>
+        編集
+      </button>{" "}
+      {view.isArchived ? (
+        <button type="button" disabled={busy} onClick={() => setArchived(view, false)}>
+          一覧に戻す
+        </button>
+      ) : (
+        <button type="button" disabled={busy} onClick={() => setArchived(view, true)}>
+          一覧から外す
+        </button>
+      )}{" "}
+      {deleteButton(
+        `view:${view.id}`,
+        "削除",
+        async () => {
+          await api.deleteViewDefinition({ id: view.id });
+          setViews((list) => list.filter((v) => v.id !== view.id));
+        },
+        // Deleting takes the columns and the public-URL records
+        // with it, and a view with issued publications cannot be
+        // deleted at all; archiving (Issue #87) is the
+        // non-destructive way to retire a view.
+        "削除すると、このビューの列の定義と公開URLの記録もすべて消えます。発行した版があるビューは削除できません。使うのをやめるだけなら、削除ではなく「一覧から外す」を使ってください。",
+      )}
+      <PublicUrlBlock ctx={ctx} view={view} />
+    </li>
+  );
+
   return (
     <Section title="ビュー（表示の定義）">
-      <ul className="settings-list">
-        {views.map((view) => (
-          <li key={view.id}>
-            <span>
-              {view.name}
-              <span className="dim">
-                （{LAYOUT_LABELS[view.layout] ?? view.layout}／
-                {AUDIENCE_LABELS[view.audience] ?? view.audience}／
-                {PERIOD_SCOPE_LABELS[view.periodScope] ?? view.periodScope}／列{view.columns.length}
-                件）
-              </span>
-            </span>{" "}
-            <button type="button" disabled={busy} onClick={() => openForm(view)}>
-              編集
-            </button>{" "}
-            {deleteButton(`view:${view.id}`, "削除", async () => {
-              await api.deleteViewDefinition({ id: view.id });
-              setViews((list) => list.filter((v) => v.id !== view.id));
-            })}
-            <PublicUrlBlock ctx={ctx} view={view} />
-          </li>
-        ))}
-      </ul>
+      <ul className="settings-list">{listed.map(viewRow)}</ul>
+      {archivedViews.length > 0 && (
+        <>
+          <button type="button" disabled={busy} onClick={() => setShowArchived((s) => !s)}>
+            {showArchived
+              ? "一覧から外したビューを隠す"
+              : `一覧から外したビューを表示（${archivedViews.length}件）`}
+          </button>
+          {showArchived && <ul className="settings-list">{archivedViews.map(viewRow)}</ul>}
+        </>
+      )}
       {form === null && (
         <button type="button" disabled={busy} onClick={() => openForm(null)}>
           ビューを追加

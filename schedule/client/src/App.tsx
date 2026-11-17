@@ -84,7 +84,13 @@ export function App({
       .then((result) => {
         if (cancelled) return;
         setBootstrap(result);
-        setViewId((current) => current ?? result.views[0]?.id ?? null);
+        // Archived views are not switch choices (Issue #87): the
+        // opening view is the first one on the list, and a view
+        // archived while it was open gives its place up too.
+        const listed = result.views.filter((v) => !v.isArchived);
+        setViewId((current) =>
+          current && listed.some((v) => v.id === current) ? current : (listed[0]?.id ?? null),
+        );
       })
       .catch((cause: unknown) => {
         if (!cancelled) handleError(cause);
@@ -147,10 +153,37 @@ export function App({
       </main>
     );
   }
-  if (!bootstrap || !view) {
+  if (!bootstrap) {
     return (
       <main className="schedule-app">
         <p>読み込み中…</p>
+      </main>
+    );
+  }
+  if (!view) {
+    // The bootstrap arrived but no view is on the list — every
+    // view is archived (Issue #87), or none was ever defined.
+    // Say so instead of loading forever, and keep the settings
+    // reachable: bringing a view back is done there.
+    return (
+      <main className="schedule-app">
+        <p>表示できるビューがありません。設定でビューを一覧に戻してください。</p>
+        {bootstrap.permissions.includes("definition.write") && (
+          <button type="button" onClick={() => setSettingsOpen(true)}>
+            設定
+          </button>
+        )}
+        {settingsOpen && (
+          <SettingsPanel
+            bootstrap={bootstrap}
+            api={api}
+            onClose={() => setSettingsOpen(false)}
+            onChanged={() => {
+              setBootstrapTick((t) => t + 1);
+              setReloadTick((t) => t + 1);
+            }}
+          />
+        )}
       </main>
     );
   }
@@ -165,11 +198,13 @@ export function App({
           <label>
             ビュー{" "}
             <select aria-label="ビュー" value={view.id} onChange={(e) => setViewId(e.target.value)}>
-              {bootstrap.views.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
+              {bootstrap.views
+                .filter((v) => !v.isArchived)
+                .map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
             </select>
           </label>
           <div className="period-nav">

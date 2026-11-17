@@ -65,3 +65,9 @@ export type UpdateColumnWidthInput = z.infer<typeof updateColumnWidthInputSchema
 export const deleteViewInputSchema = z.object({
   id: nonEmptyString,
 });
+
+export const setViewArchivedInputSchema = z.object({
+  id: nonEmptyString,
+  archived: z.boolean(),
+});
+export type SetViewArchivedInput = z.infer<typeof setViewArchivedInputSchema>;

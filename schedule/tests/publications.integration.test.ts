@@ -534,14 +534,15 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
   it("a view with publications cannot be deleted, and both stay", async () => {
     // The publications foreign key is restrict: the refusal is a
     // 409 carrying the reason and the alternative, not a 500
-    // (PR #79 review, recommendation 2).
+    // (PR #79 review, recommendation 2). The alternative the
+    // wording names is archiving (Issue #87).
     const error: unknown = await actions.deleteViewDefinition
       .run(auth("Admin"), { id: "view-staff" })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(PlatformRelayError);
     expect(error).toMatchObject({ status: 409 });
     expect((error as PlatformRelayError).body).toEqual({
-      error: "発行した版があるビューは削除できません",
+      error: "発行した版があるビューは削除できません。一覧から外すことはできます",
     });
 
     // The view and its publications are untouched.

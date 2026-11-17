@@ -123,6 +123,36 @@ export async function upsertViewDefinition(
   }
 }
 
+/**
+ * Archives a view or brings it back (Issue #87). Archiving only
+ * flips is_archived: the definition, its columns, its issued
+ * publications and its public tokens all stay as they are — the
+ * client stops offering the view in the everyday list and the
+ * switcher, and that is the whole effect. Returns the updated
+ * view with its columns, or null when the view is not this
+ * school's.
+ */
+export async function setViewArchived(
+  db: Db,
+  schoolId: string,
+  id: string,
+  archived: boolean,
+): Promise<ViewDefinitionWithColumns | null> {
+  const rows = await db
+    .update(viewDefinitions)
+    .set({ isArchived: archived })
+    .where(and(eq(viewDefinitions.schoolId, schoolId), eq(viewDefinitions.id, id)))
+    .returning();
+  const definition = rows[0] as ViewDefinitionRow | undefined;
+  if (!definition) return null;
+  const columns = await db
+    .select()
+    .from(viewColumns)
+    .where(and(eq(viewColumns.schoolId, schoolId), eq(viewColumns.viewDefinitionId, id)))
+    .orderBy(asc(viewColumns.sort), asc(viewColumns.id));
+  return { ...definition, columns };
+}
+
 export async function deleteViewDefinition(db: Db, schoolId: string, id: string): Promise<boolean> {
   try {
     const rows = await db
@@ -138,11 +168,14 @@ export async function deleteViewDefinition(db: Db, schoolId: string, id: string)
       // it was issued from). The refusal is a 409 carrying the
       // reason and the alternative, in the same shape as the
       // platform's 409s, so it reaches the screen as-is instead of
-      // surfacing as an opaque 500 (PR #79 review).
+      // surfacing as an opaque 500 (PR #79 review). The
+      // alternative it names is archiving (Issue #87): taking
+      // the view off the list is always available, publications
+      // or not.
       throw new PlatformRelayError({
         status: 409,
         body: {
-          error: "発行した版があるビューは削除できません",
+          error: "発行した版があるビューは削除できません。一覧から外すことはできます",
         },
       });
     }

@@ -322,6 +322,7 @@ DEV_BOOTSTRAP.views = [
     audience: "staff",
     periodScope: "month",
     printSettings: null,
+    isArchived: false,
     columns: staffColumns("view-month-staff"),
   },
   {
@@ -332,6 +333,7 @@ DEV_BOOTSTRAP.views = [
     audience: "staff",
     periodScope: "two_weeks",
     printSettings: null,
+    isArchived: false,
     columns: staffColumns("view-week-staff"),
   },
   {
@@ -342,6 +344,7 @@ DEV_BOOTSTRAP.views = [
     audience: "guardian",
     periodScope: "month",
     printSettings: null,
+    isArchived: false,
     columns: [
       col("view-month-guardian-events", "view-month-guardian", "event_category", 1),
       col("view-month-guardian-lunch", "view-month-guardian", "daily_item", 2, {
@@ -1545,6 +1548,10 @@ export function createDevApi(): ScheduleApi {
         audience: String(input["audience"]),
         periodScope: String(input["periodScope"]),
         printSettings: (input["printSettings"] as Record<string, unknown> | null) ?? null,
+        // An edit never touches the archived flag, as on the
+        // server: only setViewArchived moves a view off the list
+        // or back onto it (Issue #87).
+        isArchived: boot.views.find((v) => v.id === viewId)?.isArchived ?? false,
         columns: ((input["columns"] as ViewDefinitionData["columns"] | undefined) ?? []).map(
           (c) => ({ ...c, viewDefinitionId: viewId }),
         ),
@@ -1554,8 +1561,22 @@ export function createDevApi(): ScheduleApi {
     },
 
     async deleteViewDefinition(input) {
+      // The server refuses with a 409 when the view has issued
+      // publications (the versions must keep naming their view);
+      // the refusal names archiving as the way to retire the
+      // view instead (Issue #87).
+      if (publications.some((p) => p.viewDefinitionId === input.id)) {
+        throw new Error("発行した版があるビューは削除できません。一覧から外すことはできます");
+      }
       boot.views = boot.views.filter((v) => v.id !== input.id);
       return { deleted: true as const };
+    },
+
+    async setViewArchived(input) {
+      const view = boot.views.find((v) => v.id === input.id);
+      if (!view) throw new Error(`view definition not found: ${input.id}`);
+      view.isArchived = input.archived;
+      return structuredClone(view);
     },
 
     async upsertDutyDefinition(input) {

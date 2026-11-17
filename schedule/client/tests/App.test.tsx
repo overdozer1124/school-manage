@@ -51,6 +51,23 @@ describe("schedule screen with the development adapter", () => {
     expect(document.querySelectorAll("tbody tr")).toHaveLength(14);
   });
 
+  it("does not offer an archived view in the switcher, and opens on the first listed view", async () => {
+    const api = createDevApi();
+    await api.setViewArchived({ id: "view-month-staff", archived: true });
+    render(<App api={api} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    const select = screen.getByLabelText("ビュー") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      "職員用週表（2週間）",
+      "保護者用月表",
+    ]);
+    expect(select.value).toBe("view-week-staff");
+    // The two-week table is what opens.
+    await waitFor(() => {
+      expect(document.querySelectorAll("tbody tr")).toHaveLength(14);
+    });
+  });
+
   it("moves by months in the L1 view", async () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
@@ -100,6 +117,7 @@ describe("401 / 403 handling", () => {
       applyPreset: fail,
       upsertViewDefinition: fail,
       deleteViewDefinition: fail,
+      setViewArchived: fail,
       upsertDutyDefinition: fail,
       deleteDutyDefinition: fail,
       upsertKindTemplate: fail,

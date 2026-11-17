@@ -173,6 +173,7 @@ export interface ScheduleApi {
   }): Promise<unknown>;
   upsertViewDefinition(input: Record<string, unknown>): Promise<ViewDefinitionData>;
   deleteViewDefinition(input: { id: string }): Promise<{ deleted: true }>;
+  setViewArchived(input: { id: string; archived: boolean }): Promise<ViewDefinitionData>;
   upsertDutyDefinition(input: Record<string, unknown>): Promise<DutyDefinitionData>;
   deleteDutyDefinition(input: { id: string }): Promise<{ deleted: true }>;
   upsertKindTemplate(input: Record<string, unknown>): Promise<KindTemplateData>;
@@ -318,6 +319,7 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     applyPreset: (input) => call<unknown>("applyPreset", input),
     upsertViewDefinition: (input) => call<ViewDefinitionData>("upsertViewDefinition", input),
     deleteViewDefinition: (input) => call<{ deleted: true }>("deleteViewDefinition", input),
+    setViewArchived: (input) => call<ViewDefinitionData>("setViewArchived", input),
     upsertDutyDefinition: (input) => call<DutyDefinitionData>("upsertDutyDefinition", input),
     deleteDutyDefinition: (input) => call<{ deleted: true }>("deleteDutyDefinition", input),
     upsertKindTemplate: (input) => call<KindTemplateData>("upsertKindTemplate", input),
