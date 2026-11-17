@@ -24,6 +24,7 @@ export function DutiesSection({ ctx }: { ctx: SectionCtx }) {
     endsOn: string;
     targetGroupId: string;
     sort: string;
+    isActive: boolean;
     useRotation: boolean;
     roster: string[];
     useWeekdays: boolean;
@@ -40,6 +41,7 @@ export function DutiesSection({ ctx }: { ctx: SectionCtx }) {
       endsOn: duty?.applicableEndsOn ?? "",
       targetGroupId: duty?.targetGroupId ?? "",
       sort: String(duty?.sort ?? duties.length + 1),
+      isActive: duty?.isActive !== false,
       useRotation: duty ? duty.rotation !== null : true,
       roster: duty?.rotation?.personIds ?? [],
       useWeekdays: duty?.rotation?.changeWeekdays != null,
@@ -60,7 +62,7 @@ export function DutiesSection({ ctx }: { ctx: SectionCtx }) {
                 {duty.rotation
                   ? `／輪番：${duty.rotation.personIds.map((id) => staff.find((s) => s.id === id)?.name ?? id).join(" → ")}`
                   : "／輪番なし"}
-                ）
+                {duty.isActive === false && "／停止中"}）
               </span>
             </span>{" "}
             <button type="button" disabled={busy} onClick={() => openForm(duty)}>
@@ -73,10 +75,12 @@ export function DutiesSection({ ctx }: { ctx: SectionCtx }) {
                 await api.deleteDutyDefinition({ id: duty.id });
                 setDuties((list) => list.filter((d) => d.id !== duty.id));
               },
-              // Duty definitions carry no is_active stop switch
-              // (unlike item definitions), so the guidance is
-              // not to delete when only the use ends.
-              "削除すると、この当番の割当・交代の履歴・見送りの記録がすべて消えます。使うのをやめるだけなら、削除せずに残してください。",
+              // Deleting cascades the assignments, the change
+              // history and the waivers away for every school
+              // year; stopping (isActive, Issue #86) is the
+              // non-destructive alternative, as on item
+              // definitions.
+              "削除すると、この当番の割当・交代の履歴・見送りの記録が全年度分すべて消えます。使うのをやめるだけなら、削除ではなく、編集で「使用中」のチェックを外して停止してください。",
             )}
           </li>
         ))}
@@ -159,6 +163,14 @@ export function DutiesSection({ ctx }: { ctx: SectionCtx }) {
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={form.isActive}
+              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+            />{" "}
+            使用中
           </label>
           <label>
             <input
@@ -280,6 +292,7 @@ export function DutiesSection({ ctx }: { ctx: SectionCtx }) {
                         form.applicablePeriod === "custom_range" ? form.endsOn || null : null,
                       targetGroupId: form.targetGroupId || null,
                       sort: Number(form.sort) || 0,
+                      isActive: form.isActive,
                       rotation: form.useRotation
                         ? {
                             personIds: form.roster,

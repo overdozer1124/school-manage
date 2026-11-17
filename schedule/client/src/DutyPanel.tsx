@@ -194,7 +194,9 @@ export function DutyPanel({
   const rotDefs = useMemo(
     () =>
       bootstrap.dutyDefinitions.filter(
-        (d) => d.rotation !== null && d.rotation.personIds.length > 0,
+        // A stopped duty (Issue #86) is not offered for rotation:
+        // it generates no new assignments.
+        (d) => d.isActive !== false && d.rotation !== null && d.rotation.personIds.length > 0,
       ),
     [bootstrap.dutyDefinitions],
   );

@@ -227,6 +227,7 @@ export const DEV_BOOTSTRAP: BootstrapData = {
       applicableEndsOn: null,
       targetGroupId: null,
       sort: 1,
+      isActive: true,
       rotation: { personIds: STAFF.map((s) => s.id), changeWeekdays: null },
     },
   ],
@@ -821,10 +822,18 @@ export function createDevApi(): ScheduleApi {
   const publicationDocuments = new Map<string, string>();
   let publicationSeq = 0;
 
+  // The fixture world's one duty and its stop switch (Issue
+  // #86): while 日番 is stopped, no new rotation assignments
+  // appear and no "unassigned" conflicts are derived — the same
+  // results the server gives. Standing assignments stay.
+  const dutyDayActive = (): boolean =>
+    boot.dutyDefinitions.find((d) => d.id === "duty-day")?.isActive !== false;
+
   const ensureAssignment = (date: string): DutyAssignmentData | null => {
     if (!isClassDay(date)) return null;
     const existing = assignments.get(date);
     if (existing) return existing;
+    if (!dutyDayActive()) return null;
     const created: DutyAssignmentData = {
       id: `duty-${date}`,
       dutyDefinitionId: "duty-day",
@@ -843,7 +852,7 @@ export function createDevApi(): ScheduleApi {
     const conflicts: DutyConflictData[] = [];
     for (const date of datesInRange(from, to)) {
       const assignment = ensureAssignment(date);
-      if (isClassDay(date) && !assignment) {
+      if (dutyDayActive() && isClassDay(date) && !assignment) {
         conflicts.push({
           kind: "unassigned",
           assignmentId: null,
@@ -1228,6 +1237,12 @@ export function createDevApi(): ScheduleApi {
     },
 
     async previewRotation(input) {
+      // A stopped duty generates nothing (Issue #86), as on the
+      // server: the preview refuses rather than planning cells
+      // the apply would never write.
+      if (!dutyDayActive()) {
+        throw new Error(`duty definition is not active: ${input.dutyDefinitionId}`);
+      }
       return datesInRange(input.from, input.to)
         .filter((date) => isClassDay(date))
         .map((date) => {
@@ -1250,6 +1265,9 @@ export function createDevApi(): ScheduleApi {
     },
 
     async applyRotation(input) {
+      if (!dutyDayActive()) {
+        throw new Error(`duty definition is not active: ${input.dutyDefinitionId}`);
+      }
       let created = 0;
       let updated = 0;
       let skipped = 0;
@@ -1550,6 +1568,7 @@ export function createDevApi(): ScheduleApi {
         applicableEndsOn: (input["applicableEndsOn"] as string | null) ?? null,
         targetGroupId: (input["targetGroupId"] as string | null) ?? null,
         sort: typeof input["sort"] === "number" ? (input["sort"] as number) : 0,
+        isActive: input["isActive"] !== false,
         rotation:
           (input["rotation"] as { personIds: string[]; changeWeekdays: string[] | null } | null) ??
           null,

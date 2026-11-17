@@ -99,6 +99,14 @@ export async function deriveDutyConflictsForRange(
   ]);
   const expectedCells: DutyExpectedCell[] = [];
   for (const definition of definitions) {
+    // A stopped duty (Issue #86) is not in force: it demands no
+    // holders, so it contributes no expected cells and never
+    // raises an "unassigned" conflict. Its standing assignments
+    // still take part in the absence / double derivation inside
+    // deriveDutyConflicts, which reads the assignment rows
+    // themselves — those conflicts are facts about records that
+    // remain on display, and the waiver flow stays open for them.
+    if (!definition.isActive) continue;
     const factsOf = await factsFor(platform, schoolId, definition, range);
     const periodLike = {
       applicablePeriod: definition.applicablePeriod as DutyApplicablePeriod,
