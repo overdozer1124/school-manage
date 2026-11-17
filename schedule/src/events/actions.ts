@@ -304,25 +304,20 @@ export function createEventActions(db: Db, platformClient: PlatformApiClient) {
     }),
 
     /**
-     * Confirming an event (Issue #39): the platform has no
-     * confirm endpoint for events and keeps no confirmed-by
-     * stamp on them (that bookkeeping is the absences' flow,
-     * Issue #25), so this is the move pattern — read the current
-     * record, write it back with only the certainty changed. A
-     * change since the caller's revision surfaces as the
-     * platform's 409, as-is. Confirming a provisional entry does
-     * not turn it into an absence: it stays the event it is,
-     * now confirmed; the conversion to an absence still happens
-     * by replacing the typed name with a roster name in the
-     * cell (Issue #35).
+     * Confirming an event (Issue #39): relayed to the platform's
+     * confirm endpoint, the same shape as confirmAbsence — the
+     * platform stamps who confirmed the event and when
+     * (confirmed_by / confirmed_at, Issue #85), which a read-back
+     * and rewrite here could not record. A change since the
+     * caller's revision surfaces as the platform's 409, as-is.
+     * Confirming a provisional entry does not turn it into an
+     * absence: it stays the event it is, now confirmed; the
+     * conversion to an absence still happens by replacing the
+     * typed name with a roster name in the cell (Issue #35).
      */
     confirmEvent: platformAction("event.confirm", async ({ request }) => {
       const input = confirmEventInputSchema.parse(request);
-      const path = `${EVENTS_PATH}/${encodeURIComponent(input.id)}`;
-      const current = await readRecord(path, input.cookie);
-      return relay("PUT", path, input.cookie, {
-        ...current,
-        certainty: "confirmed",
+      return relay("POST", `${EVENTS_PATH}/${encodeURIComponent(input.id)}/confirm`, input.cookie, {
         revision: input.revision,
       });
     }),

@@ -100,6 +100,26 @@ class FakePlatform {
     if (path.startsWith(`${EVENTS}?`) && method === "GET") {
       return jsonResponse(200, { items: [...this.events.values()] });
     }
+    // The platform's confirm endpoint (Issue #85): it stamps who
+    // confirmed the event and when, as the absences' confirm has
+    // since Issue #25.
+    const confirm = new RegExp(`^${EVENTS}/([^/]+)/confirm$`).exec(path);
+    if (confirm && method === "POST") {
+      const record = this.events.get(confirm[1] as string);
+      if (!record) return jsonResponse(404, { error: "見つかりません" });
+      if (body?.["revision"] !== record["revision"]) {
+        return jsonResponse(409, { error: "ほかの人が先に変更しました", latest: record });
+      }
+      const confirmed = {
+        ...record,
+        certainty: "confirmed",
+        confirmedBy: "person-confirmer",
+        confirmedAt: "2026-11-17T09:00:00.000Z",
+        revision: (record["revision"] as number) + 1,
+      };
+      this.events.set(confirm[1] as string, confirmed);
+      return jsonResponse(200, confirmed);
+    }
     const event = new RegExp(`^${EVENTS}/([^/]+)$`).exec(path);
     if (event) {
       const record = this.events.get(event[1] as string);
@@ -321,7 +341,7 @@ describe.skipIf(!url)("settings screens' server side (Issue #39)", () => {
     expect(after["grade"]?.map((g) => g["id"])).not.toContain("grade-7");
   });
 
-  it("the pending events are the tentative ones, and confirming flips only the certainty", async () => {
+  it("the pending events are the tentative ones, and confirming goes through the platform's confirm endpoint", async () => {
     fake.events.set("ev-tentative", {
       id: "ev-tentative",
       kind: "other",
@@ -354,6 +374,7 @@ describe.skipIf(!url)("settings screens' server side (Issue #39)", () => {
     })) as { items: Record<string, unknown>[] };
     expect(pending.items.map((i) => i["id"])).toEqual(["ev-tentative"]);
 
+    const callsBefore = fake.calls.length;
     const confirmed = (await actions.confirmEvent.run(auth("Editor"), {
       cookie: COOKIE,
       id: "ev-tentative",
@@ -362,6 +383,15 @@ describe.skipIf(!url)("settings screens' server side (Issue #39)", () => {
     expect(confirmed["certainty"]).toBe("confirmed");
     expect(confirmed["title"]).toBe("生徒指導担当（出張）");
     expect(confirmed["revision"]).toBe(4);
+    // The platform records the confirmation (Issue #85): who
+    // confirmed it and when come back with the record, and the
+    // relay is the confirm endpoint alone — no read-back and
+    // rewrite through PUT, which could not carry the record.
+    expect(confirmed["confirmedBy"]).toBe("person-confirmer");
+    expect(confirmed["confirmedAt"]).toBe("2026-11-17T09:00:00.000Z");
+    expect(fake.calls.slice(callsBefore)).toEqual([
+      { method: "POST", path: `${EVENTS}/ev-tentative/confirm` },
+    ]);
 
     // A stale revision is the platform's 409, relayed as-is.
     await expect(

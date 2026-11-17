@@ -229,15 +229,31 @@ function checkEventDates(v: EventDateFields, ctx: z.RefinementCtx): void {
   }
 }
 
+/** The confirmation stamps a record carries once an Editor has
+ *  confirmed it (DESIGN-AUTH-TENANCY 4.6 / 4.7): who confirmed it
+ *  and when. Both are null while the record is tentative — the
+ *  database check keeps the pair consistent with the certainty. */
+const confirmationStamps = {
+  confirmedBy: nonEmptyString.nullable(),
+  confirmedAt: z
+    .string()
+    .refine((s) => !Number.isNaN(Date.parse(s)), { message: "expected an ISO 8601 timestamp" })
+    .nullable(),
+};
+
 /**
  * An event as the platform stores and returns it (Issue #24): the
  * record the events API speaks in, with the shared entity meta, the
  * creator stamp (createdBy — DESIGN-INTEGRATION 3.1 records who made
- * it as well as who last changed it) and the subordinate targets,
- * impacts and assignees inlined.
+ * it as well as who last changed it), the confirmation stamps
+ * (Issue #85 — DESIGN-AUTH-TENANCY 4.7 names them for events as it
+ * does for absences) and the subordinate targets, impacts and
+ * assignees inlined. The stamps are staff information: the events
+ * API removes them from a non-staff audience's response, and the
+ * public-read shapes do not carry them at all.
  */
 export const calendarEventRecordSchema = entityMetaSchema
-  .extend({ createdBy: nonEmptyString, ...eventFields })
+  .extend({ createdBy: nonEmptyString, ...confirmationStamps, ...eventFields })
   .superRefine(checkEventDates);
 export type CalendarEventRecord = z.infer<typeof calendarEventRecordSchema>;
 
@@ -273,11 +289,7 @@ const absenceTexts = {
  *  when. Both confirmation fields are null while it is tentative. */
 const absenceStamps = {
   createdBy: nonEmptyString,
-  confirmedBy: nonEmptyString.nullable(),
-  confirmedAt: z
-    .string()
-    .refine((s) => !Number.isNaN(Date.parse(s)), { message: "expected an ISO 8601 timestamp" })
-    .nullable(),
+  ...confirmationStamps,
 };
 
 /** A staff absence (2.3), as the platform stores and returns it to a

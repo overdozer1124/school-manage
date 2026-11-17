@@ -403,6 +403,69 @@ describe("the detail modal (Issue #37)", () => {
     expect(screen.getByLabelText("終了時限")).toHaveValue("3");
   });
 
+  it("a confirmed record shows who confirmed it and when; a tentative one shows neither", () => {
+    const api = createDevApi();
+    const template = DEV_BOOTSTRAP.kindTemplates.find((t) => t.key === "event");
+    if (!template) throw new Error("no event template");
+    const base = {
+      id: "ev-x",
+      kind: "event",
+      kindLabel: null,
+      title: "音楽発表会",
+      datePrecision: "day",
+      startsOn: "2026-11-25",
+      endsOn: "2026-11-25",
+      time: null,
+      locationId: null,
+      locationText: null,
+      description: null,
+      visibility: "guardian",
+      targets: [],
+      impacts: [],
+      assignees: [],
+      revision: 1,
+    };
+    const renderModal = (record: Record<string, unknown>) =>
+      render(
+        <DetailModal
+          target={{
+            subjectKind: "event",
+            template,
+            record,
+            date: "2026-11-25",
+            dayScheduleId: "pattern-a",
+          }}
+          bootstrap={DEV_BOOTSTRAP}
+          api={api}
+          onSaved={() => {}}
+          onUnauthorizedError={() => {}}
+          onClose={() => {}}
+        />,
+      );
+
+    // The confirmation record the platform keeps (Issue #85):
+    // the confirmer's name resolves through the staff master, the
+    // moment renders as a local date and time.
+    const confirmed = renderModal({
+      ...base,
+      certainty: "confirmed",
+      confirmedBy: "teacher-1",
+      confirmedAt: "2026-11-02T09:30:00.000Z",
+    });
+    expect(
+      within(confirmed.container).getByText(/確定：田中先生（\d{4}-\d{2}-\d{2} \d{2}:\d{2}）/),
+    ).toBeInTheDocument();
+    cleanup();
+
+    const tentative = renderModal({
+      ...base,
+      certainty: "tentative",
+      confirmedBy: null,
+      confirmedAt: null,
+    });
+    expect(within(tentative.container).queryByText(/確定：/)).not.toBeInTheDocument();
+  });
+
   it("a provisional entry opens framed by its kind and stays a provisional when saved", async () => {
     const api = createDevApi();
     await renderApp(api);

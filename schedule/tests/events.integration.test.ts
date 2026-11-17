@@ -91,6 +91,10 @@ class FakePlatform {
       const confirmed = {
         ...record,
         certainty: "confirmed",
+        // The platform stamps the confirmer and the moment
+        // (absences since Issue #25, events since Issue #85).
+        confirmedBy: "fake-confirmer",
+        confirmedAt: "2026-11-17T09:00:00.000Z",
         revision: (record.revision as number) + 1,
       };
       store.set(confirm[2] as string, confirmed);

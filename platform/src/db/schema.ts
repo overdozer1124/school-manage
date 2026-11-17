@@ -226,6 +226,12 @@ export const dayPatternPeriods = pgTable(
  * (8-1-2). The location master lives in the schedule app, so
  * location_id is a bare string with no foreign key; the free-text
  * location is kept alongside it (schedule DESIGN 4.5).
+ *
+ * The confirmation stamps (DESIGN-AUTH-TENANCY 4.7, Issue #85)
+ * mirror the absences': confirmed_by / confirmed_at record who
+ * confirmed the event and when, and the events_confirmation_stamps
+ * check keeps them consistent with the certainty, exactly as
+ * absences_confirmation_stamps does for the absences.
  */
 export const events = pgTable(
   "events",
@@ -251,6 +257,8 @@ export const events = pgTable(
     visibility: text("visibility").notNull(),
     revision: integer("revision").notNull(),
     createdBy: text("created_by").notNull(),
+    confirmedBy: text("confirmed_by"),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     updatedBy: text("updated_by").notNull(),
     updatedVia: updatedViaEnum("updated_via").notNull(),
     createdAt: createdAt(),
@@ -263,6 +271,11 @@ export const events = pgTable(
       sql`${t.datePrecision} in ('day', 'range', 'month', 'undecided')`,
     ),
     check("events_certainty_check", sql`${t.certainty} in ('tentative', 'confirmed')`),
+    check(
+      "events_confirmation_stamps",
+      sql`(${t.certainty} = 'tentative' and ${t.confirmedBy} is null and ${t.confirmedAt} is null)
+        or (${t.certainty} = 'confirmed' and ${t.confirmedBy} is not null and ${t.confirmedAt} is not null)`,
+    ),
     check(
       "events_visibility_check",
       sql`${t.visibility} in ('staff_only', 'guardian', 'student', 'public')`,

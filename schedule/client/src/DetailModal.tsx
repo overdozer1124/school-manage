@@ -3,7 +3,14 @@ import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types"
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
 import { buildFreeTextEntry, buildTitleOnlyEntry, isImeKeyEvent } from "./cells";
 import { eventValueInputOf } from "./QuickPopover";
-import { freeTextNameOf, normalizeName, provisionalLineText, schoolYearOf } from "./lib";
+import {
+  formatIssuedAt,
+  freeTextNameOf,
+  normalizeName,
+  provisionalLineText,
+  schoolYearOf,
+  staffName,
+} from "./lib";
 import type { BootstrapData, EventValueData, TargetRefData } from "./types";
 import { AbsenceForm } from "./detail/AbsenceForm";
 import { EventForm } from "./detail/EventForm";
@@ -509,6 +516,15 @@ export function DetailModal({
     }
   };
 
+  // Who confirmed the record and when, when the platform has the
+  // stamps (Issue #85 for events; absences carry them since
+  // Issue #25): read from the record as last saved, so a record
+  // still tentative in the form shows nothing here even when the
+  // select has been flipped to 確定 but not yet saved. This modal
+  // is a staff screen; the platform never hands the stamps to a
+  // non-staff response in the first place.
+  const confirmedBy = stringField(record, "confirmedBy");
+  const confirmedAt = stringField(record, "confirmedAt");
   const certaintyField = (
     <div>
       <span className="detail-label">確定度</span>
@@ -523,6 +539,11 @@ export function DetailModal({
           <option value="tentative">仮</option>
           <option value="confirmed">確定</option>
         </select>
+      )}
+      {stringField(record, "certainty") === "confirmed" && confirmedBy && confirmedAt && (
+        <p className="detail-static dim">
+          確定：{staffName(bootstrap, confirmedBy)}（{formatIssuedAt(confirmedAt)}）
+        </p>
       )}
     </div>
   );
