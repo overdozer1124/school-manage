@@ -36,6 +36,9 @@ export const dutyDefinitionInputSchema = z
     /** The axis of a students' duty; null is a staff duty. */
     targetGroupId: nonEmptyString.nullable().optional(),
     sort: z.number().int().optional(),
+    /** The stop switch (Issue #86), as on item definitions and
+     *  locations: false stops the duty without deleting it. */
+    isActive: z.boolean().optional(),
     /** When given, replaces the definition's rotation rule
      *  wholesale; null clears it (no automatic generation). */
     rotation: rotationRuleInputSchema.nullable().optional(),

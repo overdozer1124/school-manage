@@ -116,6 +116,9 @@ export interface DutyDefinitionData {
   applicableEndsOn: string | null;
   targetGroupId: string | null;
   sort: number;
+  /** The stop switch (Issue #86): a stopped duty keeps its
+   *  assignments and history but takes no new ones. */
+  isActive: boolean;
   rotation: { personIds: string[]; changeWeekdays: string[] | null } | null;
 }
 

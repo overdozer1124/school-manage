@@ -123,13 +123,48 @@ describe("settings screens (Issue #39)", () => {
     expect(inDialog.getByText(/「使用中」のチェックを外して停止してください/)).toBeInTheDocument();
 
     // Duty definition: assignments, the change history and the
-    // waivers cascade away.
+    // waivers cascade away for every school year; stopping
+    // (isActive, Issue #86) is the alternative, spelled out in
+    // the same shape as the item definition's wording. (Arming
+    // this delete disarms the item's above, so the guidance is
+    // asserted again here.)
     const dutyRow = inDialog.getByText(/通年／輪番/).closest("li") as HTMLElement;
     fireEvent.click(within(dutyRow).getByRole("button", { name: "削除" }));
     expect(within(dutyRow).getByRole("button", { name: "本当に削除" })).toBeInTheDocument();
     expect(
-      inDialog.getByText(/割当・交代の履歴・見送りの記録がすべて消えます/),
+      inDialog.getByText(/割当・交代の履歴・見送りの記録が全年度分すべて消えます/),
     ).toBeInTheDocument();
+    expect(inDialog.getByText(/「使用中」のチェックを外して停止してください/)).toBeInTheDocument();
+  }, 20000);
+
+  it("a duty stopped in the settings shows as stopped, and resuming clears the mark", async () => {
+    render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定" });
+    const inDialog = within(dialog);
+
+    // Stop 日番 through the edit form's 使用中 checkbox (the
+    // same shape as item definitions and locations).
+    const dutyRow = () => inDialog.getByText(/通年／輪番/).closest("li") as HTMLElement;
+    fireEvent.click(within(dutyRow()).getByRole("button", { name: "編集" }));
+    const activeBox = inDialog.getByLabelText("使用中") as HTMLInputElement;
+    expect(activeBox.checked).toBe(true);
+    fireEvent.click(activeBox);
+    fireEvent.click(inDialog.getByRole("button", { name: "当番を保存" }));
+    await waitFor(() => expect(within(dutyRow()).getByText(/停止中/)).toBeInTheDocument(), {
+      timeout: 5000,
+    });
+
+    // Resume it: the mark goes away.
+    fireEvent.click(within(dutyRow()).getByRole("button", { name: "編集" }));
+    const stoppedBox = inDialog.getByLabelText("使用中") as HTMLInputElement;
+    expect(stoppedBox.checked).toBe(false);
+    fireEvent.click(stoppedBox);
+    fireEvent.click(inDialog.getByRole("button", { name: "当番を保存" }));
+    await waitFor(() => expect(within(dutyRow()).queryByText(/停止中/)).not.toBeInTheDocument(), {
+      timeout: 5000,
+    });
   }, 20000);
 
   it("revoking a public URL asks first, and its issued time is shown in local time", async () => {

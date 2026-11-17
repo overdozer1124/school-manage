@@ -1,0 +1,1 @@
+ALTER TABLE "duty_definitions" ADD COLUMN "is_active" boolean DEFAULT true NOT NULL;

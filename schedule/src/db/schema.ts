@@ -297,6 +297,10 @@ export type DailyValueRow = typeof dailyValues.$inferSelect;
  * dates are configured here; the range columns belong to
  * custom_range. target_group_id names the axis when the duty is the
  * students' rather than the staff's; null is a staff duty.
+ * is_active is the stop switch (Issue #86), as on item definitions
+ * and locations: a stopped duty keeps its assignments and history
+ * but takes no new ones. Deleting a definition cascades all of
+ * that away, so stopping is the way to retire a duty.
  */
 export const dutyDefinitions = pgTable(
   "duty_definitions",
@@ -310,6 +314,7 @@ export const dutyDefinitions = pgTable(
     applicableEndsOn: date("applicable_ends_on"),
     targetGroupId: text("target_group_id"),
     sort: integer("sort").default(0).notNull(),
+    isActive: boolean("is_active").default(true).notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.schoolId, t.id] }),

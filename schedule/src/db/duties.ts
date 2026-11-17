@@ -92,6 +92,7 @@ export async function upsertDutyDefinition(
           applicableEndsOn: input.applicableEndsOn ?? null,
           targetGroupId: input.targetGroupId ?? null,
           sort: input.sort ?? 0,
+          isActive: input.isActive ?? true,
         })
         .onConflictDoUpdate({
           target: [dutyDefinitions.schoolId, dutyDefinitions.id],
@@ -103,6 +104,7 @@ export async function upsertDutyDefinition(
             applicableEndsOn: input.applicableEndsOn ?? null,
             targetGroupId: input.targetGroupId ?? null,
             sort: input.sort ?? 0,
+            isActive: input.isActive ?? true,
           },
         })
         .returning();

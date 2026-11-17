@@ -87,6 +87,11 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
 
   async function buildPlan(schoolId: string, input: RotationRangeInput) {
     const definition = await loadDefinition(schoolId, input.dutyDefinitionId);
+    // A stopped duty (Issue #86) generates no new assignments:
+    // neither the preview nor the apply runs for it.
+    if (!definition.isActive) {
+      throw new Error(`duty definition is not active: ${definition.id}`);
+    }
     if (!definition.rotation || definition.rotation.personIds.length === 0) {
       throw new Error(`duty definition has no rotation rule: ${definition.id}`);
     }
@@ -153,6 +158,14 @@ export function createDutyActions(db: Db, platform?: DutyPlatformSource) {
       requireWriterRole(auth.role);
       const input = setDutyAssignmentInputSchema.parse(request);
       const definition = await loadDefinition(auth.schoolId, input.dutyDefinitionId);
+      // A stopped duty (Issue #86) takes no new assignment input.
+      // Its standing assignments stay readable, and the change
+      // flow (propose / apply) still works on them: those actions
+      // rearrange records that already exist rather than writing
+      // new assignments into the duty.
+      if (!definition.isActive) {
+        throw new Error(`duty definition is not active: ${definition.id}`);
+      }
       if (!isDutySlot(definition.granularity as DutyGranularity, input.slot)) {
         throw new Error(
           `slot "${input.slot}" does not fit granularity "${definition.granularity}"`,
