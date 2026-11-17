@@ -447,6 +447,11 @@ function fixtureEvent(date: string, title: string, i: number): Record<string, un
     impacts: [],
     assignees: [],
     revision: 1,
+    // The confirmation record the platform keeps (Issue #85), so
+    // the detail modal shows its 確定 line here as in production.
+    createdBy: "dev-user",
+    confirmedBy: "dev-user",
+    confirmedAt: "2026-11-01T09:00:00.000Z",
   };
 }
 
@@ -1081,14 +1086,41 @@ export function createDevApi(): ScheduleApi {
       return devRange(input);
     },
     async createEvent(input): Promise<RelaySaveResult> {
-      const record = { ...input.event, revision: 1 };
+      const record: Record<string, unknown> = { ...input.event, revision: 1 };
+      // The platform keeps the confirmation stamps consistent
+      // with the certainty (Issue #85); the dev adapter answers
+      // the same way instead of trusting what the form sent.
+      if (record["certainty"] === "confirmed") {
+        record["confirmedBy"] = "dev-user";
+        record["confirmedAt"] = new Date().toISOString();
+      } else {
+        record["confirmedBy"] = null;
+        record["confirmedAt"] = null;
+      }
       state.events.push(record);
       return { record, values: [] };
     },
     async updateEvent(input): Promise<RelaySaveResult> {
       const index = state.events.findIndex((e) => e["id"] === input.id);
       if (index < 0) throw new Error(`event not found: ${input.id}`);
-      const record = { ...input.event, id: input.id, revision: input.revision + 1 };
+      const existing = state.events[index] as Record<string, unknown>;
+      const record: Record<string, unknown> = {
+        ...input.event,
+        id: input.id,
+        revision: input.revision + 1,
+      };
+      if (record["certainty"] === "confirmed") {
+        if (existing["certainty"] === "confirmed" && existing["confirmedBy"]) {
+          record["confirmedBy"] = existing["confirmedBy"];
+          record["confirmedAt"] = existing["confirmedAt"];
+        } else {
+          record["confirmedBy"] = "dev-user";
+          record["confirmedAt"] = new Date().toISOString();
+        }
+      } else {
+        record["confirmedBy"] = null;
+        record["confirmedAt"] = null;
+      }
       state.events[index] = record;
       return { record, values: null };
     },
@@ -1718,6 +1750,10 @@ export function createDevApi(): ScheduleApi {
       const event = state.events.find((e) => e["id"] === input.id);
       if (!event) throw new Error(`event not found: ${input.id}`);
       event["certainty"] = "confirmed";
+      // The platform stamps the confirmer and the moment
+      // (Issue #85); the dev adapter answers the same way.
+      event["confirmedBy"] = "dev-user";
+      event["confirmedAt"] = new Date().toISOString();
       event["revision"] = (event["revision"] as number) + 1;
       return structuredClone(event);
     },

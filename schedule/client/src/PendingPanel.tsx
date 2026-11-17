@@ -11,10 +11,12 @@ import type { BootstrapData, PendingRecord } from "./types";
  * platform's pending list (Issue #25: its confirm stamps
  * confirmed_by / confirmed_at); events come from the relay's
  * range read (the platform has no event queue), and confirming
- * one only flips its certainty — a provisional entry of
- * Issue #35 (a placeholder name, or a title-only trip) stays an
- * event until a roster name replaces the typed name in the
- * cell, exactly as ODN's use-case ruling prescribes.
+ * one stamps the same record on the event (Issue #85) — a
+ * provisional entry of Issue #35 (a placeholder name, or a
+ * title-only trip) stays an event until a roster name replaces
+ * the typed name in the cell, exactly as ODN's use-case ruling
+ * prescribes. Who confirmed a settled entry, and when, is shown
+ * in its detail modal.
  *
  * The screen shows the queue only to Editor and Admin (the App
  * offers the button by role); the guard that matters is the

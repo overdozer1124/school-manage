@@ -292,6 +292,16 @@ describe.skipIf(!url)("public read path", () => {
     for (const key of ["schoolId", "revision", "createdBy", "updatedBy", "updatedVia"]) {
       expect(event[key]).toBeUndefined();
     }
+    // The confirmation record (Issue #85) is staff information in
+    // the same way: the stored record carries it — the fixture was
+    // created confirmed, so the store stamped its creator — and
+    // the public shape sheds it.
+    const stored = await eventStore.get(A, "ev-public", "staff");
+    expect(stored?.confirmedBy).toBe("person-a");
+    expect(stored?.confirmedAt).not.toBeNull();
+    for (const key of ["confirmedBy", "confirmedAt"]) {
+      expect(event[key]).toBeUndefined();
+    }
     const text = JSON.stringify(json);
     expect(text).not.toContain("staff-1");
     expect(text).not.toContain("外部講師");

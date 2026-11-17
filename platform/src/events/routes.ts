@@ -37,6 +37,11 @@ import {
  * on their own (Issue #29): who may set a record's values is who may
  * save the record, and that verdict （連携5 included) is this
  * server's to give, never the caller's own role table.
+ *
+ * A save or the confirm endpoint records who confirmed the event
+ * and when (confirmed_by / confirmed_at, Issue #85); those stamps
+ * are part of the record a staff reader gets and are removed from
+ * every non-staff response (see readResponse).
  */
 export interface EventsRouterDeps {
   config: AuthConfig;
@@ -129,7 +134,9 @@ function handleError(res: Response, error: unknown): void {
  * person ids are then removed from the body (they are staff ids, and
  * the outward response must not carry them — review recommendation on
  * PR #57; assignees and staff-axis targets are already redacted by
- * the store's forAudience).
+ * the store's forAudience). The confirmation stamps (Issue #85) are
+ * staff ids and a staff moment in the same way, so they leave with
+ * the creator / updater ids.
  */
 function readResponse(item: unknown, audience: Audience): Record<string, unknown> {
   const parsed = calendarEventRecordSchema.parse(item) as unknown as Record<string, unknown>;
@@ -137,6 +144,8 @@ function readResponse(item: unknown, audience: Audience): Record<string, unknown
   const body = { ...parsed };
   delete body.createdBy;
   delete body.updatedBy;
+  delete body.confirmedBy;
+  delete body.confirmedAt;
   return body;
 }
 
@@ -217,6 +226,26 @@ export function createEventsRouter(deps: EventsRouterDeps): Router {
         { userId: claims.personId, via: "platform" },
       );
       res.json(calendarEventRecordSchema.parse(updated));
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  // The confirmation half of the queue （確認待ち, 4.6), the events'
+  // counterpart of the absences' confirm: a writer settles a
+  // tentative event, and the store stamps who confirmed it and when
+  // (Issue #85).
+  router.post(`${base}/:id/confirm`, async (req, res) => {
+    try {
+      const { claims } = await requireWriter(deps, req);
+      const revision = parseRevision(bodyObject(req));
+      const confirmed = await deps.eventStore.confirm(
+        claims.schoolId,
+        req.params.id as string,
+        revision,
+        { userId: claims.personId, via: "platform" },
+      );
+      res.json(calendarEventRecordSchema.parse(confirmed));
     } catch (error) {
       handleError(res, error);
     }

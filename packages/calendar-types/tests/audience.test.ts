@@ -164,6 +164,8 @@ describe("calendarEventRecordSchema", () => {
     id: "event-1",
     revision: 1,
     createdBy: "person-1",
+    confirmedBy: "person-2",
+    confirmedAt: "2026-11-01T09:00:00.000Z",
     updatedBy: "person-1",
     updatedVia: "platform" as const,
     title: "音楽祭",

@@ -48,6 +48,15 @@ import {
  * the shared pure functions (calendar-types audience.ts): the server
  * never hands a non-staff audience an event it may not see, nor any
  * assignee name (DESIGN-AUTH-TENANCY 4.5).
+ *
+ * The confirmation stamps follow the absences' store exactly
+ * (Issue #85, DESIGN-AUTH-TENANCY 4.6 / 4.7): the store receives
+ * the certainty to store and keeps confirmed_by / confirmed_at
+ * consistent with it — tentative clears them, newly confirmed
+ * stamps the actor, and staying confirmed keeps the original
+ * confirmer. The confirm operation is the dedicated path the
+ * confirmation queue uses, as with the absences. The table's
+ * events_confirmation_stamps check is the second line of defence.
  */
 
 type Actor = ChangeEvent["actor"];
@@ -177,6 +186,14 @@ export interface EventStore {
   create(input: CalendarEventInput, actor: Actor): Promise<CalendarEventRecord>;
   update(
     input: CalendarEventInput & { revision: number },
+    actor: Actor,
+  ): Promise<CalendarEventRecord>;
+  /** Marks the event confirmed, stamping the confirmer (4.6). An
+   *  already-confirmed event is returned as it stands. */
+  confirm(
+    schoolId: string,
+    id: string,
+    expectedRevision: number,
     actor: Actor,
   ): Promise<CalendarEventRecord>;
   remove(schoolId: string, id: string, expectedRevision: number, actor: Actor): Promise<void>;
@@ -346,6 +363,8 @@ function toRecord(row: EventRow, children: Children): CalendarEventRecord {
     id: row.id,
     revision: row.revision,
     createdBy: row.createdBy,
+    confirmedBy: row.confirmedBy,
+    confirmedAt: row.confirmedAt ? row.confirmedAt.toISOString() : null,
     updatedBy: row.updatedBy,
     updatedVia: row.updatedVia,
     title: row.title,
@@ -520,6 +539,10 @@ export function createEventStore(db: Db): EventStore {
           },
           async (tx) => {
             await assertReferences(tx as unknown as LooseSource, input.schoolId, input);
+            // An event created already confirmed is confirmed by
+            // its creator at its creation (the stamps the absences'
+            // create sets for a confirmed save).
+            const confirmed = input.certainty === "confirmed";
             const inserted = await (tx as unknown as LooseSource)
               .insert(events as unknown as PgTable)
               .values({
@@ -539,6 +562,8 @@ export function createEventStore(db: Db): EventStore {
                 visibility: input.visibility,
                 revision: 1,
                 createdBy: actor.userId,
+                confirmedBy: confirmed ? actor.userId : null,
+                confirmedAt: confirmed ? new Date() : null,
                 updatedBy: actor.userId,
                 updatedVia: actor.via,
               })
@@ -570,6 +595,23 @@ export function createEventStore(db: Db): EventStore {
             const existing = await loadRecords(tx, input.schoolId, input.id);
             if (!existing[0]) throw new EventNotFoundError(input.id);
             await assertReferences(tx as unknown as LooseSource, input.schoolId, input);
+            // The confirmation stamps follow the stored certainty,
+            // as in the absences' update: tentative clears them,
+            // staying confirmed keeps the original confirmer,
+            // becoming confirmed stamps the actor. The record
+            // carries a kept stamp as an ISO string, so it goes
+            // back into a Date for the timestamp column.
+            const stamps =
+              input.certainty === "tentative"
+                ? { confirmedBy: null, confirmedAt: null }
+                : existing[0].certainty === "confirmed"
+                  ? {
+                      confirmedBy: existing[0].confirmedBy,
+                      confirmedAt: existing[0].confirmedAt
+                        ? new Date(existing[0].confirmedAt)
+                        : null,
+                    }
+                  : { confirmedBy: actor.userId, confirmedAt: new Date() };
             let updated: EventRow;
             try {
               updated = (await updateRevisioned(tx, events as unknown as RevisionedTable, {
@@ -590,6 +632,7 @@ export function createEventStore(db: Db): EventStore {
                   description: input.description,
                   certainty: input.certainty,
                   visibility: input.visibility,
+                  ...stamps,
                 } as never,
               })) as unknown as EventRow;
             } catch (error) {
@@ -613,6 +656,60 @@ export function createEventStore(db: Db): EventStore {
           error instanceof EventReferenceError ||
           error instanceof RevisionConflictError
         ) {
+          throw error;
+        }
+        mapWriteError(error, "write");
+      }
+    },
+
+    async confirm(schoolId, id, expectedRevision, actor) {
+      const existing = await loadRecords(db, schoolId, id);
+      if (!existing[0]) throw new EventNotFoundError(id);
+      if (existing[0].revision !== expectedRevision) {
+        throw new RevisionConflictError(eventConflictLatest(existing[0]));
+      }
+      if (existing[0].certainty === "confirmed") return existing[0];
+      try {
+        return await saveWithChange(
+          db,
+          (updated: CalendarEventRecord) => ({
+            schoolId,
+            kind: "event" as const,
+            entityId: id,
+            revision: updated.revision,
+            op: "upsert" as const,
+            actor,
+          }),
+          async (tx) => {
+            const current = await loadRecords(tx, schoolId, id);
+            if (!current[0]) throw new EventNotFoundError(id);
+            try {
+              await updateRevisioned(tx, events as unknown as RevisionedTable, {
+                schoolId,
+                id,
+                expectedRevision,
+                actor,
+                set: {
+                  certainty: "confirmed",
+                  confirmedBy: actor.userId,
+                  confirmedAt: new Date(),
+                } as never,
+              });
+            } catch (error) {
+              if (error instanceof RevisionConflictError) {
+                throw new RevisionConflictError(eventConflictLatest(current[0]));
+              }
+              throw error;
+            }
+            // The children do not change, so the record is read
+            // back whole inside the same transaction.
+            const reloaded = await loadRecords(tx, schoolId, id);
+            if (!reloaded[0]) throw new EventNotFoundError(id);
+            return reloaded[0];
+          },
+        );
+      } catch (error) {
+        if (error instanceof EventNotFoundError || error instanceof RevisionConflictError) {
           throw error;
         }
         mapWriteError(error, "write");
