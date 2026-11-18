@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../src/App";
+import type { ScheduleApi } from "../src/api";
 import { createDevApi } from "../src/devAdapter";
 
 afterEach(cleanup);
@@ -26,8 +27,8 @@ function cellFor(date: string, columnIndex: number): HTMLElement {
   return cell as HTMLElement;
 }
 
-async function openSettings() {
-  render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
+async function openSettings(api: ScheduleApi = createDevApi()) {
+  render(<App api={api} initialAnchor="2026-11-15" />);
   await screen.findByText("開発用小学校");
   fireEvent.click(screen.getByRole("button", { name: "設定" }));
   const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
@@ -252,5 +253,152 @@ describe("absence subdivisions in the settings (Issue #84)", () => {
       () => expect(inDialog.queryByText("既定の休暇分類はすでに入っています")).toBeInTheDocument(),
       { timeout: 5000 },
     );
+  }, 20000);
+});
+
+// A reorder whose save fails part-way (Issue #98): the rows
+// before the failure are already saved, with new numbers and
+// revisions, so the section reads the list back even on
+// failure — the screen shows what is actually stored, and the
+// next move sends the stored revisions instead of failing
+// again on the stale ones it would otherwise still hold.
+
+/** The development adapter with another admin at work: the
+ *  second subdivision save finds its row already saved by
+ *  someone else (the same record written back, revision moved
+ *  on), so the save's revision no longer matches and the
+ *  adapter refuses it the platform's way. The first row's
+ *  save, though, has already landed. */
+function apiWithConcurrentSave(): ScheduleApi {
+  const base = createDevApi();
+  let saves = 0;
+  return {
+    ...base,
+    async updateSubdivision(input) {
+      saves += 1;
+      if (saves === 2) {
+        const { items } = await base.getSubdivisions();
+        const current = items.find((s) => s.id === input.id);
+        if (current) {
+          await base.updateSubdivision({ id: current.id, record: { ...current } });
+        }
+      }
+      return base.updateSubdivision(input);
+    },
+  };
+}
+
+/** The second save fails, and the re-read behind it fails
+ *  too: the error line must still show the save's error, not
+ *  the re-read's. */
+function apiWithFailingSaveAndRead(): ScheduleApi {
+  const base = createDevApi();
+  let saves = 0;
+  let readFails = false;
+  return {
+    ...base,
+    async getSubdivisions() {
+      if (readFails) throw new Error("分類を読み直せませんでした");
+      return base.getSubdivisions();
+    },
+    async updateSubdivision(input) {
+      saves += 1;
+      if (saves === 2) {
+        readFails = true;
+        throw new Error("ほかの人が先に変更しました");
+      }
+      return base.updateSubdivision(input);
+    },
+  };
+}
+
+describe("a reorder save that fails part-way (Issue #98)", () => {
+  function leaveRowLabels(inDialog: ReturnType<typeof within>): (string | undefined)[] {
+    return [
+      ...inDialog.getByText("休暇", { selector: "h4" }).closest("div")!.querySelectorAll("li"),
+    ].map((li) => li.querySelector("span")?.textContent);
+  }
+
+  it("a move whose second save fails leaves the list showing the saved state, with the error", async () => {
+    const api = apiWithConcurrentSave();
+    const { inDialog } = await openSettings(api);
+
+    // 病休 down: 看護 is saved first with its new number 40,
+    // then 病休's save is refused — its revision has moved on.
+    fireEvent.click(
+      within(rowOf(inDialog, "病休（キー：sick）")).getByRole("button", { name: "下へ" }),
+    );
+    await waitFor(
+      () => expect(inDialog.queryByText(/ほかの人が先に変更しました/)).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+
+    // The list was read back: it shows what is actually
+    // saved. 看護 carries its new number 40, level with
+    // 病休's 40, and the key order puts 看護 first — the
+    // swap the first save landed is the one on screen.
+    await waitFor(
+      () =>
+        expect(leaveRowLabels(inDialog)).toEqual([
+          "年休（キー：annual）",
+          "特休（キー：special）",
+          "夏特（キー：summer_special）",
+          "看護（キー：nursing）",
+          "病休（キー：sick）",
+          "振休（キー：compensatory）",
+          "職専免（キー：duty_exempt）",
+          "その他（キー：other）",
+        ]),
+      { timeout: 5000 },
+    );
+    const { items } = await api.getSubdivisions();
+    expect(items.find((s) => s.key === "nursing")).toMatchObject({ sort: 40, revision: 2 });
+    expect(items.find((s) => s.key === "sick")).toMatchObject({ sort: 40, revision: 2 });
+  }, 20000);
+
+  it("moving again after the failed move works, on the refreshed revisions", async () => {
+    const api = apiWithConcurrentSave();
+    const { inDialog } = await openSettings(api);
+
+    fireEvent.click(
+      within(rowOf(inDialog, "病休（キー：sick）")).getByRole("button", { name: "下へ" }),
+    );
+    await waitFor(
+      () => expect(inDialog.queryByText(/ほかの人が先に変更しました/)).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    await waitFor(() => expect(leaveRowLabels(inDialog)[3]).toBe("看護（キー：nursing）"), {
+      timeout: 5000,
+    });
+
+    // 看護 down puts it back below 病休. Its save sends the
+    // revision the re-read brought in, so it goes through —
+    // on the stale revision the section held before the
+    // re-read, it would be refused the same way again.
+    fireEvent.click(
+      within(rowOf(inDialog, "看護（キー：nursing）")).getByRole("button", { name: "下へ" }),
+    );
+    await waitFor(() => expect(leaveRowLabels(inDialog)[3]).toBe("病休（キー：sick）"), {
+      timeout: 5000,
+    });
+    expect(leaveRowLabels(inDialog)[4]).toBe("看護（キー：nursing）");
+    expect(inDialog.queryByText(/ほかの人が先に変更しました/)).not.toBeInTheDocument();
+  }, 20000);
+
+  it("a re-read that fails after the failed save still shows the save's error", async () => {
+    const api = apiWithFailingSaveAndRead();
+    const { inDialog } = await openSettings(api);
+
+    fireEvent.click(
+      within(rowOf(inDialog, "病休（キー：sick）")).getByRole("button", { name: "下へ" }),
+    );
+    await waitFor(
+      () =>
+        expect(
+          inDialog.queryByText("保存できませんでした：ほかの人が先に変更しました"),
+        ).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+    expect(inDialog.queryByText(/分類を読み直せませんでした/)).not.toBeInTheDocument();
   }, 20000);
 });

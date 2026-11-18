@@ -45,7 +45,12 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
    *  #91): the kind's rows are renumbered in steps of ten in
    *  their new order, and every row whose number changed is
    *  saved, so the stored order and the shown order cannot
-   *  drift apart even if two rows shared a number. */
+   *  drift apart even if two rows shared a number. A save that
+   *  fails part-way leaves the rows before it already saved,
+   *  with new revisions, so the list is read back on failure
+   *  too (Issue #98): the screen then shows what is actually
+   *  stored, and the next move works on the stored revisions
+   *  instead of failing the same way again. */
   const move = (rows: AbsenceSubdivisionData[], record: AbsenceSubdivisionData, dir: -1 | 1) =>
     void run(async () => {
       const index = rows.findIndex((s) => s.id === record.id);
@@ -55,20 +60,30 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
       const [moved] = reordered.splice(index, 1);
       if (!moved) return;
       reordered.splice(target, 0, moved);
-      for (const [i, row] of reordered.entries()) {
-        const sort = (i + 1) * 10;
-        if (row.sort === sort) continue;
-        await api.updateSubdivision({
-          id: row.id,
-          record: {
+      try {
+        for (const [i, row] of reordered.entries()) {
+          const sort = (i + 1) * 10;
+          if (row.sort === sort) continue;
+          await api.updateSubdivision({
             id: row.id,
-            code: row.code,
-            key: row.key,
-            label: row.label,
-            revision: row.revision,
-            sort,
-          },
-        });
+            record: {
+              id: row.id,
+              code: row.code,
+              key: row.key,
+              label: row.label,
+              revision: row.revision,
+              sort,
+            },
+          });
+        }
+      } catch (cause) {
+        // Read the list back so the screen returns to the
+        // saved state (Issue #98). A re-read that itself
+        // fails must not hide the original error, so its
+        // failure is dropped here and the save's error is
+        // the one the panel's error line shows.
+        await refresh().catch(() => undefined);
+        throw cause;
       }
       await refresh();
     });
