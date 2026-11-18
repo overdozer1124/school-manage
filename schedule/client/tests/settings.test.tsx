@@ -327,7 +327,7 @@ describe("settings screens (Issue #39)", () => {
     expect(screen.getByRole("button", { name: "確認待ち" })).toBeInTheDocument();
   });
 
-  it("deleting an item a view uses is refused with the server's wording, shown as-is", async () => {
+  it("deleting an item a view uses is refused, headed as a delete on the error line", async () => {
     render(<App api={createDevApi()} initialAnchor="2026-11-15" />);
     await screen.findByText("開発用小学校");
     fireEvent.click(screen.getByRole("button", { name: "設定" }));
@@ -336,20 +336,44 @@ describe("settings screens (Issue #39)", () => {
 
     // 給食 is a column of all three seeded views. The delete is
     // armed, then confirmed; the refusal names the views and the
-    // item stays in the list (Issue #88).
+    // item stays in the list (Issue #88). The error line heads
+    // itself after the delete, not after a save (Issue #99);
+    // the detail is the server's wording, unchanged.
     const lunchRow = () => inDialog.getByText("給食").closest("li") as HTMLElement;
     fireEvent.click(within(lunchRow()).getByRole("button", { name: "削除" }));
     fireEvent.click(within(lunchRow()).getByRole("button", { name: "本当に削除" }));
     await waitFor(
       () =>
-        expect(
-          inDialog.getByText(
-            /この項目はビューで使われているので削除できません（使われているビュー：保護者用月表、職員用月表、職員用週表（2週間））/,
-          ),
-        ).toBeInTheDocument(),
+        expect(inDialog.getByRole("alert")).toHaveTextContent(
+          "削除できませんでした：この項目はビューで使われているので削除できません（使われているビュー：保護者用月表、職員用月表、職員用週表（2週間））",
+        ),
       { timeout: 5000 },
     );
+    expect(inDialog.getByRole("alert").textContent).not.toContain("保存できませんでした");
     expect(inDialog.getByText("給食")).toBeInTheDocument();
+  }, 20000);
+
+  it("a settings load that fails is headed as a load, not a save", async () => {
+    const base = createDevApi();
+    const api: ScheduleApi = {
+      ...base,
+      getDefinitions: async () => {
+        throw new Error("定義の取得に失敗しました");
+      },
+    };
+    render(<App api={api} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.click(screen.getByRole("button", { name: "設定" }));
+    const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
+    const inDialog = within(dialog);
+
+    // The panel's first load failed (Issue #99): the error line
+    // says the settings could not be read, and the panel stays
+    // on its loading line — nothing was read.
+    const alert = await inDialog.findByRole("alert");
+    expect(alert).toHaveTextContent("読み込めませんでした：定義の取得に失敗しました");
+    expect(alert.textContent).not.toContain("保存できませんでした");
+    expect(inDialog.getByText("読み込み中…")).toBeInTheDocument();
   }, 20000);
 
   it("a Viewer sees neither the settings nor the confirmation queue", async () => {

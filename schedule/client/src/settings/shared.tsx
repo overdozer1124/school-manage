@@ -124,7 +124,17 @@ export const PRESETS: {
   { key: "junior_high", label: "中学校", note: "行事・給食・部活動・生徒会・最終下校" },
 ];
 
-export type RunFn = (action: () => Promise<unknown>, done?: () => void) => Promise<void>;
+/** What a run does, so the panel's error line can head itself
+ *  after the operation that failed (Issue #99): a delete's
+ *  refusal is not a failed save. The panel's first load does
+ *  not go through run; the panel heads that one itself. */
+export type RunKind = "save" | "delete";
+
+export type RunFn = (
+  action: () => Promise<unknown>,
+  done?: () => void,
+  kind?: RunKind,
+) => Promise<void>;
 
 export interface SectionCtx {
   api: ScheduleApi;

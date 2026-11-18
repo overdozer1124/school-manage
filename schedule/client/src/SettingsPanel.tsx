@@ -48,6 +48,15 @@ import type { RunFn, SectionCtx } from "./settings/shared";
  * itself. A refusal surfaces here as the panel's error line.
  */
 
+/** The error line's text (Issue #99): the head names the
+ *  operation that failed — 保存 / 削除 / 読み込み — and the
+ *  detail after it is the error's own wording, unchanged. With
+ *  no detail to show, the line is the bare text (for the first
+ *  load, the panel's own "the settings could not be read"). */
+function errorLine(head: string, cause: unknown, bare = head): string {
+  return cause instanceof Error && cause.message ? `${head}：${cause.message}` : bare;
+}
+
 export function SettingsPanel({
   bootstrap,
   api,
@@ -97,7 +106,7 @@ export function SettingsPanel({
       })
       .catch((cause: unknown) => {
         if (!cancelled) {
-          setError(cause instanceof Error ? cause.message : "設定を読み込めませんでした");
+          setError(errorLine("読み込めませんでした", cause, "設定を読み込めませんでした"));
         }
       });
     return () => {
@@ -105,7 +114,7 @@ export function SettingsPanel({
     };
   }, [api]);
 
-  const run: RunFn = async (action, done) => {
+  const run: RunFn = async (action, done, kind = "save") => {
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -115,7 +124,9 @@ export function SettingsPanel({
       done?.();
       onChanged();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "保存できませんでした");
+      setError(
+        errorLine(kind === "delete" ? "削除できませんでした" : "保存できませんでした", cause),
+      );
     } finally {
       setBusy(false);
     }
@@ -138,7 +149,7 @@ export function SettingsPanel({
         disabled={busy}
         onClick={() => {
           if (confirmKey === key) {
-            void run(action);
+            void run(action, undefined, "delete");
           } else {
             setConfirmKey(key);
           }
@@ -192,7 +203,7 @@ export function SettingsPanel({
         </div>
         {error && (
           <p className="duty-panel-error" role="alert">
-            保存できませんでした：{error}
+            {error}
           </p>
         )}
         {notice && <p className="cell-notice">{notice}</p>}
