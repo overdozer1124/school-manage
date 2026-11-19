@@ -18,3 +18,11 @@ export {
   type PlatformClientOptions,
   type RequestLike,
 } from "./verify.js";
+export {
+  createWebhookSignature,
+  DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+  verifyWebhookSignature,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+  type WebhookVerificationInput,
+} from "./webhook.js";

@@ -211,6 +211,9 @@ importers:
       '@school-manage/calendar-types':
         specifier: workspace:*
         version: link:../packages/calendar-types
+      '@school-manage/platform-client':
+        specifier: workspace:*
+        version: link:../packages/platform-client
       bcryptjs:
         specifier: ^3.0.3
         version: 3.0.3

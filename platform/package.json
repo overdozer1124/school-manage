@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@school-manage/calendar-types": "workspace:*",
+    "@school-manage/platform-client": "workspace:*",
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.44.7",
     "express": "^5.1.0",

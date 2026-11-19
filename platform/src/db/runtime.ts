@@ -10,6 +10,7 @@ import { createDb } from "./client.js";
 import { createDayStore, createHolidayStore, type DayStore, type HolidayStore } from "./days.js";
 import { createEventStore, type EventStore } from "./events.js";
 import { createMasterStore, type MasterStore } from "./masters.js";
+import { createWebhookStore, type WebhookStore } from "./webhooks.js";
 
 /**
  * Composition helpers for the process entry point: build the stores
@@ -55,4 +56,9 @@ export function createAbsenceStoreFromEnv(): AbsenceStore {
 export function createAbsenceSubdivisionStoreFromEnv(): AbsenceSubdivisionStore {
   const { db } = createDb();
   return createAbsenceSubdivisionStore(db);
+}
+
+export function createWebhookStoreFromEnv(): WebhookStore {
+  const { db } = createDb();
+  return createWebhookStore(db);
 }
