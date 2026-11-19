@@ -60,6 +60,13 @@ export interface AuthRouterDeps {
   config: AuthConfig;
   /** Tests inject a fake; the default talks to Google for real. */
   googleClient?: GoogleAuthClient;
+  /**
+   * The clock the login rate limiters read. Tests inject a fake so
+   * the window can be a realistic length and its passing a turn of
+   * the hand, not a sleep (Issue #100); the default is the wall
+   * clock, which is all production ever passes.
+   */
+  now?: () => number;
 }
 
 function sessionCookie(token: string, maxAgeSeconds: number): string {
@@ -189,10 +196,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   const emailLimiter = createRateLimiter({
     maxFailures: deps.config.loginRateLimitMaxFailures,
     windowMs,
+    ...(deps.now ? { now: deps.now } : {}),
   });
   const ipLimiter = createRateLimiter({
     maxFailures: deps.config.loginRateLimitIpMaxFailures,
     windowMs,
+    ...(deps.now ? { now: deps.now } : {}),
   });
 
   // CSRF guard for state-changing calls (4.8): when a browser sends an
