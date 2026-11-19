@@ -660,6 +660,27 @@ describe.skipIf(!url)("schedule range reads (getRange / getBootstrap)", () => {
     expect(result.inputOpener).toBe("modal");
   });
 
+  it("bootstrap passes a day pattern with no periods through (Issue #104)", async () => {
+    // A stored pattern whose period rows are gone reads back
+    // from the platform with an empty periods list (Issue #104);
+    // the bootstrap must carry it through — the pattern stays
+    // visible for an admin to fix — not fail the whole read.
+    const patterns = fakePlatform.masters["day-patterns"];
+    if (!patterns) throw new Error("the fake platform seeds day patterns");
+    patterns.push({ id: "pattern-empty", code: "Z", name: "時限のない日課", periods: [] });
+    try {
+      const result = await range.getBootstrap.run(auth(A, "Editor", "teacher-a1"), {
+        cookie: COOKIE,
+      });
+      const empty = result.masters.dayPatterns.find((p) => p.id === "pattern-empty");
+      expect(empty).toBeDefined();
+      expect(empty?.["periods"]).toEqual([]);
+      expect(result.masters.dayPatterns.map((p) => p.id)).toContain("pattern-a");
+    } finally {
+      patterns.pop();
+    }
+  });
+
   // ---- Duty conflicts in the range (Issue #69) ------------------
 
   it("a staff view's range carries the same conflicts as getDutyConflicts", async () => {
