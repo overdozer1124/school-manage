@@ -1,4 +1,10 @@
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+} from "react";
 import { isImeKeyEvent } from "./cells";
 
 /**
@@ -81,7 +87,16 @@ export function useDialogFocus<T extends HTMLElement>(onClose: () => void): RefO
     };
   }
 
-  useEffect(() => {
+  // A layout effect, not a passive one (Issue #100): the dialog
+  // must be armed — on the stack, focus inside, key listener on
+  // the document — in the same commit that puts it in the DOM. A
+  // passive effect leaves a gap between the node appearing and
+  // the listener landing, and an Esc that arrives inside the gap
+  // (a fast keyboard, an automated one) is lost for good: the
+  // dialog stays open with nothing left to close it. This app is
+  // client-only, so the layout effect's server-rendering caveat
+  // does not apply.
+  useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
     const token = {};

@@ -40,7 +40,7 @@ describe.skipIf(!url)("login guards", () => {
   let queryClient: ReturnType<typeof postgres>;
   const servers: Server[] = [];
 
-  async function makeApp(env: Record<string, string>): Promise<string> {
+  async function makeApp(env: Record<string, string>, now?: () => number): Promise<string> {
     const config = loadAuthConfig({
       JWT_SECRET: SECRET,
       GOOGLE_CLIENT_ID: "test-client-id",
@@ -48,7 +48,12 @@ describe.skipIf(!url)("login guards", () => {
       ...env,
     });
     const app = createApp({
-      auth: { store: createAuthStore(db), config, googleClient: fakeGoogle },
+      auth: {
+        store: createAuthStore(db),
+        config,
+        googleClient: fakeGoogle,
+        ...(now ? { now } : {}),
+      },
     });
     const server = await new Promise<Server>((resolve) => {
       const s = app.listen(0, () => resolve(s));
@@ -139,10 +144,21 @@ describe.skipIf(!url)("login guards", () => {
   });
 
   it("answers 429 at the limit, audits it, and recovers after the window", async () => {
-    const baseUrl = await makeApp({
-      LOGIN_RATE_LIMIT_MAX_FAILURES: "3",
-      LOGIN_RATE_LIMIT_WINDOW_SECONDS: "2",
-    });
+    // The window is a realistic minute and the limiters read an
+    // injected clock (Issue #100). With a 2-second real window the
+    // three failures could straddle it under load — the first one
+    // aged out before the fourth attempt, which then answered 401
+    // instead of 429. Recovery is checked by turning the clock
+    // past the window, not by sleeping, so the test stays fast
+    // and the timing exact.
+    let now = 1_700_000_000_000;
+    const baseUrl = await makeApp(
+      {
+        LOGIN_RATE_LIMIT_MAX_FAILURES: "3",
+        LOGIN_RATE_LIMIT_WINDOW_SECONDS: "60",
+      },
+      () => now,
+    );
     const login = (password: string) =>
       post(baseUrl, "/platform/api/v1/auth/login", { email: "rl-b@example.jp", password });
     expect((await login("wrong-pass")).status).toBe(401);
@@ -155,7 +171,7 @@ describe.skipIf(!url)("login guards", () => {
     const audits = await db.select().from(auditLog);
     expect(audits.some((row) => row.action === "auth.login.rate_limited")).toBe(true);
 
-    await new Promise((resolve) => setTimeout(resolve, 2_100));
+    now += 61_000;
     expect((await login("rl-pass-b1")).status).toBe(200);
   });
 

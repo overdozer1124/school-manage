@@ -15,6 +15,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     include: ["tests/**/*.test.{ts,tsx}"],
+    setupFiles: ["tests/setup.ts"],
     environment: "jsdom",
     // The panel screens (settings / confirmation queue / duty)
     // render the whole app plus a large dialog, and a single test

@@ -120,6 +120,34 @@ describe("dialog focus discipline (Issue #89)", () => {
     expect(document.activeElement).toBe(input);
   }, 20000);
 
+  it("quick popover: an Esc that arrives the moment it appears still closes it", async () => {
+    const api = createDevApi();
+    await renderApp(api);
+    // The Esc is dispatched in the very microtask in which the
+    // popover's node first appears (a MutationObserver callback) —
+    // before any passive effect could have run. The popover's key
+    // handling must therefore be armed during the commit itself,
+    // or this Esc is lost and the popover stays open (Issue #100).
+    let fired = false;
+    const observer = new MutationObserver(() => {
+      if (fired || !document.querySelector('[role="dialog"]')) return;
+      fired = true;
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      const eventsCell = cellFor("2026-11-16", 0);
+      fireEvent.click(eventsCell);
+      const input = within(eventsCell).getByLabelText(/行事の入力/);
+      fireEvent.change(input, { target: { value: "運動会" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(fired).toBe(true));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    } finally {
+      observer.disconnect();
+    }
+  }, 20000);
+
   it("duty panel: focus enters, Tab cycles, Esc closes, focus returns to the toolbar button", async () => {
     const api = createDevApi();
     await renderApp(api);
