@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   bigserial,
   boolean,
   check,
@@ -743,6 +744,30 @@ export const outbox = pgTable(
   (t) => [index("outbox_school_seq_index").on(t.schoolId, t.seq)],
 );
 
+/**
+ * The webhook delivery state, one row per product (Issue #106,
+ * DESIGN-INTEGRATION 7.1): how far delivery to that product's
+ * receiver has advanced through the outbox, and when a failed
+ * delivery is retried. The destination itself (URL and secret) is
+ * configuration, not data — it lives in the environment
+ * (WEBHOOK_<PRODUCT>_URL / _SECRET), so this table holds no secret.
+ * A row is created the first time a destination is configured, with
+ * last_delivered_seq starting at the outbox's then-latest seq:
+ * delivery never backfills changes from before the destination
+ * existed (receivers catch up through GET /changes instead).
+ * last_error is a short summary of the latest failure (an HTTP
+ * status or a fetch error's name) — never a request or response
+ * body, and never the secret.
+ */
+export const webhookDeliveries = pgTable("webhook_deliveries", {
+  product: productEnum("product").primaryKey(),
+  lastDeliveredSeq: bigint("last_delivered_seq", { mode: "number" }).notNull().default(0),
+  failureCount: integer("failure_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 export type School = typeof schools.$inferSelect;
 export type Person = typeof persons.$inferSelect;
 export type Membership = typeof memberships.$inferSelect;
@@ -751,6 +776,7 @@ export type ProductEntitlement = typeof productEntitlements.$inferSelect;
 export type Product = (typeof productEnum.enumValues)[number];
 export type Role = (typeof roleEnum.enumValues)[number];
 export type OutboxRow = typeof outbox.$inferSelect;
+export type WebhookDeliveryRow = typeof webhookDeliveries.$inferSelect;
 export type StaffRow = typeof staffMembers.$inferSelect;
 export type GradeRow = typeof grades.$inferSelect;
 export type ClassRow = typeof classes.$inferSelect;

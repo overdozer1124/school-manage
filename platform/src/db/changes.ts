@@ -1,8 +1,8 @@
-import { and, asc, eq, gt, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { ChangeEntityKind, ChangeEvent } from "@school-manage/calendar-types";
 import type { Db } from "./client.js";
-import { outbox, type OutboxRow } from "./schema.js";
+import { outbox, productEntitlements, type OutboxRow, type Product } from "./schema.js";
 
 /**
  * The change outbox and the save helpers around it (Issue #21,
@@ -28,7 +28,8 @@ export interface ChangeInput {
   actor: ChangeEvent["actor"];
 }
 
-function toChangeEvent(row: OutboxRow): ChangeEvent {
+/** The wire shape of one outbox row (the shared changeEventSchema). */
+export function toChangeEvent(row: OutboxRow): ChangeEvent {
   return {
     seq: row.seq,
     schoolId: row.schoolId,
@@ -300,6 +301,20 @@ export async function lockRevisioned<T extends RevisionedTable>(
 export interface ChangeStore {
   /** A school's changes after `after`, oldest first, at most `limit`. */
   listChanges(schoolId: string, after: number, limit: number): Promise<ChangeEvent[]>;
+  /**
+   * The server-to-server read (Issue #106): the changes of every
+   * school whose entitlement for `product` is in force on `today`,
+   * after `after`, oldest first, at most `limit`. A product's
+   * receiver keeps one watermark across all its schools, so this is
+   * the cross-school counterpart of listChanges; a school without
+   * an entitlement in force contributes nothing.
+   */
+  listChangesForProduct(
+    product: Product,
+    after: number,
+    limit: number,
+    today: string,
+  ): Promise<ChangeEvent[]>;
 }
 
 export function createChangeStore(db: Db): ChangeStore {
@@ -309,6 +324,29 @@ export function createChangeStore(db: Db): ChangeStore {
         .select()
         .from(outbox)
         .where(and(eq(outbox.schoolId, schoolId), gt(outbox.seq, after)))
+        .orderBy(asc(outbox.seq))
+        .limit(limit);
+      return rows.map(toChangeEvent);
+    },
+
+    async listChangesForProduct(product, after, limit, today) {
+      const entitled = await db
+        .select({ schoolId: productEntitlements.schoolId })
+        .from(productEntitlements)
+        .where(
+          and(
+            eq(productEntitlements.product, product),
+            eq(productEntitlements.status, "active"),
+            lte(productEntitlements.startsOn, today),
+            or(isNull(productEntitlements.endsOn), gte(productEntitlements.endsOn, today)),
+          ),
+        );
+      const schoolIds = [...new Set(entitled.map((row) => row.schoolId))];
+      if (schoolIds.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(outbox)
+        .where(and(inArray(outbox.schoolId, schoolIds), gt(outbox.seq, after)))
         .orderBy(asc(outbox.seq))
         .limit(limit);
       return rows.map(toChangeEvent);
