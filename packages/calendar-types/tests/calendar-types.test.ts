@@ -16,6 +16,7 @@ import {
   changeEntityKindSchema,
   changeEventSchema,
   dateStringSchema,
+  dayPatternRecordSchema,
   dayPatternSchema,
   derivedImpactSchema,
   staffMemberRecordSchema,
@@ -373,6 +374,27 @@ describe("dayPattern and changeEvent", () => {
       ],
     });
     expect(pattern.success).toBe(true);
+  });
+
+  it("accepts a stored day pattern with no periods, while input still requires one", () => {
+    // A pattern whose period rows are gone (a direct database
+    // edit, an import) must still read back as a record, or one
+    // such row would fail the platform's whole day-pattern list
+    // (Issue #104). Creating or updating still requires at
+    // least one period.
+    const stored = {
+      schoolId: "school-1",
+      id: "pattern-1",
+      code: "A",
+      name: "通常日課",
+      kind: "normal",
+      periods: [],
+      revision: 1,
+      updatedBy: "person-1",
+      updatedVia: "platform",
+    };
+    expect(dayPatternRecordSchema.safeParse(stored).success).toBe(true);
+    expect(dayPatternSchema.safeParse(stored).success).toBe(false);
   });
 
   it("parses a change event and rejects an unknown op", () => {

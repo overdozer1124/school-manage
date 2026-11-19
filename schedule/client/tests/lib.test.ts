@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEV_BOOTSTRAP, createDevApi } from "../src/devAdapter";
+import { periodChoicesOf } from "../src/detail/TimeEditor";
 import {
   dailyCellText,
   dayMark,
@@ -173,6 +174,39 @@ describe("issued-at formatting (Issue #41 review)", () => {
 
   it("an unparseable value is shown as it came", () => {
     expect(formatIssuedAt("not-a-date", "Asia/Tokyo")).toBe("not-a-date");
+  });
+});
+
+describe("a day pattern with no periods (Issue #104)", () => {
+  it("offers no period choices and still marks the day, without throwing", () => {
+    // A stored pattern whose period rows are gone reaches the
+    // screen with an empty periods list; the helpers that read
+    // times and ranges out of the periods must take the empty
+    // array in stride.
+    const bootstrap = {
+      ...DEV_BOOTSTRAP,
+      masters: {
+        ...DEV_BOOTSTRAP.masters,
+        dayPatterns: [{ id: "pattern-empty", code: "Z", name: "時限のない日課", periods: [] }],
+      },
+    };
+    expect(periodChoicesOf(bootstrap, "pattern-empty")).toEqual([]);
+    const mark = dayMark(
+      day({
+        date: "2026-11-16",
+        day: {
+          date: "2026-11-16",
+          dayType: "class_day",
+          dayTypeLabel: null,
+          dayScheduleId: "pattern-empty",
+          weekdaySwap: null,
+          note: null,
+          source: "recorded",
+        },
+      }),
+      bootstrap.masters.dayPatterns,
+    );
+    expect(mark.sub).toContain("Z日課");
   });
 });
 

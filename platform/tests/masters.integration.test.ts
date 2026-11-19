@@ -9,7 +9,14 @@ import { createChangeStore, type ChangeStore } from "../src/db/changes.js";
 import { createDb, type Db } from "../src/db/client.js";
 import { createMasterStore, type MasterStore } from "../src/db/masters.js";
 import { runMigrations } from "../src/db/migrate.js";
-import { memberships, persons, productRoles, schools, staffMembers } from "../src/db/schema.js";
+import {
+  dayPatterns,
+  memberships,
+  persons,
+  productRoles,
+  schools,
+  staffMembers,
+} from "../src/db/schema.js";
 
 // Shared masters tests (Issue #22): CRUD and permissions over HTTP,
 // two-school isolation, the membership teacher link, and the outbox
@@ -509,6 +516,78 @@ describe.skipIf(!url)("shared masters", () => {
             shortName: "無",
             sortOrder: 3,
             personId: null,
+          },
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("lists and returns a day pattern whose period rows are gone (Issue #104)", async () => {
+    // The API cannot create this shape (input requires at least
+    // one period); it arrives only through a direct database
+    // edit or an import. Insert the pattern row with no period
+    // rows at all: the list and the single read must still
+    // answer 200, with the pattern present and its periods
+    // empty, so an admin can find and fix it.
+    await db.insert(dayPatterns).values({
+      schoolId: A,
+      id: "pattern-empty",
+      code: "Z",
+      name: "時限のない日課",
+      kind: "normal",
+      revision: 1,
+      updatedBy: "person-editor",
+      updatedVia: "platform",
+    });
+    const listed = await api("GET", "/platform/api/v1/masters/day-patterns", {
+      cookie: viewerA(),
+    });
+    expect(listed.status).toBe(200);
+    const found = (listed.json.items ?? []).find((i) => i.id === "pattern-empty");
+    expect(found).toBeDefined();
+    expect(found?.periods).toEqual([]);
+    // The healthy patterns stay in the list alongside it.
+    expect((listed.json.items ?? []).map((i) => i.id)).toContain("pattern-1");
+
+    const got = await api("GET", "/platform/api/v1/masters/day-patterns/pattern-empty", {
+      cookie: viewerA(),
+    });
+    expect(got.status).toBe(200);
+    expect(got.json.id).toBe("pattern-empty");
+    expect(got.json.periods).toEqual([]);
+  });
+
+  it("refuses a day pattern with no periods on create and update (Issue #104)", async () => {
+    expect(
+      (
+        await api("POST", "/platform/api/v1/masters/day-patterns", {
+          cookie: editorA(),
+          body: { id: "pattern-none", code: "N", name: "時限なし", kind: "normal", periods: [] },
+        })
+      ).status,
+    ).toBe(400);
+    const created = await api("POST", "/platform/api/v1/masters/day-patterns", {
+      cookie: editorA(),
+      body: {
+        id: "pattern-input-check",
+        code: "C",
+        name: "入力確認用",
+        kind: "normal",
+        periods: [{ period: 1, label: "1限", startsAt: "08:50", endsAt: "09:40" }],
+      },
+    });
+    expect(created.status).toBe(201);
+    expect(
+      (
+        await api("PUT", "/platform/api/v1/masters/day-patterns/pattern-input-check", {
+          cookie: editorA(),
+          body: {
+            id: "pattern-input-check",
+            code: "C",
+            name: "入力確認用",
+            kind: "normal",
+            periods: [],
+            revision: 1,
           },
         })
       ).status,

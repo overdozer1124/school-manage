@@ -112,7 +112,23 @@ export type SchoolClassRecord = z.infer<typeof schoolClassRecordSchema>;
 export const specialNeedsClassRecordSchema = specialNeedsClassSchema.extend(masterRecordMeta);
 export type SpecialNeedsClassRecord = z.infer<typeof specialNeedsClassRecordSchema>;
 
+/**
+ * The stored pattern's fields, as the platform returns them: the
+ * periods rule is looser here than on input. A pattern whose
+ * period rows are gone (a direct database edit, an import) still
+ * has to read back — with zero periods — so one such row cannot
+ * fail the whole masters list; it stays in the list, visible for
+ * an admin to fix. Creating and updating still require at least
+ * one period (dayPatternSchema above). The inferred type is the
+ * same either way (DayPatternPeriod[]), so the types of the apps
+ * consuming calendar-types do not change.
+ */
+const dayPatternRecordFields = {
+  ...dayPatternFields,
+  periods: z.array(dayPatternPeriodSchema),
+};
+
 export const dayPatternRecordSchema = z
-  .object({ ...dayPatternFields, ...masterRecordMeta })
+  .object({ ...dayPatternRecordFields, ...masterRecordMeta })
   .refine(hasUniquePeriodNumbers, uniquePeriodNumbers);
 export type DayPatternRecord = z.infer<typeof dayPatternRecordSchema>;
