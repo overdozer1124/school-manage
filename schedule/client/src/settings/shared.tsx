@@ -130,10 +130,26 @@ export const PRESETS: {
  *  not go through run; the panel heads that one itself. */
 export type RunKind = "save" | "delete";
 
+/** What a run's caller may ask of the panel besides the run
+ *  itself (Issue #108). */
+export interface RunOptions {
+  /** The action can have saved part of its work before it
+   *  failed — the subdivisions' reorder saves row by row, so
+   *  the rows before the failure are already stored — and the
+   *  panel then asks for the reload behind it even on failure,
+   *  so what the table behind the panel offers (the absence
+   *  modal's choices among it) matches what is stored. The
+   *  error line still shows the failure. Other saves and
+   *  deletes leave the reload to the next success, as before:
+   *  nothing of theirs is stored when they fail. */
+  reloadOnFailure?: boolean;
+}
+
 export type RunFn = (
   action: () => Promise<unknown>,
   done?: () => void,
   kind?: RunKind,
+  options?: RunOptions,
 ) => Promise<void>;
 
 export interface SectionCtx {
