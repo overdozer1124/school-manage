@@ -193,6 +193,7 @@ const eventPayload = (overrides: Record_): Record_ => ({
 describe.skipIf(!url)("publications (Issue #40)", () => {
   let queryClient: ReturnType<typeof postgres>;
   let actions: ReturnType<typeof createScheduleActions>;
+  let fake: FakePlatform;
 
   beforeAll(async () => {
     const admin = postgres(url as string, { max: 1 });
@@ -205,7 +206,7 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
     const db: Db = created.db;
     queryClient = created.queryClient;
     await runMigrations(db);
-    const fake = new FakePlatform();
+    fake = new FakePlatform();
     const client = createPlatformApiClient({
       baseUrl: "http://platform.test",
       fetchImpl: fake.fetch,
@@ -414,6 +415,37 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
     // The view's own print settings are the defaults (DESIGN
     // schedule 9.1): A3 from the view, landscape from the defaults.
     expect(html).toContain("size: A3 landscape");
+  });
+
+  it("a school with a day pattern that has no periods can still publish (Issue #109)", async () => {
+    // A stored pattern whose period rows are gone reads back
+    // from the platform with an empty periods list (Issue #104);
+    // the publication path reads the same day-patterns list, so
+    // issuing must not fail on it either, and a day on that
+    // pattern keeps its 「Z日課」 mark in the issued document.
+    const patterns = fake.masters["day-patterns"];
+    if (!patterns) throw new Error("the fake platform seeds day patterns");
+    const day = fake.days.find((d) => d["id"] === "day-1");
+    if (!day) throw new Error("the fake platform seeds day-1");
+    patterns.push({ id: "pattern-empty", code: "Z", name: "時限のない日課", periods: [] });
+    day["dayScheduleId"] = "pattern-empty";
+    let html: string;
+    try {
+      const meta = (await actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-staff",
+        targetMonth: MONTH,
+        versionLabel: "時限なし日課版",
+      })) as Record<string, unknown>;
+      const doc = (await actions.getPublication.run(auth("Viewer"), {
+        id: meta["id"] as string,
+      })) as Record<string, unknown>;
+      html = doc["documentHtml"] as string;
+    } finally {
+      day["dayScheduleId"] = null;
+      patterns.pop();
+    }
+    expect(html).toContain("Z日課");
   });
 
   it("print settings chosen at publish time are recorded and used", async () => {
