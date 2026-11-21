@@ -317,7 +317,17 @@ export function CalendarGrid({
                       key={date}
                       className={`grid-cell kind-${mark.kind || "plain"}${mark.closed ? " closed" : ""}${date.slice(0, 7) !== month ? " outside" : ""}`}
                       data-date={date}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${Number(date.slice(5, 7))}月${Number(date.slice(8, 10))}日の詳細`}
                       onClick={() => setDetailDate(date)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setDetailDate(date);
+                        }
+                      }}
                     >
                       <div className="grid-cell-head">
                         <span className="grid-date-num">{Number(date.slice(8, 10))}</span>

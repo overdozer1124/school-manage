@@ -488,6 +488,18 @@ describe("CalendarGrid: the day detail and input", () => {
     expect(dialog.querySelector("thead")).toHaveTextContent("給食");
   });
 
+  it("opens the day's detail from the keyboard: focus the cell, press Enter", async () => {
+    renderWithEditor({ events: [eventOn("ev-1", "2026-11-16", "2026-11-16", "避難訓練")] });
+    const c = screen.getByRole("button", { name: "11月16日の詳細" });
+    c.focus();
+    expect(c).toHaveFocus();
+    fireEvent.keyDown(c, { key: "Enter" });
+    const dialog = await screen.findByRole("dialog", { name: "11/16（月） の詳細" });
+    expect(within(dialog).getByText("避難訓練")).toBeInTheDocument();
+    // Input has begun, exactly as with a click.
+    expect(within(dialog).getByLabelText("行事の入力（2026-11-16）")).toBeInTheDocument();
+  });
+
   it("creates an event from a day cell: select the day, type, Enter", async () => {
     const { createEvent, onSaved } = renderWithEditor();
     fireEvent.click(cell("2026-11-16"));
