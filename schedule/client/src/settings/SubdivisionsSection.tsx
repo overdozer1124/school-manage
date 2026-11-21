@@ -50,43 +50,53 @@ export function SubdivisionsSection({ ctx }: { ctx: SectionCtx }) {
    *  with new revisions, so the list is read back on failure
    *  too (Issue #98): the screen then shows what is actually
    *  stored, and the next move works on the stored revisions
-   *  instead of failing the same way again. */
+   *  instead of failing the same way again. Those rows are
+   *  stored all the same, so the run also asks for the reload
+   *  behind the panel on failure (Issue #108): the absence
+   *  modal's choices come from the bootstrap, and without the
+   *  reload they would keep the order from before the move
+   *  until the next save or a reopen. */
   const move = (rows: AbsenceSubdivisionData[], record: AbsenceSubdivisionData, dir: -1 | 1) =>
-    void run(async () => {
-      const index = rows.findIndex((s) => s.id === record.id);
-      const target = index + dir;
-      if (index < 0 || target < 0 || target >= rows.length) return;
-      const reordered = [...rows];
-      const [moved] = reordered.splice(index, 1);
-      if (!moved) return;
-      reordered.splice(target, 0, moved);
-      try {
-        for (const [i, row] of reordered.entries()) {
-          const sort = (i + 1) * 10;
-          if (row.sort === sort) continue;
-          await api.updateSubdivision({
-            id: row.id,
-            record: {
+    void run(
+      async () => {
+        const index = rows.findIndex((s) => s.id === record.id);
+        const target = index + dir;
+        if (index < 0 || target < 0 || target >= rows.length) return;
+        const reordered = [...rows];
+        const [moved] = reordered.splice(index, 1);
+        if (!moved) return;
+        reordered.splice(target, 0, moved);
+        try {
+          for (const [i, row] of reordered.entries()) {
+            const sort = (i + 1) * 10;
+            if (row.sort === sort) continue;
+            await api.updateSubdivision({
               id: row.id,
-              code: row.code,
-              key: row.key,
-              label: row.label,
-              revision: row.revision,
-              sort,
-            },
-          });
+              record: {
+                id: row.id,
+                code: row.code,
+                key: row.key,
+                label: row.label,
+                revision: row.revision,
+                sort,
+              },
+            });
+          }
+        } catch (cause) {
+          // Read the list back so the screen returns to the
+          // saved state (Issue #98). A re-read that itself
+          // fails must not hide the original error, so its
+          // failure is dropped here and the save's error is
+          // the one the panel's error line shows.
+          await refresh().catch(() => undefined);
+          throw cause;
         }
-      } catch (cause) {
-        // Read the list back so the screen returns to the
-        // saved state (Issue #98). A re-read that itself
-        // fails must not hide the original error, so its
-        // failure is dropped here and the save's error is
-        // the one the panel's error line shows.
-        await refresh().catch(() => undefined);
-        throw cause;
-      }
-      await refresh();
-    });
+        await refresh();
+      },
+      undefined,
+      "save",
+      { reloadOnFailure: true },
+    );
 
   const openForm = (code: string, record: AbsenceSubdivisionData | null) =>
     setForm({

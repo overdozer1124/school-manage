@@ -114,7 +114,7 @@ export function SettingsPanel({
     };
   }, [api]);
 
-  const run: RunFn = async (action, done, kind = "save") => {
+  const run: RunFn = async (action, done, kind = "save", options) => {
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -127,6 +127,12 @@ export function SettingsPanel({
       setError(
         errorLine(kind === "delete" ? "削除できませんでした" : "保存できませんでした", cause),
       );
+      // A run that saved part of its work before failing (the
+      // subdivisions' reorder, Issue #108) still changed what
+      // is stored, so the table behind the panel is re-read
+      // too — the absence modal's choices among it. The error
+      // line above stands either way.
+      if (options?.reloadOnFailure) onChanged();
     } finally {
       setBusy(false);
     }

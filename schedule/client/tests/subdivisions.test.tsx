@@ -402,3 +402,62 @@ describe("a reorder save that fails part-way (Issue #98)", () => {
     expect(inDialog.queryByText(/分類を読み直せませんでした/)).not.toBeInTheDocument();
   }, 20000);
 });
+
+// The same failed move, seen from behind the panel (Issue
+// #108): the rows before the failure are already stored, so
+// the bootstrap the App reads is re-read even on failure —
+// the absence modal offers its classifications in the stored
+// order, not the order from before the move. The panel's
+// error line still heads itself as a failed save.
+
+describe("a reorder save that fails part-way, behind the panel (Issue #108)", () => {
+  it("the absence modal offers the saved order after the failed move, with the save's error shown", async () => {
+    const api = apiWithConcurrentSave();
+    const { inDialog } = await openSettings(api);
+
+    // 病休 down: 看護's save lands with its new number, then
+    // 病休's is refused — the same failure as Issue #98's.
+    fireEvent.click(
+      within(rowOf(inDialog, "病休（キー：sick）")).getByRole("button", { name: "下へ" }),
+    );
+    await waitFor(
+      () =>
+        expect(
+          inDialog.queryByText("保存できませんでした：ほかの人が先に変更しました"),
+        ).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
+
+    fireEvent.click(inDialog.getByRole("button", { name: "閉じる" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "設定・マスタ" })).not.toBeInTheDocument(),
+    );
+
+    // The modal's choices are the stored order: 看護 carries
+    // its new number 40, level with 病休's, and the key order
+    // puts 看護 first — the swap the first save landed. Before
+    // this fix the bootstrap was not re-read on failure, and
+    // the modal kept 病休 before 看護 until the next save or
+    // a reopen.
+    fireEvent.click(
+      within(cellFor("2026-11-13", 7)).getByRole("button", { name: "佐藤先生（年休）" }),
+    );
+    const leave = await screen.findByRole("dialog", { name: "休暇の詳細" });
+    const select = within(leave).getByLabelText("休暇分類") as HTMLSelectElement;
+    await waitFor(
+      () =>
+        expect([...select.options].map((o) => o.text)).toEqual([
+          "（なし）",
+          "年休",
+          "特休",
+          "夏特",
+          "看護",
+          "病休",
+          "振休",
+          "職専免",
+          "その他",
+        ]),
+      { timeout: 5000 },
+    );
+  }, 20000);
+});
