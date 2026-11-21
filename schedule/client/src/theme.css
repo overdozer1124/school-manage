@@ -135,6 +135,30 @@ body {
   white-space: normal;
 }
 
+/* The L3 year table (Issue #42): twelve month blocks in one table,
+   sized by its content rather than the screen — the wrapper
+   (.rows-table-wrap) scrolls sideways, as the design intends.
+   A closed day shades its date cell (the rows table shades the
+   whole row; a year row spans twelve months, so the mark stays
+   with the day it belongs to), and a date a month does not have
+   is a blank, recessed cell. */
+.year-table {
+  width: auto;
+}
+
+.year-table .year-month-head {
+  text-align: center;
+  font-size: 15px;
+}
+
+.year-table .date-cell.closed {
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+
+.year-table .no-date {
+  background: var(--bg);
+}
+
 /* Cell input (Issue #35): the selected cell is outlined, entries
    carry their own small edit / delete buttons, kind chips pick the
    entry kind, and a failed save's notice sits in the cell in the

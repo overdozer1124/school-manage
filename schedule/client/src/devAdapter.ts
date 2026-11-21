@@ -362,6 +362,24 @@ DEV_BOOTSTRAP.views = [
       }),
     ],
   },
+  {
+    // The L3 year table (Issue #42): a narrowed column set, as
+    // the design expects of a year view — events and lunch only.
+    id: "view-year-staff",
+    name: "職員用年間表",
+    layout: "year_columns",
+    layoutParams: null,
+    audience: "staff",
+    periodScope: "year",
+    printSettings: null,
+    isArchived: false,
+    columns: [
+      col("view-year-staff-events", "view-year-staff", "event_category", 1),
+      col("view-year-staff-lunch", "view-year-staff", "daily_item", 2, {
+        itemDefinitionId: "item-lunch",
+      }),
+    ],
+  },
 ];
 
 const HOLIDAYS: Record<string, string> = {

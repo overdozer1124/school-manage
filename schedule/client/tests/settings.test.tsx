@@ -334,7 +334,7 @@ describe("settings screens (Issue #39)", () => {
     const dialog = await screen.findByRole("dialog", { name: "設定・マスタ" });
     const inDialog = within(dialog);
 
-    // 給食 is a column of all three seeded views. The delete is
+    // 給食 is a column of all four seeded views. The delete is
     // armed, then confirmed; the refusal names the views and the
     // item stays in the list (Issue #88). The error line heads
     // itself after the delete, not after a save (Issue #99);
@@ -345,7 +345,7 @@ describe("settings screens (Issue #39)", () => {
     await waitFor(
       () =>
         expect(inDialog.getByRole("alert")).toHaveTextContent(
-          "削除できませんでした：この項目はビューで使われているので削除できません（使われているビュー：保護者用月表、職員用月表、職員用週表（2週間））",
+          "削除できませんでした：この項目はビューで使われているので削除できません（使われているビュー：保護者用月表、職員用年間表、職員用月表、職員用週表（2週間））",
         ),
       { timeout: 5000 },
     );
