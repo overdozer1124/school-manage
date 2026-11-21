@@ -55,6 +55,25 @@ export function dayLabel(date: string): string {
   return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}（${weekdayLabel(date)}）`;
 }
 
+/** "2026-11-15" -> "2026年度" (the school year the date belongs to) */
+export function yearLabel(anchor: string): string {
+  return `${schoolYearOf(anchor)}年度`;
+}
+
+/** The twelve months of a school year, April first, as
+ *  { year, month } pairs: April–December of the school year,
+ *  then January–March of the next calendar year. */
+export function schoolYearMonths(schoolYear: number): { year: number; month: number }[] {
+  const months: { year: number; month: number }[] = [];
+  for (let i = 0; i < 12; i++) {
+    const month = 4 + i;
+    months.push(
+      month <= 12 ? { year: schoolYear, month } : { year: schoolYear + 1, month: month - 12 },
+    );
+  }
+  return months;
+}
+
 /**
  * An instant the server recorded (an ISO string, in UTC) shown
  * as "2026-11-17 06:51" in local time — the reader's own zone,
@@ -121,6 +140,13 @@ export function rangeFor(view: ViewDefinitionData, anchor: string): { from: stri
     const from = weekStartOf(anchor);
     return { from, to: addDays(from, weekSpanOf(view) - 1) };
   }
+  if (view.layout === "year_columns") {
+    // The whole school year the anchor belongs to, April 1 to
+    // March 31 — 365 days, 366 in a year holding a February 29,
+    // which is exactly the range read's cap (Issue #42).
+    const year = schoolYearOf(anchor);
+    return { from: `${year}-04-01`, to: `${year + 1}-03-31` };
+  }
   // month_rows (and any other layout shown as rows for now)
   return { from: monthStartOf(anchor), to: monthEndOf(anchor) };
 }
@@ -128,6 +154,7 @@ export function rangeFor(view: ViewDefinitionData, anchor: string): { from: stri
 /** Step the anchor by one period of the view's layout. */
 export function stepAnchor(view: ViewDefinitionData, anchor: string, dir: 1 | -1): string {
   if (view.layout === "week_rows") return addDays(anchor, dir * weekSpanOf(view));
+  if (view.layout === "year_columns") return addMonths(anchor, dir * 12);
   return addMonths(anchor, dir);
 }
 

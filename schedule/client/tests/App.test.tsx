@@ -60,6 +60,7 @@ describe("schedule screen with the development adapter", () => {
     expect([...select.options].map((o) => o.textContent)).toEqual([
       "職員用週表（2週間）",
       "保護者用月表",
+      "職員用年間表",
     ]);
     expect(select.value).toBe("view-week-staff");
     // The two-week table is what opens.

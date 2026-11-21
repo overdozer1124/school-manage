@@ -8,21 +8,23 @@ import {
 } from "./api";
 import type { CellEditorContext } from "./cells";
 import { DutyPanel } from "./DutyPanel";
-import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
+import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
 import { PendingPanel } from "./PendingPanel";
 import { PublishPanel } from "./PublishPanel";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import { SettingsPanel } from "./SettingsPanel";
+import { YearTable } from "./YearTable";
 import type { BootstrapData, RangeData } from "./types";
 
 /**
  * The schedule screen (Issue #34): pick a view, move through its
- * months or weeks, and read the L1 / L2 rows table. Only layouts
- * month_rows and week_rows are drawn; a view naming a Phase 2 layout
- * can be selected but shows a notice instead of a table (those
- * layouts arrive with their own issues). Cells take direct input
- * (Issue #35): a saved write re-reads the range, so what the table
- * shows is always what the server holds.
+ * months or weeks, and read the L1 / L2 rows table. The L3 year
+ * table (year_columns) is drawn too, since Issue #42; a view
+ * naming a layout still to come can be selected but shows a
+ * notice instead of a table (those layouts arrive with their
+ * own issues). Cells take direct input (Issue #35): a saved
+ * write re-reads the range, so what the table shows is always
+ * what the server holds.
  *
  * A 401 from the API sends the person to the platform's login
  * (DESIGN-AUTH-TENANCY 4.8); a 403 shows 「権限がありません」.
@@ -107,7 +109,11 @@ export function App({
 
   useEffect(() => {
     if (!bootstrap || !view) return;
-    if (view.layout !== "month_rows" && view.layout !== "week_rows") {
+    if (
+      view.layout !== "month_rows" &&
+      view.layout !== "week_rows" &&
+      view.layout !== "year_columns"
+    ) {
       setRange(null);
       return;
     }
@@ -188,7 +194,8 @@ export function App({
     );
   }
 
-  const supported = view.layout === "month_rows" || view.layout === "week_rows";
+  const rowsLayout = view.layout === "month_rows" || view.layout === "week_rows";
+  const supported = rowsLayout || view.layout === "year_columns";
 
   return (
     <main className="schedule-app">
@@ -218,7 +225,9 @@ export function App({
             <span className="period-label">
               {view.layout === "week_rows"
                 ? `${range ? `${range.from} 〜 ${range.to}` : ""}`
-                : monthLabel(anchor)}
+                : view.layout === "year_columns"
+                  ? yearLabel(anchor)
+                  : monthLabel(anchor)}
             </span>
             <button
               type="button"
@@ -228,7 +237,7 @@ export function App({
               次 →
             </button>
           </div>
-          {supported && range && view.audience === "staff" && (
+          {rowsLayout && range && view.audience === "staff" && (
             <button type="button" onClick={() => setPanelOpen(true)}>
               当番・競合
               {range.conflicts.length > 0 && `（警告${range.conflicts.length}件）`}
@@ -254,7 +263,10 @@ export function App({
               the publish form inside is offered only to holders
               of the publish permission, and the server checks
               it again on the action. */}
-          {supported && (
+          {/* Issuing is the month / week tables' for now: the
+              year table's print is a later issue's work (Issue
+              #42 keeps L3 to the screen). */}
+          {rowsLayout && (
             <button type="button" onClick={() => setPublishOpen(true)}>
               発行・印刷
             </button>
@@ -265,7 +277,10 @@ export function App({
       {!supported && (
         <p className="unsupported">このレイアウト（{view.layout}）は今後の Issue で対応します。</p>
       )}
-      {supported && range && (
+      {supported && range && view.layout === "year_columns" && (
+        <YearTable bootstrap={bootstrap} range={range} editor={editor} />
+      )}
+      {rowsLayout && range && (
         <>
           <RowsTable bootstrap={bootstrap} range={range} editor={editor} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />

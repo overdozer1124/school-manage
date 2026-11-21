@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, UnauthorizedError, type PublicApi } from "./api";
-import { monthLabel, rangeFor, stepAnchor, undecidedForMonth } from "./lib";
+import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
+import { YearTable } from "./YearTable";
 import type { BootstrapData, PublicBootstrapData, RangeData } from "./types";
 
 function todayText(): string {
@@ -143,7 +144,11 @@ export function PublicApp({ api }: { api: PublicApi }) {
             ‹ 前へ
           </button>
           <span className="period-label">
-            {view.layout === "week_rows" ? rangeLabel(range) : monthLabel(anchor)}
+            {view.layout === "week_rows"
+              ? rangeLabel(range)
+              : view.layout === "year_columns"
+                ? yearLabel(anchor)
+                : monthLabel(anchor)}
           </span>
           <button type="button" onClick={() => setAnchor((a) => stepAnchor(view, a, 1))}>
             次へ ›
@@ -159,10 +164,18 @@ export function PublicApp({ api }: { api: PublicApi }) {
         </p>
       )}
       {range ? (
-        <>
-          <RowsTable range={range} bootstrap={tableBoot} />
-          <UndecidedSection events={undecided} />
-        </>
+        view.layout === "year_columns" ? (
+          // The year table reads the same bundle, without an
+          // editor: the public screen mounts no input (Issue
+          // #42 draws L3 here too, so a public year view is the
+          // year table and not a 366-row month table).
+          <YearTable range={range} bootstrap={tableBoot} />
+        ) : (
+          <>
+            <RowsTable range={range} bootstrap={tableBoot} />
+            <UndecidedSection events={undecided} />
+          </>
+        )
       ) : (
         !rangeError && <p className="notice">読み込み中です…</p>
       )}
