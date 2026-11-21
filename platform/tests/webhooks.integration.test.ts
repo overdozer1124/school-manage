@@ -1,6 +1,6 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import postgres from "postgres";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { changeEventSchema, type ChangeEvent } from "@school-manage/calendar-types";
 import {
   verifyWebhookSignature,
@@ -293,6 +293,70 @@ describe.skipIf(!url)("webhook delivery and service reads", () => {
     expect(recovered?.failureCount).toBe(0);
     expect(recovered?.nextAttemptAt).toBeNull();
     expect(recovered?.lastError).toBeNull();
+  });
+
+  it("logs one line when delivery starts failing, none while it keeps failing, and one when it recovers (Issue #110)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      scheduleReceiver.received.length = 0;
+      const stuck = await recordChange(A, "pattern-log-stuck");
+      scheduleReceiver.setStatus(500);
+
+      // The first failure speaks up exactly once, with only the
+      // product name and the failure summary in the line.
+      await scheduleDispatcher().deliverPending();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const line = String(errorSpy.mock.calls[0]?.[0]);
+      expect(line).toContain("schedule");
+      expect(line).toContain("HTTP 500");
+      // Never the secret, the payload body or the destination URL.
+      const rawBody = scheduleReceiver.received[0]?.rawBody as string;
+      expect(rawBody.length).toBeGreaterThan(0);
+      expect(line).not.toContain(SCHEDULE_SECRET);
+      expect(line).not.toContain(rawBody);
+      expect(line).not.toContain("pattern-log-stuck");
+      expect(line).not.toContain(scheduleReceiver.url);
+
+      // A further failure while the first is unresolved adds no line.
+      await db
+        .update(webhookDeliveries)
+        .set({ nextAttemptAt: new Date(0) })
+        .where(eq(webhookDeliveries.product, "schedule"));
+      await scheduleDispatcher().deliverPending();
+      expect((await store.getState("schedule"))?.failureCount).toBe(2);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+
+      // Recovery is announced once, and the state is clean again.
+      scheduleReceiver.setStatus(200);
+      await db
+        .update(webhookDeliveries)
+        .set({ nextAttemptAt: new Date(0) })
+        .where(eq(webhookDeliveries.product, "schedule"));
+      await scheduleDispatcher().deliverPending();
+      expect(errorSpy).toHaveBeenCalledTimes(2);
+      const recoveryLine = String(errorSpy.mock.calls[1]?.[0]);
+      expect(recoveryLine).toContain("schedule");
+      expect(recoveryLine).toContain("recovered");
+      const state = await store.getState("schedule");
+      expect(state?.lastDeliveredSeq).toBe(stuck.seq);
+      expect(state?.failureCount).toBe(0);
+      expect(state?.lastError).toBeNull();
+    } finally {
+      errorSpy.mockRestore();
+      scheduleReceiver.setStatus(200);
+    }
+  });
+
+  it("logs nothing for a delivery that succeeds without prior failures (Issue #110)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const quiet = await recordChange(A, "pattern-log-quiet");
+      await scheduleDispatcher().deliverPending();
+      expect((await store.getState("schedule"))?.lastDeliveredSeq).toBe(quiet.seq);
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("never sends a non-entitled school's changes, and they do not block later ones", async () => {
