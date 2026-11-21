@@ -159,6 +159,191 @@ body {
   background: var(--bg);
 }
 
+/* The L4 calendar grid (Issue #43): weeks are rows of seven day
+   cells, drawn as CSS grids rather than a table — a period bar
+   has to span cells, which a table row cannot do. The bar lanes
+   sit between the weekday head and the week's cells, one lane
+   per row of overlapping bars; a bar is cut at the week
+   boundary and drawn again in the next week's lanes, rounded
+   only on the sides where the entry itself starts and ends.
+   Day colours follow the rows table (Saturdays blue, Sundays
+   and holidays red, closed days shaded), and the weekday
+   letters and holiday names are printed with the date, so
+   colour is never the only signal (DESIGN schedule 9.1). */
+.calendar-grid-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+
+.calendar-grid {
+  min-width: 700px;
+  font-size: 13px;
+}
+
+.grid-week-head,
+.grid-bar-lane,
+.grid-cells {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.grid-weekday {
+  padding: 4px 8px;
+  text-align: center;
+  font-weight: 600;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.grid-weekday.kind-sat {
+  color: var(--sat);
+}
+
+.grid-weekday.kind-holiday {
+  color: var(--sun);
+}
+
+.grid-week {
+  border-bottom: 1px solid var(--border);
+}
+
+.grid-week:last-child {
+  border-bottom: none;
+}
+
+.grid-bar-lane {
+  min-height: 0;
+}
+
+.grid-bar {
+  margin: 2px 0 0;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+span.grid-bar {
+  cursor: default;
+  display: block;
+}
+
+.grid-bar.bar-start {
+  border-radius: 6px 0 0 6px;
+  margin-left: 2px;
+}
+
+.grid-bar.bar-end {
+  border-radius: 0 6px 6px 0;
+  margin-right: 2px;
+}
+
+.grid-bar.bar-start.bar-end {
+  border-radius: 6px;
+}
+
+.grid-cell {
+  min-height: 96px;
+  padding: 4px 6px;
+  border-right: 1px solid var(--border);
+  vertical-align: top;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.grid-cell:last-child {
+  border-right: none;
+}
+
+.grid-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.grid-cell.outside {
+  opacity: 0.45;
+}
+
+.grid-cell.closed {
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+
+.grid-cell-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.grid-date-num {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.grid-cell.kind-sat .grid-date-num {
+  color: var(--sat);
+}
+
+.grid-cell.kind-holiday .grid-date-num {
+  color: var(--sun);
+}
+
+.grid-holiday {
+  font-size: 10px;
+  color: var(--sun);
+}
+
+.grid-entry {
+  display: block;
+  width: 100%;
+  padding: 0 2px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+span.grid-entry {
+  cursor: default;
+}
+
+.grid-more {
+  font-size: 12px;
+  color: var(--dim);
+  padding: 0 2px;
+}
+
+.grid-daily {
+  font-size: 11px;
+  color: var(--dim);
+  padding: 0 2px;
+}
+
+/* The day detail (Issue #43): the duty panel's shell, holding
+   one day of the rows table. Wider than the form panels — the
+   day's columns are a table, not a form. */
+.day-detail {
+  max-width: 900px;
+}
+
 /* Cell input (Issue #35): the selected cell is outlined, entries
    carry their own small edit / delete buttons, kind chips pick the
    entry kind, and a failed save's notice sits in the cell in the

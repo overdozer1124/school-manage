@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, UnauthorizedError, type PublicApi } from "./api";
+import { CalendarGrid } from "./CalendarGrid";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import { YearTable } from "./YearTable";
@@ -170,6 +171,14 @@ export function PublicApp({ api }: { api: PublicApi }) {
           // #42 draws L3 here too, so a public year view is the
           // year table and not a 366-row month table).
           <YearTable range={range} bootstrap={tableBoot} />
+        ) : view.layout === "calendar_grid" ? (
+          // The calendar grid likewise (Issue #43): the same
+          // bundle, no editor — a public calendar view is the
+          // grid, its day detail read-only.
+          <>
+            <CalendarGrid range={range} bootstrap={tableBoot} anchor={anchor} />
+            <UndecidedSection events={undecided} />
+          </>
         ) : (
           <>
             <RowsTable range={range} bootstrap={tableBoot} />
