@@ -54,10 +54,15 @@ export type DeliveryOutcome =
   /** Waiting changes existed, but none were for entitled schools:
    *  the position moved past them without a send. */
   | { kind: "advanced"; throughSeq: number }
-  /** The batch was accepted (2xx); the position moved past it. */
-  | { kind: "delivered"; throughSeq: number; sentCount: number }
-  /** The send failed; the position stayed and a retry is scheduled. */
-  | { kind: "failed"; error: string; nextAttemptAt: Date };
+  /** The batch was accepted (2xx); the position moved past it.
+   *  previousFailureCount is the failure count this delivery
+   *  cleared, so the caller can log a recovery when a destination
+   *  that had been failing delivers again. */
+  | { kind: "delivered"; throughSeq: number; sentCount: number; previousFailureCount: number }
+  /** The send failed; the position stayed and a retry is scheduled.
+   *  failureCount is the count after this failure, so the caller
+   *  can log exactly once when failures begin (the 0 → 1 step). */
+  | { kind: "failed"; error: string; failureCount: number; nextAttemptAt: Date };
 
 /**
  * Sends one batch. Returns null when the receiver accepted it
@@ -212,6 +217,7 @@ export function createWebhookStore(
             kind: "delivered",
             throughSeq,
             sentCount: deliverable.length,
+            previousFailureCount: state.failureCount,
           } as DeliveryOutcome;
         }
 
@@ -233,7 +239,7 @@ export function createWebhookStore(
             updatedAt: now,
           })
           .where(eq(webhookDeliveries.product, product));
-        return { kind: "failed", error, nextAttemptAt } as DeliveryOutcome;
+        return { kind: "failed", error, failureCount, nextAttemptAt } as DeliveryOutcome;
       });
     },
   };

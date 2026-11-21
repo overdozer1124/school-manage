@@ -25,6 +25,13 @@ import type { Product } from "../db/schema.js";
  * as HMAC keys here: they are never logged, and the failure
  * summaries handed to the store carry an HTTP status or a fetch
  * error's name, never a message that could quote a header.
+ *
+ * So an operator can notice a broken receiver without watching the
+ * database (Issue #110), the dispatcher logs one line when a
+ * destination starts failing and one when it delivers again after
+ * failing — each carrying only the product name and, for the
+ * failure, that same summary: never the secret, the payload or
+ * the URL.
  */
 export interface WebhookDestination {
   product: Product;
@@ -115,11 +122,21 @@ export function createWebhookDispatcher(deps: WebhookDispatcherDeps): WebhookDis
   async function deliverPending(): Promise<void> {
     for (const destination of deps.destinations) {
       try {
-        await deps.store.runDelivery(
+        const outcome = await deps.store.runDelivery(
           destination.product,
           (events) => sendBatch(destination, events),
           now(),
         );
+        if (outcome.kind === "failed" && outcome.failureCount === 1) {
+          // Failures beginning is the moment to speak up; while
+          // they continue the store keeps the count and the last
+          // summary, and repeating the line every retry would only
+          // bury it. The summary is an HTTP status or a fetch
+          // error's name — never the secret, body or URL.
+          console.error(`webhook delivery failed for ${destination.product}: ${outcome.error}`);
+        } else if (outcome.kind === "delivered" && outcome.previousFailureCount > 0) {
+          console.error(`webhook delivery recovered for ${destination.product}`);
+        }
       } catch {
         // The store records ordinary send failures itself; reaching
         // here means the run itself failed (a database error, most
