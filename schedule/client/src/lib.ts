@@ -2,7 +2,9 @@ import {
   addDays,
   datesInRange,
   formatGroupedValues,
+  weekStartOf as firstDayOfWeek,
   weekdayOf,
+  type Weekday,
 } from "@school-manage/calendar-types";
 import type {
   BootstrapData,
@@ -134,11 +136,67 @@ export function weekSpanOf(view: ViewDefinitionData): number {
   return view.periodScope === "two_weeks" ? 14 : 7;
 }
 
+const WEEKDAY_ORDER: Weekday[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/**
+ * The weekday a calendar_grid view's weeks start on (Issue #43):
+ * the view's layout_params.weekStart — the layout parameter the
+ * design names for it (§4.8's layout_params_json: 週の開始曜日）.
+ * A weekday code ("mon") reads as itself; a number reads as the
+ * JS weekday number (0 = Sunday … 6 = Saturday), with 7 also
+ * Sunday, its ISO reading — the two conventions agree on 1–6,
+ * Monday to Saturday. Anything else falls back to Monday, the
+ * school default the rows layouts already keep (weekStartOf
+ * above).
+ */
+export function gridWeekStart(view: ViewDefinitionData): Weekday {
+  const raw = view.layoutParams?.["weekStart"];
+  if (typeof raw === "string" && (WEEKDAY_ORDER as string[]).includes(raw)) {
+    return raw as Weekday;
+  }
+  if (typeof raw === "number" && Number.isInteger(raw)) {
+    if (raw === 7) return "sun";
+    if (raw >= 0 && raw <= 6) return WEEKDAY_ORDER[raw] as Weekday;
+  }
+  return "mon";
+}
+
+/**
+ * The [from, to] a calendar_grid view asks getRange for: the
+ * anchor's month, padded out to whole weeks — from the week's
+ * first day (the view's week start) of the week holding the 1st,
+ * to the last day of the week holding the month's end. The grid
+ * draws those padding days as the neighbouring months' days, so
+ * they have to be in the bundle.
+ */
+export function calendarGridRange(
+  view: ViewDefinitionData,
+  anchor: string,
+): { from: string; to: string } {
+  const start = gridWeekStart(view);
+  const from = firstDayOfWeek(monthStartOf(anchor), start);
+  const to = addDays(firstDayOfWeek(monthEndOf(anchor), start), 6);
+  return { from, to };
+}
+
+/** The grid's weeks: the padded month as rows of seven dates,
+ *  each row starting on the view's week-start weekday. */
+export function calendarWeeks(view: ViewDefinitionData, anchor: string): string[][] {
+  const { from, to } = calendarGridRange(view, anchor);
+  const dates = datesInRange(from, to);
+  const weeks: string[][] = [];
+  for (let i = 0; i < dates.length; i += 7) weeks.push(dates.slice(i, i + 7));
+  return weeks;
+}
+
 /** The [from, to] a view asks getRange for, from the anchor date. */
 export function rangeFor(view: ViewDefinitionData, anchor: string): { from: string; to: string } {
   if (view.layout === "week_rows") {
     const from = weekStartOf(anchor);
     return { from, to: addDays(from, weekSpanOf(view) - 1) };
+  }
+  if (view.layout === "calendar_grid") {
+    return calendarGridRange(view, anchor);
   }
   if (view.layout === "year_columns") {
     // The whole school year the anchor belongs to, April 1 to
@@ -155,6 +213,7 @@ export function rangeFor(view: ViewDefinitionData, anchor: string): { from: stri
 export function stepAnchor(view: ViewDefinitionData, anchor: string, dir: 1 | -1): string {
   if (view.layout === "week_rows") return addDays(anchor, dir * weekSpanOf(view));
   if (view.layout === "year_columns") return addMonths(anchor, dir * 12);
+  // month_rows and calendar_grid both step by months.
   return addMonths(anchor, dir);
 }
 
@@ -470,6 +529,69 @@ export function dutyCellLines(
  *  records are not events and are not mixed in here. */
 export function eventCellLines(day: RangeDayData): string[] {
   return day.events.map((e) => `${eventTimeText(e)}${eventTitle(e)}`);
+}
+
+/** The span of one event record, from its startsOn / endsOn.
+ *  Null when the record carries no usable span (a month-precision
+ *  or undecided event never reaches a day's events, so what is
+ *  here is day / range precision). */
+export function eventSpan(event: Record<string, unknown>): { start: string; end: string } | null {
+  const start = stringField(event, "startsOn");
+  const end = stringField(event, "endsOn");
+  if (!start || !end || end < start) return null;
+  return { start, end };
+}
+
+/** The span of one absence record, from its fromDate / toDate. */
+export function absenceSpan(
+  absence: Record<string, unknown>,
+): { start: string; end: string } | null {
+  const start = stringField(absence, "fromDate");
+  const end = stringField(absence, "toDate");
+  if (!start || !end || end < start) return null;
+  return { start, end };
+}
+
+/**
+ * Lane assignment for one week's period bars (Issue #43): bars
+ * that overlap in time may not share a lane, so each bar takes
+ * the first lane whose last bar has ended before it starts.
+ * Bars are read in span order — earlier start first, the longer
+ * span first on a tie — so the assignment is stable from week
+ * to week for a bar that crosses a week boundary only in that
+ * each week packs its own lanes; a bar keeps no lane across
+ * weeks. Returns each bar's lane index by bar id, and the lane
+ * count the week needs.
+ */
+export function barLanes(
+  bars: { id: string; start: string; end: string }[],
+  weekStart: string,
+): { laneOf: Map<string, number>; laneCount: number } {
+  const sorted = [...bars].sort((a, b) =>
+    a.start !== b.start
+      ? a.start < b.start
+        ? -1
+        : 1
+      : a.end !== b.end
+        ? a.end > b.end
+          ? -1
+          : 1
+        : 0,
+  );
+  const laneEnds: string[] = [];
+  const laneOf = new Map<string, number>();
+  for (const bar of sorted) {
+    const clampedStart = bar.start < weekStart ? weekStart : bar.start;
+    let lane = laneEnds.findIndex((end) => end < clampedStart);
+    if (lane < 0) {
+      lane = laneEnds.length;
+      laneEnds.push(bar.end);
+    } else {
+      laneEnds[lane] = bar.end;
+    }
+    laneOf.set(bar.id, lane);
+  }
+  return { laneOf, laneCount: laneEnds.length };
 }
 
 /** The text of one day_attribute cell: the day's own attributes. */

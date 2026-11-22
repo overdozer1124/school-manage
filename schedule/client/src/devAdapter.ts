@@ -380,6 +380,26 @@ DEV_BOOTSTRAP.views = [
       }),
     ],
   },
+  {
+    // The L4 calendar grid (Issue #43): a narrowed column set,
+    // as the design expects of a grid view — events and lunch
+    // only. No weekStart in the layout params: the weeks start
+    // on Monday, the school default.
+    id: "view-calendar-staff",
+    name: "職員用カレンダー",
+    layout: "calendar_grid",
+    layoutParams: null,
+    audience: "staff",
+    periodScope: "month",
+    printSettings: null,
+    isArchived: false,
+    columns: [
+      col("view-calendar-staff-events", "view-calendar-staff", "event_category", 1),
+      col("view-calendar-staff-lunch", "view-calendar-staff", "daily_item", 2, {
+        itemDefinitionId: "item-lunch",
+      }),
+    ],
+  },
 ];
 
 const HOLIDAYS: Record<string, string> = {

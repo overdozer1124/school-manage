@@ -6,6 +6,7 @@ import {
   platformLoginUrl,
   type ScheduleApi,
 } from "./api";
+import { CalendarGrid } from "./CalendarGrid";
 import type { CellEditorContext } from "./cells";
 import { DutyPanel } from "./DutyPanel";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
@@ -19,7 +20,8 @@ import type { BootstrapData, RangeData } from "./types";
 /**
  * The schedule screen (Issue #34): pick a view, move through its
  * months or weeks, and read the L1 / L2 rows table. The L3 year
- * table (year_columns) is drawn too, since Issue #42; a view
+ * table (year_columns) is drawn too, since Issue #42, and the
+ * L4 calendar grid (calendar_grid) since Issue #43; a view
  * naming a layout still to come can be selected but shows a
  * notice instead of a table (those layouts arrive with their
  * own issues). Cells take direct input (Issue #35): a saved
@@ -112,7 +114,8 @@ export function App({
     if (
       view.layout !== "month_rows" &&
       view.layout !== "week_rows" &&
-      view.layout !== "year_columns"
+      view.layout !== "year_columns" &&
+      view.layout !== "calendar_grid"
     ) {
       setRange(null);
       return;
@@ -195,7 +198,7 @@ export function App({
   }
 
   const rowsLayout = view.layout === "month_rows" || view.layout === "week_rows";
-  const supported = rowsLayout || view.layout === "year_columns";
+  const supported = rowsLayout || view.layout === "year_columns" || view.layout === "calendar_grid";
 
   return (
     <main className="schedule-app">
@@ -279,6 +282,9 @@ export function App({
       )}
       {supported && range && view.layout === "year_columns" && (
         <YearTable bootstrap={bootstrap} range={range} editor={editor} />
+      )}
+      {supported && range && view.layout === "calendar_grid" && (
+        <CalendarGrid bootstrap={bootstrap} range={range} anchor={anchor} editor={editor} />
       )}
       {rowsLayout && range && (
         <>
