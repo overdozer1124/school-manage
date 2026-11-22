@@ -327,6 +327,19 @@ describe("lib: the transposed view's days and axis", () => {
       columns: [column("col-lunch", "daily_item", 1, { itemDefinitionId: "item-lunch" })],
     };
     expect(transposedModel(bootstrap, lunchOnly.columns)).toBeNull();
+    // An axis item whose axis has no targets yet still reads
+    // as the view's axis: the model stands with no rows, so
+    // the table can say the targets are not registered yet.
+    // The junior-high preset ships its club axis exactly this
+    // way — the school adds its own clubs afterwards.
+    const noTargets: BootstrapData = {
+      ...bootstrap,
+      targetGroups: bootstrap.targetGroups.map((g) => ({ ...g, targets: [] })),
+    };
+    const emptyModel = transposedModel(noTargets, clubView.columns);
+    expect(emptyModel?.axisItem.id).toBe("item-club-activity");
+    expect(emptyModel?.entries).toEqual([]);
+    expect(emptyModel?.shown.map((s) => s.item.id)).toEqual(["item-club-activity"]);
   });
 });
 
@@ -453,6 +466,36 @@ describe("TransposedTable: rows are targets, columns are days", () => {
     ).toBeInTheDocument();
   });
 
+  it("says the axis's targets are not registered yet when the axis stands empty", () => {
+    const bootstrap = makeBootstrap();
+    const empty: BootstrapData = {
+      ...bootstrap,
+      targetGroups: bootstrap.targetGroups.map((g) => ({ ...g, targets: [] })),
+    };
+    render(<TransposedTable bootstrap={empty} range={makeRange(clubView)} />);
+    expect(screen.getByText(/「部活動」の対象がまだ登録されていません/)).toBeInTheDocument();
+    expect(screen.queryByText(/対象軸（学年・部活動など）を持つ日次項目の列が必要です/)).toBeNull();
+  });
+
+  it("names the month where a multi-month span turns into it", () => {
+    const yearView: ViewDefinitionData = {
+      ...clubView,
+      id: "view-club-year",
+      periodScope: "year",
+    };
+    render(<TransposedTable bootstrap={makeBootstrap([yearView])} range={makeRange(yearView)} />);
+    const head = (date: string) =>
+      document.querySelector(`.transposed-table thead th[data-date="${date}"]`);
+    expect(head("2026-04-01")).toHaveTextContent("4月");
+    expect(head("2026-11-01")).toHaveTextContent("11月");
+    expect(head("2026-11-16")).not.toHaveTextContent("11月");
+    // A single month names no month: the label would repeat
+    // what the screen already says.
+    cleanup();
+    render(<TransposedTable bootstrap={makeBootstrap()} range={makeRange(clubView)} />);
+    expect(head("2026-11-01")).not.toHaveTextContent("11月");
+  });
+
   it("is read-only without an editor: values visible, no input controls", () => {
     render(
       <TransposedTable
@@ -551,12 +594,85 @@ describe("TransposedTable: input writes the one per-target datum", () => {
   });
 });
 
+describe("TransposedTable: a character typed on a cell seeds its input", () => {
+  it("keeps the first character in a per-target time cell opened by typing", async () => {
+    const bootstrap = makeBootstrap();
+    const gradeBootstrap: BootstrapData = {
+      ...bootstrap,
+      itemDefinitions: [
+        ...bootstrap.itemDefinitions,
+        {
+          id: "item-dismissal-grade",
+          key: "dismissal_grade",
+          name: "下校時刻",
+          valueType: "time",
+          targetGroupId: "tg-grade",
+          targetPlatformAxis: null,
+          granularity: "day",
+          defaultVisibility: "staff_only",
+          sort: 5,
+          options: [],
+        },
+      ],
+      targetGroups: [
+        ...bootstrap.targetGroups,
+        {
+          id: "tg-grade",
+          key: "grade_group",
+          name: "学年",
+          sort: 2,
+          targets: [
+            { id: "tgt-grade-1", targetGroupId: "tg-grade", code: null, name: "1年", sort: 1 },
+            { id: "tgt-grade-2", targetGroupId: "tg-grade", code: null, name: "2年", sort: 2 },
+          ],
+        },
+      ],
+    };
+    const gradeView: ViewDefinitionData = {
+      ...clubView,
+      id: "view-grade",
+      name: "学年別下校時刻",
+      columns: [
+        column("col-dismissal", "daily_item", 1, {
+          itemDefinitionId: "item-dismissal-grade",
+          targetGroupId: "tg-grade",
+        }),
+      ],
+    };
+    const setDailyValue = vi.fn(async () => ({}));
+    const api = { ...createDevApi(), setDailyValue } as unknown as ScheduleApi;
+    const editor: CellEditorContext = {
+      api,
+      onSaved: () => undefined,
+      onUnauthorizedError: () => undefined,
+    };
+    render(
+      <TransposedTable bootstrap={gradeBootstrap} range={makeRange(gradeView)} editor={editor} />,
+    );
+    fireEvent.keyDown(cell("2026-11-16", "tgt-grade-1"), { key: "1" });
+    const input = await screen.findByLabelText("下校時刻（1年）");
+    expect(input).toHaveValue("1");
+  });
+});
+
 describe("scenario 5: the per-club table from the junior-high preset", () => {
   it("builds the club table through the definition APIs and writes into it in the app", async () => {
     const api = createDevApi();
     // The junior-high preset, applied the way the settings
-    // screen applies it: the club axis and its items arrive.
+    // screen applies it — read as a before/after difference,
+    // so the assertions name what the preset itself brings.
+    // This fixture school already runs a club programme (the
+    // axis, its clubs and the per-club item are part of its
+    // starting definitions, as DEV_BOOTSTRAP documents), so
+    // the preset's own arrival here is the whole-school club
+    // item: absent before, present after. The axis and the
+    // per-club item the scenario rows on are in the applied
+    // set; a school without them gets the axis from the
+    // preset with no targets yet, as the server ships it.
+    const before = (await api.getDefinitions()) as DefinitionSetData;
+    expect(before.itemDefinitions.some((i) => i.key === "club_day")).toBe(false);
     const defs = (await api.applyPreset({ preset: "junior_high" })) as DefinitionSetData;
+    expect(defs.itemDefinitions.some((i) => i.key === "club_day")).toBe(true);
     expect(defs.targetGroups.some((g) => g.key === "club")).toBe(true);
     expect(defs.itemDefinitions.some((i) => i.key === "club_activity")).toBe(true);
     // A transposed view over the preset's per-club item, saved
@@ -628,7 +744,12 @@ describe("scenario 5: the per-club table from the junior-high preset", () => {
     fireEvent.click(cell("2026-11-16", "tgt-club-baseball"));
     const select = await screen.findByLabelText("部活動（部別）（野球部）");
     fireEvent.change(select, { target: { value: "tournament" } });
-    await waitFor(() => expect(cell("2026-11-16", "tgt-club-baseball")).toHaveTextContent("大"));
+    // The cell stays in input form while it is the active one,
+    // so the saved choice reads off the select's value — the
+    // option labels alone would contain 大 either way.
+    await waitFor(() => {
+      expect(screen.getByLabelText("部活動（部別）（野球部）")).toHaveValue("tournament");
+    });
 
     // …is the same datum the L1 month table groups into its
     // club column: data is one, the tables are two readings.
@@ -639,6 +760,19 @@ describe("scenario 5: the per-club table from the junior-high preset", () => {
       return row as HTMLElement;
     });
     expect(dayRow).toHaveTextContent("野球部 大");
+  });
+});
+
+describe("the staff screen with a transposed view", () => {
+  it("offers no publishing: the publish panel belongs to the rows layouts", async () => {
+    const api = createDevApi();
+    render(<App api={api} initialAnchor="2026-11-16" />);
+    await screen.findByText("開発用小学校");
+    fireEvent.change(screen.getByLabelText("ビュー"), { target: { value: "view-club-staff" } });
+    await waitFor(() =>
+      expect(document.querySelectorAll(".transposed-table thead th")).toHaveLength(31),
+    );
+    expect(screen.queryByRole("button", { name: "発行・印刷" })).not.toBeInTheDocument();
   });
 });
 

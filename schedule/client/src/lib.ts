@@ -425,7 +425,10 @@ export function axisEntries(
  * same per-target DailyValue the rows tables group into one
  * cell under 4.8.2, ungrouped here because each row is one
  * target already. The axis is the first of the view's daily
- * items that ranges over an axis (the prototype's reading);
+ * items that ranges over an axis (the prototype's reading),
+ * whether or not any target is registered on it yet — an axis
+ * with no targets yet is still the view's axis, and the table
+ * says so instead of claiming the view has no axis item;
  * daily items on that same axis are drawn with it, and items
  * on another axis — or on none — cannot be rows of this table
  * and are named under it instead of being dropped silently.
@@ -456,7 +459,9 @@ export function transposedModel(
       item: bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId) ?? null,
     }))
     .filter((x): x is { column: ViewColumnData; item: ItemDefinitionData } => x.item !== null);
-  const axis = daily.find(({ item }) => axisEntries(item, bootstrap).length > 0);
+  const axis = daily.find(
+    ({ item }) => item.targetGroupId !== null || item.targetPlatformAxis !== null,
+  );
   if (!axis) return null;
   const onAxis = (item: ItemDefinitionData) =>
     item.targetGroupId === axis.item.targetGroupId &&

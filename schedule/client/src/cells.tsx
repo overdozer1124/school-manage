@@ -947,6 +947,7 @@ export function DailyCell({
           item={item}
           value={singleValue()}
           label={targetName ? `${item.name}（${targetName}）` : item.name}
+          seedText={seedText}
           autoFocus
           people={bootstrap.masters.staff}
           save={(value) => save(target, value)}

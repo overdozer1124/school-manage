@@ -171,7 +171,7 @@ export const DEV_BOOTSTRAP: BootstrapData = {
     // dev school runs a club programme alongside the bus
     // preset, so the transposed club table has its axis and
     // item from the start, as the other layouts' views do.
-    item("item-club-activity", "club_activity", "部活動（部別）", "symbol", 9, {
+    item("item-club-activity", "club_activity", "部活動（部別）", "symbol", 10, {
       targetGroupId: "tg-club",
       defaultVisibility: "staff_only",
       options: clubOptions("club-activity"),
@@ -1755,7 +1755,10 @@ export function createDevApi(): ScheduleApi {
       // preset, so — as on the real store, which skips keys the
       // school already has — the elementary presets change
       // nothing here. The junior-high preset adds its signature
-      // club item and axis when they are missing.
+      // club items and axis when they are missing; the axis
+      // ships without targets, as the server's preset ships it
+      // (schedule/src/definitions/presets.ts) — the school adds
+      // its own clubs as targets.
       if (input.preset === "junior_high") {
         if (!boot.targetGroups.some((g) => g.key === "club")) {
           boot.targetGroups.push({
@@ -1763,7 +1766,7 @@ export function createDevApi(): ScheduleApi {
             key: "club",
             name: "部活動",
             sort: 2,
-            targets: CLUB_TARGETS,
+            targets: [],
           });
         }
         // The preset's two club items, as the server's preset

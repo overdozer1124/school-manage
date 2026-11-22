@@ -203,6 +203,20 @@ body {
   background: color-mix(in srgb, var(--bg) 65%, transparent);
 }
 
+/* A closed day shades its whole column, head and body alike —
+   the rows table shades the day's whole row, and here the day
+   is the column. */
+.transposed-table td.closed {
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+
+/* The month a multi-month span turns into, named on the
+   column where it starts. */
+.transposed-table .date-month {
+  display: block;
+  font-weight: 600;
+}
+
 .transposed-table td {
   text-align: center;
 }

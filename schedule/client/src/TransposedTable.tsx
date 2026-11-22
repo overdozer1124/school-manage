@@ -165,6 +165,15 @@ export function TransposedTable({
     );
   };
 
+  const marks = new Map(
+    range.days.map((day) => [day.date, dayMark(day, bootstrap.masters.dayPatterns)] as const),
+  );
+  // A span that crosses a month boundary (a school year, a
+  // two-week span over the turn of a month) names the month
+  // where it changes, so a column's day number never stands
+  // alone; a single month needs no such label.
+  const multiMonth = range.from.slice(0, 7) !== range.to.slice(0, 7);
+
   return (
     <div className="rows-table-wrap transposed-wrap">
       <table className="rows-table transposed-table">
@@ -173,8 +182,9 @@ export function TransposedTable({
             <th scope="col" className="target-col">
               {model.axisLabel}
             </th>
-            {range.days.map((day) => {
-              const mark = dayMark(day, bootstrap.masters.dayPatterns);
+            {range.days.map((day, index) => {
+              const mark = marks.get(day.date) ?? { kind: "", closed: false, sub: "" };
+              const monthStart = multiMonth && (index === 0 || day.date.slice(8, 10) === "01");
               return (
                 <th
                   key={day.date}
@@ -182,6 +192,9 @@ export function TransposedTable({
                   data-date={day.date}
                   className={`day-col kind-${mark.kind || "plain"}${mark.closed ? " closed" : ""}`}
                 >
+                  {monthStart && (
+                    <span className="date-month">{Number(day.date.slice(5, 7))}月</span>
+                  )}
                   <span className="date-num">{Number(day.date.slice(8, 10))}</span>
                   <span className="date-weekday">（{weekdayLabel(day.date)}）</span>
                   {mark.sub && <span className="date-sub">{mark.sub}</span>}
@@ -202,7 +215,7 @@ export function TransposedTable({
                     ? day.events.filter((e) => eventTargetIds(e).includes(row.targetId as string))
                     : [];
                 return (
-                  <td key={day.date}>
+                  <td key={day.date} className={marks.get(day.date)?.closed ? "closed" : undefined}>
                     {model.shown.map(({ column, item }) =>
                       cellShell(day, column, row.targetId, item),
                     )}
