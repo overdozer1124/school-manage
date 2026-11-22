@@ -14,6 +14,7 @@ import { PendingPanel } from "./PendingPanel";
 import { PublishPanel } from "./PublishPanel";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import { SettingsPanel } from "./SettingsPanel";
+import { TransposedTable } from "./TransposedTable";
 import { WeekTimeline } from "./WeekTimeline";
 import { YearTable } from "./YearTable";
 import type { BootstrapData, RangeData } from "./types";
@@ -22,8 +23,9 @@ import type { BootstrapData, RangeData } from "./types";
  * The schedule screen (Issue #34): pick a view, move through its
  * months or weeks, and read the L1 / L2 rows table. The L3 year
  * table (year_columns) is drawn too, since Issue #42, the
- * L4 calendar grid (calendar_grid) since Issue #43, and the
- * L5 week timeline (week_timeline) since Issue #44; a view
+ * L4 calendar grid (calendar_grid) since Issue #43, the
+ * L5 week timeline (week_timeline) since Issue #44, and the
+ * transposed table since Issue #45; a view
  * naming a layout still to come can be selected but shows a
  * notice instead of a table (those layouts arrive with their
  * own issues). Cells take direct input (Issue #35): a saved
@@ -118,7 +120,8 @@ export function App({
       view.layout !== "week_rows" &&
       view.layout !== "year_columns" &&
       view.layout !== "calendar_grid" &&
-      view.layout !== "week_timeline"
+      view.layout !== "week_timeline" &&
+      view.layout !== "transposed"
     ) {
       setRange(null);
       return;
@@ -205,7 +208,14 @@ export function App({
     rowsLayout ||
     view.layout === "year_columns" ||
     view.layout === "calendar_grid" ||
-    view.layout === "week_timeline";
+    view.layout === "week_timeline" ||
+    view.layout === "transposed";
+  // A transposed view's days are its columns, so a week-scoped
+  // one is labelled by its range, like the week layouts; a
+  // month- or year-scoped one takes the month / year label.
+  const transposedWeek =
+    view.layout === "transposed" &&
+    (view.periodScope === "week" || view.periodScope === "two_weeks");
 
   return (
     <main className="schedule-app">
@@ -233,9 +243,10 @@ export function App({
               ← 前
             </button>
             <span className="period-label">
-              {view.layout === "week_rows" || view.layout === "week_timeline"
+              {view.layout === "week_rows" || view.layout === "week_timeline" || transposedWeek
                 ? `${range ? `${range.from} 〜 ${range.to}` : ""}`
-                : view.layout === "year_columns"
+                : view.layout === "year_columns" ||
+                    (view.layout === "transposed" && view.periodScope === "year")
                   ? yearLabel(anchor)
                   : monthLabel(anchor)}
             </span>
@@ -295,6 +306,9 @@ export function App({
       )}
       {supported && range && view.layout === "week_timeline" && (
         <WeekTimeline bootstrap={bootstrap} range={range} editor={editor} />
+      )}
+      {supported && range && view.layout === "transposed" && (
+        <TransposedTable bootstrap={bootstrap} range={range} editor={editor} />
       )}
       {rowsLayout && range && (
         <>

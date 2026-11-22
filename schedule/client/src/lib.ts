@@ -205,8 +205,35 @@ export function timelineRange(
   return { from, to: addDays(from, 6) };
 }
 
+/**
+ * The [from, to] a transposed view asks getRange for (Issue
+ * #45): the days are the table's columns, so the span is the
+ * view's period scope — a week or two weeks from the week's
+ * first day, the anchor's month, or the whole school year.
+ * The month is the scope the club tables are kept in (the
+ * prototype drew the displayed month), and it is the fallback
+ * for a view that names no scope.
+ */
+export function transposedRange(
+  view: ViewDefinitionData,
+  anchor: string,
+): { from: string; to: string } {
+  if (view.periodScope === "week" || view.periodScope === "two_weeks") {
+    const from = weekStartOf(anchor);
+    return { from, to: addDays(from, weekSpanOf(view) - 1) };
+  }
+  if (view.periodScope === "year") {
+    const year = schoolYearOf(anchor);
+    return { from: `${year}-04-01`, to: `${year + 1}-03-31` };
+  }
+  return { from: monthStartOf(anchor), to: monthEndOf(anchor) };
+}
+
 /** The [from, to] a view asks getRange for, from the anchor date. */
 export function rangeFor(view: ViewDefinitionData, anchor: string): { from: string; to: string } {
+  if (view.layout === "transposed") {
+    return transposedRange(view, anchor);
+  }
   if (view.layout === "week_rows") {
     const from = weekStartOf(anchor);
     return { from, to: addDays(from, weekSpanOf(view) - 1) };
@@ -233,6 +260,14 @@ export function stepAnchor(view: ViewDefinitionData, anchor: string, dir: 1 | -1
   if (view.layout === "week_rows") return addDays(anchor, dir * weekSpanOf(view));
   if (view.layout === "week_timeline") return addDays(anchor, dir * 7);
   if (view.layout === "year_columns") return addMonths(anchor, dir * 12);
+  if (view.layout === "transposed") {
+    // Step by the span the table shows: its period scope.
+    if (view.periodScope === "week" || view.periodScope === "two_weeks") {
+      return addDays(anchor, dir * weekSpanOf(view));
+    }
+    if (view.periodScope === "year") return addMonths(anchor, dir * 12);
+    return addMonths(anchor, dir);
+  }
   // month_rows and calendar_grid both step by months.
   return addMonths(anchor, dir);
 }
@@ -380,6 +415,78 @@ export function axisEntries(
     return bootstrap.masters.grades.map((g) => ({ id: g.id, name: g.name ?? g.id }));
   }
   return [];
+}
+
+/**
+ * The transposed table's reading of a view (Issue #45; DESIGN
+ * schedule 4.8: layout=transposed ＋ the view's target axis):
+ * the rows are the members of one target axis, the columns are
+ * the days, and each cell is that target's daily value — the
+ * same per-target DailyValue the rows tables group into one
+ * cell under 4.8.2, ungrouped here because each row is one
+ * target already. The axis is the first of the view's daily
+ * items that ranges over an axis (the prototype's reading);
+ * daily items on that same axis are drawn with it, and items
+ * on another axis — or on none — cannot be rows of this table
+ * and are named under it instead of being dropped silently.
+ */
+export interface TransposedModel {
+  /** The item whose axis the rows are. */
+  axisItem: ItemDefinitionData;
+  /** The row axis's name （部活動 / 学年 / …). */
+  axisLabel: string;
+  /** The rows, in the axis's own order. */
+  entries: { id: string; name: string }[];
+  /** The daily-item columns drawn in the cells: the ones whose
+   *  items range over the row axis. */
+  shown: { column: ViewColumnData; item: ItemDefinitionData }[];
+  /** The view's other daily items, not drawn in this table. */
+  others: ItemDefinitionData[];
+}
+
+export function transposedModel(
+  bootstrap: BootstrapData,
+  columns: ViewColumnData[],
+): TransposedModel | null {
+  const daily = [...columns]
+    .sort((a, b) => a.sort - b.sort)
+    .filter((c) => c.sourceKind === "daily_item")
+    .map((column) => ({
+      column,
+      item: bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId) ?? null,
+    }))
+    .filter((x): x is { column: ViewColumnData; item: ItemDefinitionData } => x.item !== null);
+  const axis = daily.find(({ item }) => axisEntries(item, bootstrap).length > 0);
+  if (!axis) return null;
+  const onAxis = (item: ItemDefinitionData) =>
+    item.targetGroupId === axis.item.targetGroupId &&
+    item.targetPlatformAxis === axis.item.targetPlatformAxis;
+  const group = axis.item.targetGroupId
+    ? bootstrap.targetGroups.find((g) => g.id === axis.item.targetGroupId)
+    : null;
+  return {
+    axisItem: axis.item,
+    axisLabel: group?.name ?? (axis.item.targetPlatformAxis === "grade" ? "学年" : axis.item.name),
+    entries: axisEntries(axis.item, bootstrap),
+    shown: daily.filter(({ item }) => onAxis(item)),
+    others: daily.filter(({ item }) => !onAxis(item)).map(({ item }) => item),
+  };
+}
+
+/** The target ids one event record names as its targets — the
+ *  platform keeps them as target references ({ axis, id } /
+ *  { axis: "app", app, axisKey, id }), and the transposed table
+ *  reads the ids alone: a target's id is unique across axes. */
+export function eventTargetIds(event: Record<string, unknown>): string[] {
+  const targets = event["targets"];
+  if (!Array.isArray(targets)) return [];
+  const ids: string[] = [];
+  for (const target of targets) {
+    if (typeof target !== "object" || target === null) continue;
+    const id = (target as Record<string, unknown>)["id"];
+    if (typeof id === "string") ids.push(id);
+  }
+  return ids;
 }
 
 /**

@@ -159,6 +159,95 @@ body {
   background: var(--bg);
 }
 
+/* The transposed table (Issue #45): rows are the targets of
+   the view's axis, columns the days — the rows table turned
+   on its side, so it keeps the rows table's cells and marks
+   (Saturdays blue, Sundays and holidays red, closed days
+   shaded, the holiday named in text). The table is sized by
+   its content and the wrapper scrolls sideways, as with the
+   year table; the target column stays in view while it
+   scrolls, so a wide month still reads row by row. */
+.transposed-table {
+  width: auto;
+}
+
+.transposed-table .target-col,
+.transposed-table .target-cell {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.transposed-table thead .target-col {
+  background: var(--bg);
+  z-index: 1;
+}
+
+.transposed-table .day-col {
+  text-align: center;
+  min-width: 3.2em;
+}
+
+.transposed-table .day-col.kind-sat .date-num,
+.transposed-table .day-col.kind-sat .date-weekday {
+  color: var(--sat);
+}
+
+.transposed-table .day-col.kind-holiday .date-num,
+.transposed-table .day-col.kind-holiday .date-weekday {
+  color: var(--sun);
+}
+
+.transposed-table .day-col.closed {
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+
+.transposed-table td {
+  text-align: center;
+}
+
+.transposed-cell {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+}
+
+.transposed-item-name {
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+button.transposed-event {
+  display: block;
+  margin: 2px auto 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+span.transposed-event {
+  display: block;
+  margin-top: 2px;
+}
+
+.transposed-notice {
+  padding: 12px;
+  color: var(--dim);
+}
+
+.transposed-note {
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
 /* The L4 calendar grid (Issue #43): weeks are rows of seven day
    cells, drawn as CSS grids rather than a table — a period bar
    has to span cells, which a table row cannot do. The bar lanes
@@ -629,6 +718,13 @@ span.timeline-block {
    entry kind, and a failed save's notice sits in the cell in the
    holiday red — the typed text itself never leaves the input. */
 .rows-table td.cell-active {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The transposed table's active cell is the item's slice inside
+   the day cell (Issue #45), outlined the same way. */
+.transposed-cell.cell-active {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }

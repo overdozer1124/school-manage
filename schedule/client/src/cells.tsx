@@ -83,6 +83,11 @@ interface CellProps {
   /** The character typed on the cell itself, seeding the draft. */
   seedText: string | null;
   onActivate(): void;
+  /** One target's slice of the cell (the transposed table, Issue
+   *  #45): the cell holds exactly this target's value — null is
+   *  the value with no target. Undefined keeps the whole cell,
+   *  every target at once, as the rows tables draw it. */
+  targetId?: string | null;
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | null {
@@ -870,14 +875,36 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
 
 // ---- daily-value cells ----------------------------------------------
 
-export function DailyCell({ day, column, bootstrap, editor, active, seedText }: CellProps) {
+export function DailyCell({
+  day,
+  column,
+  bootstrap,
+  editor,
+  active,
+  seedText,
+  targetId,
+}: CellProps) {
   const item = bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
   const [notice, setNotice] = useState<string | null>(null);
   if (!item) return <>{dailyCellText(day, column, bootstrap)}</>;
+  // The transposed table's slice (Issue #45): this cell is one
+  // row — one target — of the item, so it reads and writes only
+  // that target's value; the data underneath is the same
+  // target-carrying DailyValue the rows tables group into one
+  // cell (DESIGN schedule 4.8.2 keeps the data per target).
+  const single = targetId !== undefined;
+  const singleValue = (): DailyValueData | undefined =>
+    targetId === null || targetId === undefined
+      ? plainDailyValue(day, item)
+      : dailyValueForTarget(day, item, targetId);
   // daily.write is Admin and Editor only (DESIGN-AUTH-TENANCY 4.4):
   // without it the cell never starts input — a Viewer's screen
   // stays the read-only table.
   if (!bootstrap.permissions.includes("daily.write") || !active) {
+    if (single) {
+      const value = singleValue();
+      return <>{value ? dailyValueText(value, item) : ""}</>;
+    }
     return <>{dailyCellText(day, column, bootstrap)}</>;
   }
 
@@ -907,6 +934,33 @@ export function DailyCell({ day, column, bootstrap, editor, active, seedText }: 
     runWrite(() =>
       editor.api.deleteDailyValue({ date: day.date, itemDefinitionId: item.id, target }),
     );
+
+  if (single) {
+    const target = targetId === null ? null : targetRefForTarget(item, bootstrap, targetId);
+    const targetName =
+      targetId === null
+        ? null
+        : (axisEntries(item, bootstrap).find((e) => e.id === targetId)?.name ?? null);
+    return (
+      <div className="daily-cell">
+        <DailyValueControl
+          item={item}
+          value={singleValue()}
+          label={targetName ? `${item.name}（${targetName}）` : item.name}
+          autoFocus
+          people={bootstrap.masters.staff}
+          save={(value) => save(target, value)}
+          clear={() => clear(target)}
+          onNotice={setNotice}
+        />
+        {notice && (
+          <p className="cell-notice" role="alert">
+            {notice}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   const entries = axisEntries(item, bootstrap);
   const hasAxis =

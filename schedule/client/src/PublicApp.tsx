@@ -3,6 +3,7 @@ import { ApiError, UnauthorizedError, type PublicApi } from "./api";
 import { CalendarGrid } from "./CalendarGrid";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
+import { TransposedTable } from "./TransposedTable";
 import { WeekTimeline } from "./WeekTimeline";
 import { YearTable } from "./YearTable";
 import type { BootstrapData, PublicBootstrapData, RangeData } from "./types";
@@ -146,9 +147,13 @@ export function PublicApp({ api }: { api: PublicApi }) {
             ‹ 前へ
           </button>
           <span className="period-label">
-            {view.layout === "week_rows" || view.layout === "week_timeline"
+            {view.layout === "week_rows" ||
+            view.layout === "week_timeline" ||
+            (view.layout === "transposed" &&
+              (view.periodScope === "week" || view.periodScope === "two_weeks"))
               ? rangeLabel(range)
-              : view.layout === "year_columns"
+              : view.layout === "year_columns" ||
+                  (view.layout === "transposed" && view.periodScope === "year")
                 ? yearLabel(anchor)
                 : monthLabel(anchor)}
           </span>
@@ -188,6 +193,14 @@ export function PublicApp({ api }: { api: PublicApi }) {
           // the clock axis inside the component.
           <>
             <WeekTimeline range={range} bootstrap={tableBoot} />
+            <UndecidedSection events={undecided} />
+          </>
+        ) : view.layout === "transposed" ? (
+          // The transposed table likewise (Issue #45): the
+          // same bundle, no editor — a public club table is
+          // the table read-only, its rows the axis's targets.
+          <>
+            <TransposedTable range={range} bootstrap={tableBoot} />
             <UndecidedSection events={undecided} />
           </>
         ) : (
