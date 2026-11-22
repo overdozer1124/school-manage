@@ -400,6 +400,45 @@ DEV_BOOTSTRAP.views = [
       }),
     ],
   },
+  {
+    // The L5 week timeline (Issue #44): the clock axis with its
+    // default range (7:00–19:00, 30-minute step). The columns
+    // name what the timeline's band input creates and reads —
+    // events, with lunch kept for the day detail's sake.
+    id: "view-timeline-staff",
+    name: "職員用タイムライン",
+    layout: "week_timeline",
+    layoutParams: null,
+    audience: "staff",
+    periodScope: "week",
+    printSettings: null,
+    isArchived: false,
+    columns: [
+      col("view-timeline-staff-events", "view-timeline-staff", "event_category", 1),
+      col("view-timeline-staff-lunch", "view-timeline-staff", "daily_item", 2, {
+        itemDefinitionId: "item-lunch",
+      }),
+    ],
+  },
+  {
+    // The timeline's period axis （時限軸モード）: the same view
+    // with layoutParams.axis = "period" — the rows become the
+    // day patterns' periods instead of clock hours.
+    id: "view-timeline-period",
+    name: "職員用タイムライン（時限）",
+    layout: "week_timeline",
+    layoutParams: { axis: "period" },
+    audience: "staff",
+    periodScope: "week",
+    printSettings: null,
+    isArchived: false,
+    columns: [
+      col("view-timeline-period-events", "view-timeline-period", "event_category", 1),
+      col("view-timeline-period-lunch", "view-timeline-period", "daily_item", 2, {
+        itemDefinitionId: "item-lunch",
+      }),
+    ],
+  },
 ];
 
 const HOLIDAYS: Record<string, string> = {
@@ -414,6 +453,54 @@ const EVENTS: Record<string, string[]> = {
   "2026-11-25": ["音楽発表会"],
   "2026-11-30": ["委員会活動"],
 };
+
+/** The timed fixture events (Issue #44): what the week timeline
+ *  draws as blocks — two overlapping pairs (so the lanes show),
+ *  one periods-timed event (so the period axis has a native
+ *  entry), and one all-day event for the band, in the weeks of
+ *  November 9 and November 16, 2026. */
+const TIMED_EVENTS: { date: string; title: string; time: unknown }[] = [
+  {
+    date: "2026-11-10",
+    title: "研究授業",
+    time: { kind: "clock", startsAt: "09:00", endsAt: "10:30" },
+  },
+  {
+    date: "2026-11-10",
+    title: "学年会議",
+    time: { kind: "clock", startsAt: "10:00", endsAt: "11:00" },
+  },
+  {
+    date: "2026-11-11",
+    title: "クラブ活動",
+    time: { kind: "clock", startsAt: "13:30", endsAt: "14:20" },
+  },
+  {
+    date: "2026-11-12",
+    title: "遠足",
+    time: { kind: "all_day" },
+  },
+  {
+    date: "2026-11-16",
+    title: "朝会",
+    time: { kind: "clock", startsAt: "08:30", endsAt: "08:50" },
+  },
+  {
+    date: "2026-11-16",
+    title: "打ち合わせ",
+    time: { kind: "clock", startsAt: "08:40", endsAt: "09:30" },
+  },
+  {
+    date: "2026-11-16",
+    title: "職員会議",
+    time: { kind: "clock", startsAt: "15:30", endsAt: "16:30" },
+  },
+  {
+    date: "2026-11-17",
+    title: "総合学習発表",
+    time: { kind: "periods", from: 2, to: 3 },
+  },
+];
 
 /** The fixture absences (platform-shaped records): who is away,
  *  when, and whether the absence is confirmed yet. They overlap
@@ -474,7 +561,12 @@ function value(
 
 /** One fixture event as a full platform record (the writes of
  *  Issue #35 need the revision to offer re-edit and delete). */
-function fixtureEvent(date: string, title: string, i: number): Record<string, unknown> {
+function fixtureEvent(
+  date: string,
+  title: string,
+  i: number,
+  time: unknown = null,
+): Record<string, unknown> {
   return {
     id: `ev-${date}-${i}`,
     kind: "event",
@@ -483,7 +575,7 @@ function fixtureEvent(date: string, title: string, i: number): Record<string, un
     datePrecision: "day",
     startsOn: date,
     endsOn: date,
-    time: null,
+    time,
     locationId: null,
     locationText: null,
     description: null,
@@ -549,6 +641,19 @@ function fixtureAbsences(): Record<string, unknown>[] {
       subdivisionKey: null,
       certainty: "tentative",
       confirmedBy: null,
+    },
+    {
+      // A part-day leave with clock times (Issue #44): the week
+      // timeline draws it as a timed block, not in the band.
+      ...base,
+      id: "abs-4",
+      staffId: "teacher-2",
+      fromDate: "2026-11-17",
+      toDate: "2026-11-17",
+      kind: "leave",
+      purpose: null,
+      subdivisionKey: "annual",
+      time: { kind: "clock", startsAt: "10:00", endsAt: "11:00" },
     },
   ];
 }
@@ -1017,6 +1122,7 @@ export function createDevApi(): ScheduleApi {
       ...Object.entries(EVENTS).flatMap(([date, titles]) =>
         titles.map((title, i) => fixtureEvent(date, title, i)),
       ),
+      ...TIMED_EVENTS.map((e, i) => fixtureEvent(e.date, e.title, 100 + i, e.time)),
       ...fixtureProvisionals(),
     ],
     absences: fixtureAbsences(),

@@ -3,6 +3,7 @@ import { ApiError, UnauthorizedError, type PublicApi } from "./api";
 import { CalendarGrid } from "./CalendarGrid";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
 import { RowsTable, UndecidedSection } from "./RowsTable";
+import { WeekTimeline } from "./WeekTimeline";
 import { YearTable } from "./YearTable";
 import type { BootstrapData, PublicBootstrapData, RangeData } from "./types";
 
@@ -145,7 +146,7 @@ export function PublicApp({ api }: { api: PublicApi }) {
             ‹ 前へ
           </button>
           <span className="period-label">
-            {view.layout === "week_rows"
+            {view.layout === "week_rows" || view.layout === "week_timeline"
               ? rangeLabel(range)
               : view.layout === "year_columns"
                 ? yearLabel(anchor)
@@ -177,6 +178,16 @@ export function PublicApp({ api }: { api: PublicApi }) {
           // grid, its day detail read-only.
           <>
             <CalendarGrid range={range} bootstrap={tableBoot} anchor={anchor} />
+            <UndecidedSection events={undecided} />
+          </>
+        ) : view.layout === "week_timeline" ? (
+          // The week timeline likewise (Issue #44): the same
+          // bundle, no editor — a public timeline view is the
+          // timeline read-only. The public bundle carries no
+          // day patterns, so a period-axis view falls back to
+          // the clock axis inside the component.
+          <>
+            <WeekTimeline range={range} bootstrap={tableBoot} />
             <UndecidedSection events={undecided} />
           </>
         ) : (

@@ -62,6 +62,8 @@ describe("schedule screen with the development adapter", () => {
       "保護者用月表",
       "職員用年間表",
       "職員用カレンダー",
+      "職員用タイムライン",
+      "職員用タイムライン（時限）",
     ]);
     expect(select.value).toBe("view-week-staff");
     // The two-week table is what opens.

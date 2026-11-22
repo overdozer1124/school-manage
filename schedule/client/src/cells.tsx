@@ -236,7 +236,11 @@ function entryPlan(
   };
 }
 
-function buildEventRecord(
+/** One new event record from a title, a kind template and a
+ *  day — the entry cells' shape, shared with the week timeline's
+ *  slot input (Issue #44), which overrides `time` with the slot
+ *  it was started from. */
+export function buildEventRecord(
   title: string,
   template: KindTemplateData,
   date: string,

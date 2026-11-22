@@ -344,6 +344,286 @@ span.grid-entry {
   max-width: 900px;
 }
 
+/* The L5 week timeline (Issue #44): seven day columns against a
+   time axis, drawn as CSS grids like the calendar grid — a
+   timed entry is a block placed by its start and length, and
+   overlapping blocks stand side by side in lanes. The all-day
+   band sits above the columns; the period axis swaps the clock
+   body for one row per lesson period of the day patterns. Day
+   colours follow the rows table, with the weekday letter and
+   holiday names printed alongside (DESIGN schedule 9.1). */
+.timeline-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-size: 13px;
+}
+
+.timeline-grid {
+  display: grid;
+  min-width: 700px;
+}
+
+.timeline-corner {
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.timeline-day-head {
+  padding: 4px 6px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.timeline-day-head:last-child {
+  border-right: none;
+}
+
+.timeline-day-label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.timeline-day-head.kind-sat .timeline-day-label {
+  color: var(--sat);
+}
+
+.timeline-day-head.kind-holiday .timeline-day-label {
+  color: var(--sun);
+}
+
+.timeline-band-corner {
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.timeline-band-cell {
+  min-height: 32px;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.timeline-band-cell:last-child {
+  border-right: none;
+}
+
+.timeline-band-entry,
+.timeline-chip {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+span.timeline-band-entry,
+span.timeline-chip {
+  cursor: default;
+}
+
+.timeline-band-input input {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}
+
+.timeline-band-input input:hover,
+.timeline-band-input input:focus {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.timeline-body {
+  position: relative;
+}
+
+.timeline-gutter {
+  position: relative;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.timeline-hour {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-day-column {
+  position: relative;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background-image: linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+}
+
+.timeline-day-column:last-child {
+  border-right: none;
+}
+
+.timeline-day-column.closed {
+  background-color: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+
+/* A slot is a transparent button laid over its interval: the
+   hover and the keyboard focus are what show it. */
+.timeline-slot {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.timeline-slot:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.timeline-slot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.timeline-block {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  padding: 1px 4px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text);
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+span.timeline-block {
+  cursor: default;
+  display: block;
+}
+
+.timeline-period-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.timeline-period-row:last-child {
+  border-bottom: none;
+}
+
+.timeline-period-label {
+  padding: 4px 6px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.timeline-period-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.timeline-period-time {
+  font-size: 10px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-period-cell {
+  min-height: 40px;
+  padding: 3px 4px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.timeline-period-cell:last-child {
+  border-right: none;
+}
+
+.timeline-period-cell:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.timeline-slot-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.timeline-slot-form input {
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.timeline-slot-form button {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.timeline-popover-anchor {
+  min-height: 0;
+}
+
+.timeline-hint {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
 /* Cell input (Issue #35): the selected cell is outlined, entries
    carry their own small edit / delete buttons, kind chips pick the
    entry kind, and a failed save's notice sits in the cell in the

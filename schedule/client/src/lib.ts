@@ -1,9 +1,13 @@
 import {
   addDays,
+  calendarTimeToPeriods,
   datesInRange,
   formatGroupedValues,
+  isValidTimeString,
+  timeToMinutes,
   weekStartOf as firstDayOfWeek,
   weekdayOf,
+  type CalendarTime,
   type Weekday,
 } from "@school-manage/calendar-types";
 import type {
@@ -189,11 +193,26 @@ export function calendarWeeks(view: ViewDefinitionData, anchor: string): string[
   return weeks;
 }
 
+/** The [from, to] a week_timeline view asks getRange for: the
+ *  seven days of the anchor's week, starting on the view's
+ *  week-start weekday — the same setting the calendar grid
+ *  reads (gridWeekStart), Monday by default. */
+export function timelineRange(
+  view: ViewDefinitionData,
+  anchor: string,
+): { from: string; to: string } {
+  const from = firstDayOfWeek(anchor, gridWeekStart(view));
+  return { from, to: addDays(from, 6) };
+}
+
 /** The [from, to] a view asks getRange for, from the anchor date. */
 export function rangeFor(view: ViewDefinitionData, anchor: string): { from: string; to: string } {
   if (view.layout === "week_rows") {
     const from = weekStartOf(anchor);
     return { from, to: addDays(from, weekSpanOf(view) - 1) };
+  }
+  if (view.layout === "week_timeline") {
+    return timelineRange(view, anchor);
   }
   if (view.layout === "calendar_grid") {
     return calendarGridRange(view, anchor);
@@ -212,6 +231,7 @@ export function rangeFor(view: ViewDefinitionData, anchor: string): { from: stri
 /** Step the anchor by one period of the view's layout. */
 export function stepAnchor(view: ViewDefinitionData, anchor: string, dir: 1 | -1): string {
   if (view.layout === "week_rows") return addDays(anchor, dir * weekSpanOf(view));
+  if (view.layout === "week_timeline") return addDays(anchor, dir * 7);
   if (view.layout === "year_columns") return addMonths(anchor, dir * 12);
   // month_rows and calendar_grid both step by months.
   return addMonths(anchor, dir);
@@ -592,6 +612,255 @@ export function barLanes(
     laneOf.set(bar.id, lane);
   }
   return { laneOf, laneCount: laneEnds.length };
+}
+
+// ---- week timeline (Issue #44) -------------------------------------
+
+/**
+ * The week timeline's axis settings (DESIGN schedule 4.8.1 L5:
+ * 縦軸の範囲と目盛りは layout_params で設定でき、時限軸モードも
+ * 選べる), read from the view's layout_params:
+ * - `axis`: "period" selects the period axis （時限軸モード);
+ *   anything else is the clock axis.
+ * - `startTime` / `endTime`: "HH:MM" bounds of the clock axis
+ *   (a numeric `startHour` / `endHour` reads as that hour). The
+ *   defaults are the prototype's 7:00–19:00; an end at or before
+ *   the start falls back to the defaults rather than drawing an
+ *   empty axis.
+ * - `intervalMinutes`: the axis step （目盛り） and the unit a
+ *   slot selection covers — 15, 30 or 60, defaulting to 30.
+ * The design names the parameters but not their keys; these keys
+ * are this implementation's reading of them.
+ */
+export interface TimelineConfig {
+  axis: "time" | "period";
+  startMinutes: number;
+  endMinutes: number;
+  intervalMinutes: number;
+}
+
+export function timelineConfig(view: ViewDefinitionData): TimelineConfig {
+  const params = view.layoutParams ?? {};
+  const timeParam = (key: string, hourKey: string): number | null => {
+    const text = params[key];
+    if (typeof text === "string" && isValidTimeString(text)) return timeToMinutes(text);
+    const hour = params[hourKey];
+    if (typeof hour === "number" && Number.isInteger(hour) && hour >= 0 && hour <= 23) {
+      return hour * 60;
+    }
+    return null;
+  };
+  let startMinutes = timeParam("startTime", "startHour") ?? 7 * 60;
+  let endMinutes = timeParam("endTime", "endHour") ?? 19 * 60;
+  if (endMinutes <= startMinutes) {
+    startMinutes = 7 * 60;
+    endMinutes = 19 * 60;
+  }
+  const interval = params["intervalMinutes"];
+  return {
+    axis: params["axis"] === "period" ? "period" : "time",
+    startMinutes,
+    endMinutes,
+    intervalMinutes:
+      typeof interval === "number" && [15, 30, 60].includes(interval) ? interval : 30,
+  };
+}
+
+/** "480" minutes after midnight as a padded "08:00" — the shape
+ *  a record's clock time is stored in. */
+export function minutesToTimeText(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+/** A record's CalendarTime, when it carries one in a known
+ *  shape (events and absences both carry `time`). */
+function recordTime(record: Record<string, unknown>): CalendarTime | null {
+  const time = record["time"];
+  if (typeof time !== "object" || time === null) return null;
+  const t = time as Record<string, unknown>;
+  if (t["kind"] === "all_day") return { kind: "all_day" };
+  if (t["kind"] === "half_day" && (t["half"] === "am" || t["half"] === "pm")) {
+    return { kind: "half_day", half: t["half"] };
+  }
+  if (t["kind"] === "clock" && typeof t["startsAt"] === "string") {
+    return {
+      kind: "clock",
+      startsAt: t["startsAt"],
+      endsAt: typeof t["endsAt"] === "string" ? t["endsAt"] : null,
+    };
+  }
+  if (t["kind"] === "periods" && typeof t["from"] === "number" && typeof t["to"] === "number") {
+    return { kind: "periods", from: t["from"], to: t["to"] };
+  }
+  return null;
+}
+
+/**
+ * One band of a day pattern, as the timeline's period axis reads
+ * it: every period the pattern carries — the morning band (0)
+ * and the after-school band (99) included, where the detail
+ * modal's 時限指定 offers only the lesson periods (DESIGN
+ * schedule 4.2: period_no 0=朝, 1..N, 99=放課後）. A band always
+ * carries its clock times in the master shape; a hand-made
+ * record without them keeps nulls and can still be a row, it
+ * just cannot place clock-timed entries or seed a clock draft.
+ */
+export interface DayPeriodBand {
+  period: number;
+  label: string;
+  startsAt: string | null;
+  endsAt: string | null;
+}
+
+function defaultBandLabel(period: number): string {
+  if (period === 0) return "朝";
+  if (period === 99) return "放課後";
+  return `${period}限`;
+}
+
+/** The period bands of the pattern in force on one day: the
+ *  day's own day pattern (its dayScheduleId), falling back to
+ *  the school's first pattern for a day that names none — the
+ *  prototype's reading, and the only pattern a day without a
+ *  schedule can be read against. */
+export function dayPeriodBands(bootstrap: BootstrapData, day: RangeDayData): DayPeriodBand[] {
+  const scheduleId =
+    typeof day.day["dayScheduleId"] === "string" ? (day.day["dayScheduleId"] as string) : null;
+  const pattern =
+    bootstrap.masters.dayPatterns.find((p) => p.id === scheduleId) ??
+    bootstrap.masters.dayPatterns[0];
+  const periods = pattern?.["periods"];
+  if (!Array.isArray(periods)) return [];
+  const bands: DayPeriodBand[] = [];
+  for (const entry of periods) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const p = entry as Record<string, unknown>;
+    if (typeof p["period"] !== "number") continue;
+    const period = p["period"] as number;
+    bands.push({
+      period,
+      label: typeof p["label"] === "string" ? (p["label"] as string) : defaultBandLabel(period),
+      startsAt:
+        typeof p["startsAt"] === "string" && isValidTimeString(p["startsAt"] as string)
+          ? (p["startsAt"] as string)
+          : null,
+      endsAt:
+        typeof p["endsAt"] === "string" && isValidTimeString(p["endsAt"] as string)
+          ? (p["endsAt"] as string)
+          : null,
+    });
+  }
+  return bands.sort((a, b) => a.period - b.period);
+}
+
+/**
+ * The period axis's rows for one week: the union of the days'
+ * bands, in period order — one day's pattern may differ from
+ * another's (a shortened day mid-week), and the axis still has
+ * to stand as one set of rows. A row's label and clock times are
+ * the first day's band that carries the period.
+ */
+export function weekPeriodRows(bootstrap: BootstrapData, days: RangeDayData[]): DayPeriodBand[] {
+  const byPeriod = new Map<number, DayPeriodBand>();
+  for (const day of days) {
+    for (const band of dayPeriodBands(bootstrap, day)) {
+      if (!byPeriod.has(band.period)) byPeriod.set(band.period, band);
+    }
+  }
+  return [...byPeriod.values()].sort((a, b) => a.period - b.period);
+}
+
+/**
+ * The clock span (minutes after midnight) one entry occupies on
+ * its day, or null when it has no clock placement — an all-day
+ * or half-day entry, or a periods entry whose periods the day's
+ * pattern does not carry. A periods entry spans its first
+ * period's start to its last period's end; a clock entry with
+ * no end stands for one hour, the prototype's reading.
+ */
+export function entryClockSpan(
+  record: Record<string, unknown>,
+  bands: DayPeriodBand[],
+): { start: number; end: number } | null {
+  const time = recordTime(record);
+  if (!time) return null;
+  if (time.kind === "clock") {
+    if (!isValidTimeString(time.startsAt)) return null;
+    const start = timeToMinutes(time.startsAt);
+    const end =
+      time.endsAt && isValidTimeString(time.endsAt) ? timeToMinutes(time.endsAt) : start + 60;
+    return { start, end: Math.max(end, start + 1) };
+  }
+  if (time.kind === "periods") {
+    const from = bands.find((b) => b.period === time.from);
+    const to = bands.find((b) => b.period === time.to) ?? from;
+    if (!from?.startsAt || !to?.endsAt) return null;
+    return { start: timeToMinutes(from.startsAt), end: timeToMinutes(to.endsAt) };
+  }
+  return null;
+}
+
+/**
+ * The period-axis row one entry belongs to on its day, or null
+ * when it has no period placement (it then stands in the all-day
+ * band): a periods entry in its first period's row; a clock or
+ * half-day entry in the first period it overlaps, by the shared
+ * derivation (calendarTimeToPeriods) over the day's own pattern
+ * — the bands' clock times, the morning and after-school bands
+ * included, so an early entry can land in 朝 and a late one in
+ * 放課後. This is the 「その日の日課に従って並ぶ」 reading: the
+ * pattern is the day's, never the week's first day's.
+ */
+export function entryPeriod(
+  record: Record<string, unknown>,
+  bands: DayPeriodBand[],
+): number | null {
+  const time = recordTime(record);
+  if (!time || time.kind === "all_day") return null;
+  if (time.kind === "periods") {
+    return bands.some((b) => b.period === time.from) ? time.from : null;
+  }
+  const periodTimes = bands
+    .filter((b): b is DayPeriodBand & { startsAt: string; endsAt: string } =>
+      Boolean(b.startsAt && b.endsAt),
+    )
+    .map((b) => ({ period: b.period, startsAt: b.startsAt, endsAt: b.endsAt }));
+  const covered = calendarTimeToPeriods(time, periodTimes);
+  return covered[0] ?? null;
+}
+
+/**
+ * Lane assignment for one day's timed blocks (Issue #44): blocks
+ * that overlap in time may not share a lane, so each block takes
+ * the first lane whose last block has ended by its start — the
+ * prototype's side-by-side placement, and the same greedy rule
+ * as the calendar grid's barLanes, over minutes instead of
+ * dates. Blocks are read in span order (earlier start first, the
+ * longer span first on a tie) so the assignment is stable.
+ * Returns each block's lane index by id, and the lane count.
+ */
+export function timeLanes(blocks: { id: string; start: number; end: number }[]): {
+  laneOf: Map<string, number>;
+  laneCount: number;
+} {
+  const sorted = [...blocks].sort((a, b) =>
+    a.start !== b.start ? a.start - b.start : b.end - a.end,
+  );
+  const laneEnds: number[] = [];
+  const laneOf = new Map<string, number>();
+  for (const block of sorted) {
+    let lane = laneEnds.findIndex((end) => end <= block.start);
+    if (lane < 0) {
+      lane = laneEnds.length;
+      laneEnds.push(block.end);
+    } else {
+      laneEnds[lane] = block.end;
+    }
+    laneOf.set(block.id, lane);
+  }
+  return { laneOf, laneCount: Math.max(1, laneEnds.length) };
 }
 
 /** The text of one day_attribute cell: the day's own attributes. */
