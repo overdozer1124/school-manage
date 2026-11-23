@@ -556,11 +556,13 @@ describe("the schedule screen with a calendar view", () => {
     };
     render(<App api={api} initialAnchor="2026-11-15" />);
     expect(await screen.findByText("2026年11月")).toBeInTheDocument();
-    expect(rangeCalls[0]).toEqual({
-      from: "2026-10-26",
-      to: "2026-12-06",
-      viewId: "view-calendar",
-    });
+    await waitFor(() =>
+      expect(rangeCalls[0]).toEqual({
+        from: "2026-10-26",
+        to: "2026-12-06",
+        viewId: "view-calendar",
+      }),
+    );
     await waitFor(() => expect(document.querySelectorAll(".grid-cell")).toHaveLength(42));
     // Issuing is the rows layouts' for now, as with the year
     // table: no publish button on the grid.
@@ -568,10 +570,12 @@ describe("the schedule screen with a calendar view", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "次へ" }));
     expect(await screen.findByText("2026年12月")).toBeInTheDocument();
-    expect(rangeCalls[rangeCalls.length - 1]).toEqual({
-      from: "2026-11-30",
-      to: "2027-01-03",
-      viewId: "view-calendar",
-    });
+    await waitFor(() =>
+      expect(rangeCalls[rangeCalls.length - 1]).toEqual({
+        from: "2026-11-30",
+        to: "2027-01-03",
+        viewId: "view-calendar",
+      }),
+    );
   });
 });

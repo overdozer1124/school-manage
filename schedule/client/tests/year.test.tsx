@@ -400,7 +400,13 @@ describe("the schedule screen with a year view", () => {
     };
     render(<App api={api} initialAnchor="2026-11-15" />);
     expect(await screen.findByText("2026年度")).toBeInTheDocument();
-    expect(rangeCalls[0]).toEqual({ from: "2026-04-01", to: "2027-03-31", viewId: "view-year" });
+    await waitFor(() =>
+      expect(rangeCalls[0]).toEqual({
+        from: "2026-04-01",
+        to: "2027-03-31",
+        viewId: "view-year",
+      }),
+    );
     await waitFor(() => expect(document.querySelectorAll("tbody tr")).toHaveLength(31));
     // Issuing is the rows layouts' for now: no publish button on
     // the year table.
@@ -408,10 +414,12 @@ describe("the schedule screen with a year view", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "次へ" }));
     expect(await screen.findByText("2027年度")).toBeInTheDocument();
-    expect(rangeCalls[rangeCalls.length - 1]).toEqual({
-      from: "2027-04-01",
-      to: "2028-03-31",
-      viewId: "view-year",
-    });
+    await waitFor(() =>
+      expect(rangeCalls[rangeCalls.length - 1]).toEqual({
+        from: "2027-04-01",
+        to: "2028-03-31",
+        viewId: "view-year",
+      }),
+    );
   });
 });
