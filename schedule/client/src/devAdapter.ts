@@ -112,6 +112,23 @@ const yesNo = (itemKey: string) => [
   { id: `opt-${itemKey}-no`, code: "no", label: "×", sort: 2 },
 ];
 
+/** The club symbols of the junior-high preset
+ *  (schedule/src/definitions/presets.ts clubOptions). */
+const clubOptions = (itemKey: string) => [
+  { id: `opt-${itemKey}-practice`, code: "practice", label: "練", sort: 1 },
+  { id: `opt-${itemKey}-off`, code: "off", label: "休", sort: 2 },
+  { id: `opt-${itemKey}-tournament`, code: "tournament", label: "大", sort: 3 },
+  { id: `opt-${itemKey}-morning`, code: "morning", label: "前", sort: 4 },
+  { id: `opt-${itemKey}-afternoon`, code: "afternoon", label: "後", sort: 5 },
+  { id: `opt-${itemKey}-meeting`, code: "meeting", label: "ミ", sort: 6 },
+];
+
+const CLUB_TARGETS = [
+  { id: "tgt-club-baseball", targetGroupId: "tg-club", code: null, name: "野球部", sort: 1 },
+  { id: "tgt-club-soccer", targetGroupId: "tg-club", code: null, name: "サッカー部", sort: 2 },
+  { id: "tgt-club-brass", targetGroupId: "tg-club", code: null, name: "吹奏楽部", sort: 3 },
+];
+
 export const DEV_BOOTSTRAP: BootstrapData = {
   school: { id: "dev-school", name: "開発用小学校" },
   userId: "dev-user",
@@ -150,6 +167,15 @@ export const DEV_BOOTSTRAP: BootstrapData = {
     item("item-deadline", "deadline", "〆切", "event_list", 8, {
       defaultVisibility: "staff_only",
     }),
+    // The junior-high preset's per-club item (Issue #45): the
+    // dev school runs a club programme alongside the bus
+    // preset, so the transposed club table has its axis and
+    // item from the start, as the other layouts' views do.
+    item("item-club-activity", "club_activity", "部活動（部別）", "symbol", 10, {
+      targetGroupId: "tg-club",
+      defaultVisibility: "staff_only",
+      options: clubOptions("club-activity"),
+    }),
   ],
   targetGroups: [
     {
@@ -164,6 +190,13 @@ export const DEV_BOOTSTRAP: BootstrapData = {
         name: `${["①", "②", "③", "④"][n - 1]}便`,
         sort: n,
       })),
+    },
+    {
+      id: "tg-club",
+      key: "club",
+      name: "部活動",
+      sort: 2,
+      targets: CLUB_TARGETS,
     },
   ],
   // The shipped defaults of schedule/src/events/templates.ts.
@@ -436,6 +469,26 @@ DEV_BOOTSTRAP.views = [
       col("view-timeline-period-events", "view-timeline-period", "event_category", 1),
       col("view-timeline-period-lunch", "view-timeline-period", "daily_item", 2, {
         itemDefinitionId: "item-lunch",
+      }),
+    ],
+  },
+  {
+    // The transposed table (Issue #45; DESIGN schedule 5.2
+    // scenario 5): rows are the clubs, columns the month's
+    // days, cells each club's 部活動（部別） value. The scope
+    // is the month, as the club tables are kept.
+    id: "view-club-staff",
+    name: "部活動表",
+    layout: "transposed",
+    layoutParams: null,
+    audience: "staff",
+    periodScope: "month",
+    printSettings: null,
+    isArchived: false,
+    columns: [
+      col("view-club-staff-club", "view-club-staff", "daily_item", 1, {
+        itemDefinitionId: "item-club-activity",
+        targetGroupId: "tg-club",
       }),
     ],
   },
@@ -1091,6 +1144,46 @@ export function createDevApi(): ScheduleApi {
         value({ date, itemDefinitionId: "item-bus", targetId: "tgt-bus-2", valueTime: "15:30" }),
         value({ date, itemDefinitionId: "item-cleaning", valueOptionId: "opt-cleaning-yes" }),
       );
+      // Club activities (Issue #45): a fixed weekly pattern per
+      // club, so the transposed table's rows read differently —
+      // baseball practises Mon/Wed/Fri, soccer starts Monday
+      // mornings only, the brass band meets on Fridays.
+      const clubPlan: Record<string, Record<string, string>> = {
+        "tgt-club-baseball": {
+          mon: "practice",
+          tue: "off",
+          wed: "practice",
+          thu: "off",
+          fri: "practice",
+        },
+        "tgt-club-soccer": {
+          mon: "morning",
+          tue: "practice",
+          wed: "off",
+          thu: "practice",
+          fri: "off",
+        },
+        "tgt-club-brass": {
+          mon: "practice",
+          tue: "practice",
+          wed: "practice",
+          thu: "practice",
+          fri: "meeting",
+        },
+      };
+      for (const [targetId, byWeekday] of Object.entries(clubPlan)) {
+        const code = byWeekday[weekday];
+        if (code) {
+          dailyValues.push(
+            value({
+              date,
+              itemDefinitionId: "item-club-activity",
+              targetId,
+              valueOptionId: `opt-club-activity-${code}`,
+            }),
+          );
+        }
+      }
     }
     const assignment = ensureAssignment(date);
     return {
@@ -1662,7 +1755,10 @@ export function createDevApi(): ScheduleApi {
       // preset, so — as on the real store, which skips keys the
       // school already has — the elementary presets change
       // nothing here. The junior-high preset adds its signature
-      // club item and axis when they are missing.
+      // club items and axis when they are missing; the axis
+      // ships without targets, as the server's preset ships it
+      // (schedule/src/definitions/presets.ts) — the school adds
+      // its own clubs as targets.
       if (input.preset === "junior_high") {
         if (!boot.targetGroups.some((g) => g.key === "club")) {
           boot.targetGroups.push({
@@ -1670,40 +1766,25 @@ export function createDevApi(): ScheduleApi {
             key: "club",
             name: "部活動",
             sort: 2,
-            targets: [
-              {
-                id: "tgt-club-baseball",
-                targetGroupId: "tg-club",
-                code: null,
-                name: "野球部",
-                sort: 1,
-              },
-              {
-                id: "tgt-club-soccer",
-                targetGroupId: "tg-club",
-                code: null,
-                name: "サッカー部",
-                sort: 2,
-              },
-              {
-                id: "tgt-club-brass",
-                targetGroupId: "tg-club",
-                code: null,
-                name: "吹奏楽部",
-                sort: 3,
-              },
-            ],
+            targets: [],
           });
         }
+        // The preset's two club items, as the server's preset
+        // ships them: the whole-school 部活動 and the per-club
+        // 部活動（部別）whose axis the transposed table rows on.
         if (!boot.itemDefinitions.some((i) => i.key === "club_day")) {
           boot.itemDefinitions.push(
             item("item-club-day", "club_day", "部活動", "symbol", 9, {
+              options: clubOptions("club-day"),
+            }),
+          );
+        }
+        if (!boot.itemDefinitions.some((i) => i.key === "club_activity")) {
+          boot.itemDefinitions.push(
+            item("item-club-activity", "club_activity", "部活動（部別）", "symbol", 10, {
               targetGroupId: "tg-club",
-              defaultVisibility: "student",
-              options: [
-                { id: "opt-club-yes", code: "yes", label: "○", sort: 1 },
-                { id: "opt-club-no", code: "no", label: "×", sort: 2 },
-              ],
+              defaultVisibility: "staff_only",
+              options: clubOptions("club-activity"),
             }),
           );
         }
