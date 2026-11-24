@@ -88,6 +88,9 @@ export interface ScheduleAppDeps {
 const ACTION_NAMES = [
   "getBootstrap",
   "getRange",
+  // Issue #47: the derived summary (school days and the
+  // aggregatable items' day counts, per month and per target).
+  "getSummary",
   // Issue #35: the cell editors' writes. Events and absences go
   // through the platform relay (Issue #29); daily values are
   // schedule's own writes (Issue #28).

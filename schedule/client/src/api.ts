@@ -21,6 +21,7 @@ import type {
   PublicViewTokenData,
   RangeData,
   RotationPlanCellData,
+  SummaryData,
   TargetGroupData,
   TargetRefData,
   ViewDefinitionData,
@@ -81,6 +82,10 @@ export interface DutyChangeProposal {
 export interface ScheduleApi {
   getBootstrap(): Promise<BootstrapData>;
   getRange(input: { from: string; to: string; viewId: string }): Promise<RangeData>;
+  // Issue #47: the derived summary (school days and the
+  // aggregatable items' day counts) of one view over one
+  // period — view.read's on the server, like getRange.
+  getSummary(input: { from: string; to: string; viewId: string }): Promise<SummaryData>;
   // Issue #35: the cell editors' writes. Events and absences are
   // relayed to the platform, which judges them; daily values are
   // schedule's own writes.
@@ -304,6 +309,7 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
   return {
     getBootstrap: () => call<BootstrapData>("getBootstrap", {}),
     getRange: (input) => call<RangeData>("getRange", input),
+    getSummary: (input) => call<SummaryData>("getSummary", input),
     createEvent: (input) => call<RelaySaveResult>("createEvent", input),
     updateEvent: (input) => call<RelaySaveResult>("updateEvent", input),
     deleteEvent: (input) => call<{ deleted: true }>("deleteEvent", input),

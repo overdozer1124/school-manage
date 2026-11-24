@@ -3,9 +3,11 @@ import {
   audienceItems,
   datesInRange,
   isVisibleTo,
+  summarizeRange,
   viewAudienceRank,
   weekdayOf,
   type Audience,
+  type DayType,
   type Visibility,
 } from "@school-manage/calendar-types";
 import {
@@ -49,6 +51,7 @@ import type {
   RangeData,
   RangeDayData,
   SchoolSettingsData,
+  SummaryData,
   ViewDefinitionData,
   ViewMonthNoteData,
 } from "./types";
@@ -165,9 +168,12 @@ export const DEV_BOOTSTRAP: BootstrapData = {
     // expects.
     item("item-lunch", "lunch", "給食", "symbol", 2, {
       defaultVisibility: "student",
+      // Aggregatable, as in the shipped preset: the ○ counts as
+      // a lunch day, the × does not (Issue #47's summary).
+      isAggregatable: true,
       options: [
-        { id: "opt-lunch-yes", code: "yes", label: "○", sort: 1 },
-        { id: "opt-lunch-no", code: "no", label: "×", sort: 2 },
+        { id: "opt-lunch-yes", code: "yes", label: "○", sort: 1, countsAs: { lunch_day: true } },
+        { id: "opt-lunch-no", code: "no", label: "×", sort: 2, countsAs: { lunch_day: false } },
       ],
     }),
     item("item-dismissal", "dismissal", "下校時刻", "time", 3, {
@@ -1204,13 +1210,31 @@ export function createDevApi(): ScheduleApi {
     const isWeekend = weekday === "sat" || weekday === "sun";
     const classDay = !isWeekend && !holiday;
     const dailyValues: DailyValueData[] = [];
-    dailyValues.push(
-      value({
-        date,
-        itemDefinitionId: "item-lunch",
-        valueOptionId: classDay ? "opt-lunch-yes" : "opt-lunch-no",
-      }),
-    );
+    // Lunch: one unsplit value on most days. On 19–20 November
+    // the sixth years are away on their school trip, so lunch
+    // is recorded per grade instead — the other grades eat, the
+    // sixth years do not — and the month's summary (Issue #47)
+    // shows the per-grade difference.
+    if (date === "2026-11-19" || date === "2026-11-20") {
+      for (const grade of GRADES) {
+        dailyValues.push(
+          value({
+            date,
+            itemDefinitionId: "item-lunch",
+            targetRef: { axis: "grade", id: grade.id },
+            valueOptionId: grade.id === "grade-6" ? "opt-lunch-no" : "opt-lunch-yes",
+          }),
+        );
+      }
+    } else {
+      dailyValues.push(
+        value({
+          date,
+          itemDefinitionId: "item-lunch",
+          valueOptionId: classDay ? "opt-lunch-yes" : "opt-lunch-no",
+        }),
+      );
+    }
     if (classDay) {
       // Dismissal: Mon/Wed/Fri split by grade band, Tue/Thu one time
       // for everyone — the two grouping shapes of DESIGN 4.8.2.
@@ -1473,12 +1497,90 @@ export function createDevApi(): ScheduleApi {
     } satisfies RangeData;
   };
 
+  // The summary (Issue #47), derived exactly as the server
+  // derives it (schedule/src/summary/actions.ts): the view's
+  // aggregatable daily-item columns, the days' types from the
+  // fixture's day records, each value's counts read off its
+  // option's counts_as condition, and the pure summarizeRange
+  // over all of it — so the dev screens show the same numbers
+  // the real read would.
+  const devSummary = async (input: {
+    from: string;
+    to: string;
+    viewId: string;
+  }): Promise<SummaryData> => {
+    const view = boot.views.find((v) => v.id === input.viewId);
+    if (!view) {
+      throw new Error(`view definition not found: ${input.viewId}`);
+    }
+    const itemById = new Map(boot.itemDefinitions.map((i) => [i.id, i]));
+    const items: ItemDefinitionData[] = [];
+    const seenItemIds = new Set<string>();
+    for (const column of view.columns) {
+      if (column.sourceKind !== "daily_item" || !column.itemDefinitionId) continue;
+      if (seenItemIds.has(column.itemDefinitionId)) continue;
+      const item = itemById.get(column.itemDefinitionId);
+      if (!item || item.isActive === false || !item.isAggregatable) continue;
+      seenItemIds.add(item.id);
+      items.push(item);
+    }
+    const countsByOptionId = new Map<string, boolean>();
+    for (const item of items) {
+      for (const option of item.options) {
+        const countsAs = option.countsAs;
+        countsByOptionId.set(
+          option.id,
+          countsAs === true ||
+            (countsAs !== null &&
+              typeof countsAs === "object" &&
+              Object.values(countsAs).some((v) => v === true)),
+        );
+      }
+    }
+    const itemIds = new Set(items.map((i) => i.id));
+    const dates = datesInRange(input.from, input.to);
+    const days = dates.map((date) => ({
+      date,
+      dayType: devDay(date).day["dayType"] as DayType,
+    }));
+    const values = dates.flatMap((date) =>
+      (state.daily.get(date) ?? devDay(date).dailyValues)
+        .filter((v) => itemIds.has(v.itemDefinitionId))
+        .map((v) => ({
+          date,
+          itemId: v.itemDefinitionId,
+          targetId: v.targetRef
+            ? `${v.targetRef.axis}:${v.targetRef.id}`
+            : v.targetId
+              ? `app:${v.targetId}`
+              : null,
+          counts: v.valueOptionId !== null && (countsByOptionId.get(v.valueOptionId) ?? false),
+        })),
+    );
+    const targets = [
+      ...GRADES.map((g) => ({ targetId: `grade:${g.id}`, name: g.name })),
+      ...boot.targetGroups.flatMap((group) =>
+        group.targets.map((t) => ({ targetId: `app:${t.id}`, name: t.name })),
+      ),
+    ];
+    const result = summarizeRange({
+      days,
+      items: items.map((item) => ({ itemId: item.id, name: item.name })),
+      values,
+      targets,
+    });
+    return { from: input.from, to: input.to, viewId: view.id, ...result };
+  };
+
   return {
     async getBootstrap() {
       return bootstrapNow();
     },
     async getRange(input) {
       return devRange(input);
+    },
+    async getSummary(input) {
+      return devSummary(input);
     },
     async createEvent(input): Promise<RelaySaveResult> {
       const record: Record<string, unknown> = { ...input.event, revision: 1 };

@@ -181,6 +181,9 @@ function makeFakeApi(bootstrap: BootstrapData) {
   };
   const api: ScheduleApi = {
     getBootstrap: async () => bootstrap,
+    getSummary: async (): Promise<never> => {
+      throw new Error("not used");
+    },
     getRange: async (input): Promise<RangeData> => {
       const days: RangeDayData[] = datesInRange(input.from, input.to).map((date) => ({
         date,

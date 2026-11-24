@@ -9,6 +9,7 @@ import { createPublicationActions } from "./publications/actions.js";
 import { createPublicActions, createPublicTokenAdminActions } from "./publicViews/actions.js";
 import type { PublicPlatformClient } from "./publicViews/publicPlatform.js";
 import { createRangeActions } from "./range/actions.js";
+import { createSummaryActions } from "./summary/actions.js";
 import { createSubdivisionRelayActions } from "./subdivisions/actions.js";
 import { createViewActions } from "./views/actions.js";
 
@@ -36,6 +37,10 @@ export function createScheduleActions(db: Db, platformClient: PlatformApiClient,
   const dutyPlatform = createHttpDutyPlatformSource(platformClient, cookie);
   return {
     ...createRangeActions(db, platformClient, dutyPlatform),
+    // Issue #47: the derived counts (授業日数・給食日数) a month
+    // table foots itself with — read from the same platform
+    // calendar and this database's daily values, stored nowhere.
+    ...createSummaryActions(db, platformClient),
     ...createDutyActions(db, dutyPlatform),
     // Issue #35: the cell editors' writes — the event relay (the
     // platform judges; Issue #29) and schedule's own daily values
