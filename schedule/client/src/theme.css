@@ -201,6 +201,10 @@ body {
   white-space: nowrap;
 }
 
+.month-notes-edit-button {
+  align-self: flex-start;
+}
+
 .month-notes-edit {
   flex-direction: row;
   flex-wrap: wrap;

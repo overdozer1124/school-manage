@@ -326,6 +326,7 @@ export function App({
       {supported && range && view.layout === "two_column" && (
         <>
           <MonthNotesHeader
+            key={`${range.view.id}:${anchor.slice(0, 7)}`}
             range={range}
             anchor={anchor}
             api={api}

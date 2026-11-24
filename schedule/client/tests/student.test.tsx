@@ -124,6 +124,46 @@ describe("the student view on the staff screen (Issue #46)", () => {
       { month: "2026-11", lifeGoal: "廊下を歩こう", healthGoal: "早寝・早起き・朝ごはん" },
     ]);
   });
+
+  it("closes the goal editor when the month moves, so one month's goals never land in another", async () => {
+    const api = createDevApi();
+    await openStudentView(api);
+
+    fireEvent.click(screen.getByRole("button", { name: "今月の目標を編集" }));
+    expect(await screen.findByLabelText("生活目標")).toHaveValue("あいさつを自分からしよう");
+    expect(screen.getByLabelText("健康目標")).toHaveValue("早寝・早起き・朝ごはん");
+
+    // Move to December with the editor still open: the editor
+    // closes with the month, December stands unset, and there
+    // is no save button left to press November's text into it.
+    fireEvent.click(screen.getByRole("button", { name: "次へ" }));
+    await screen.findByText("2026年12月");
+    expect(screen.queryByLabelText("生活目標")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "保存" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "今月の目標を編集" })).toBeInTheDocument();
+    expect(screen.getAllByText("（未設定）").length).toBeGreaterThan(0);
+
+    // Nothing was written anywhere: December carries no note,
+    // and November keeps its own goals.
+    const december = await api.getRange({
+      from: "2026-12-01",
+      to: "2026-12-31",
+      viewId: "view-month-student",
+    });
+    expect(december.monthNotes).toEqual([]);
+    const november = await api.getRange({
+      from: "2026-11-01",
+      to: "2026-11-30",
+      viewId: "view-month-student",
+    });
+    expect(november.monthNotes).toEqual([
+      {
+        month: "2026-11",
+        lifeGoal: "あいさつを自分からしよう",
+        healthGoal: "早寝・早起き・朝ごはん",
+      },
+    ]);
+  });
 });
 
 // The public screen with a student view: the same two halves

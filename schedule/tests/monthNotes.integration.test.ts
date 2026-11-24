@@ -446,6 +446,29 @@ describe.skipIf(!url)("view month notes (Issue #46)", () => {
     ).rejects.toThrow("view definition not found: view-missing");
   });
 
+  it("refuses a month that is not a month, and a goal past the cap", async () => {
+    // The month is YYYY-MM with a real month in it: 2027-13 is
+    // the right shape and still not a month.
+    await expect(
+      views.setViewMonthNote.run(auth("Admin"), {
+        viewId: "view-student",
+        month: "2027-13",
+        lifeGoal: "かきかた",
+        healthGoal: null,
+      }),
+    ).rejects.toThrow();
+    // The goals head the printed sheet, so they are capped at
+    // 100 characters.
+    await expect(
+      views.setViewMonthNote.run(auth("Admin"), {
+        viewId: "view-student",
+        month: "2027-12",
+        lifeGoal: "あ".repeat(101),
+        healthGoal: null,
+      }),
+    ).rejects.toThrow();
+  });
+
   it("the student view's range holds no duties, absences, staff-only values or names", async () => {
     const before = fake.absenceRequests;
     const result = await range.getRange.run(auth("Editor"), {

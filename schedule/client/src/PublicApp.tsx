@@ -212,7 +212,11 @@ export function PublicApp({ api }: { api: PublicApi }) {
           // 生活目標・健康目標 (read-only here: the header is
           // given no api, so it can only show).
           <>
-            <MonthNotesHeader range={range} anchor={anchor} />
+            <MonthNotesHeader
+              key={`${range.view.id}:${anchor.slice(0, 7)}`}
+              range={range}
+              anchor={anchor}
+            />
             <TwoColumnTable range={range} bootstrap={tableBoot} />
             <UndecidedSection events={undecided} />
           </>

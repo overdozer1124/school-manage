@@ -665,7 +665,7 @@ export const viewMonthNotes = pgTable(
       columns: [t.schoolId, t.viewDefinitionId],
       foreignColumns: [viewDefinitions.schoolId, viewDefinitions.id],
     }).onDelete("cascade"),
-    check("view_month_notes_month_check", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
+    check("view_month_notes_month_check", sql`${t.month} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
   ],
 );
 

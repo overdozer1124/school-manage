@@ -5,7 +5,7 @@ CREATE TABLE "view_month_notes" (
 	"life_goal" text,
 	"health_goal" text,
 	CONSTRAINT "view_month_notes_school_id_view_definition_id_month_pk" PRIMARY KEY("school_id","view_definition_id","month"),
-	CONSTRAINT "view_month_notes_month_check" CHECK ("view_month_notes"."month" ~ '^[0-9]{4}-[0-9]{2}$')
+	CONSTRAINT "view_month_notes_month_check" CHECK ("view_month_notes"."month" ~ '^[0-9]{4}-(0[1-9]|1[0-2])$')
 );
 --> statement-breakpoint
 ALTER TABLE "view_definitions" DROP CONSTRAINT "view_definitions_layout_check";--> statement-breakpoint

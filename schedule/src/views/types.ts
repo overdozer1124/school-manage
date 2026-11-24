@@ -76,10 +76,13 @@ export type SetViewArchivedInput = z.infer<typeof setViewArchivedInputSchema>;
  * One goal of a month note (Issue #46): the text as written, or
  * null for "not set". An empty (or whitespace-only) string is
  * the form's way of clearing a goal, so it is read as null —
- * the stored note never carries an empty goal.
+ * the stored note never carries an empty goal. The text is
+ * capped at 100 characters: the goals head the printed sheet,
+ * so they stay a headline, not a paragraph.
  */
 const monthNoteGoalSchema = z
   .string()
+  .max(100)
   .nullable()
   .transform((value) => {
     if (value === null) return null;
@@ -92,7 +95,7 @@ const monthNoteGoalSchema = z
  *  table's 生活目標・健康目標 (DESIGN schedule 7). */
 export const setViewMonthNoteInputSchema = z.object({
   viewId: nonEmptyString,
-  month: z.string().regex(/^\d{4}-\d{2}$/, "month must be YYYY-MM"),
+  month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "month must be YYYY-MM"),
   lifeGoal: monthNoteGoalSchema,
   healthGoal: monthNoteGoalSchema,
 });

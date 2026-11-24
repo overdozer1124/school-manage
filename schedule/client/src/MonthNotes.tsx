@@ -77,6 +77,7 @@ export function MonthNotesHeader({
           <input
             aria-label="生活目標"
             value={lifeGoal}
+            maxLength={100}
             onChange={(e) => setLifeGoal(e.target.value)}
           />
         </label>
@@ -85,6 +86,7 @@ export function MonthNotesHeader({
           <input
             aria-label="健康目標"
             value={healthGoal}
+            maxLength={100}
             onChange={(e) => setHealthGoal(e.target.value)}
           />
         </label>
