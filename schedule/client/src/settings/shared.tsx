@@ -65,6 +65,7 @@ export const LAYOUT_LABELS: Record<string, string> = {
   calendar_grid: "カレンダー格子",
   week_timeline: "週タイムライン",
   transposed: "転置表",
+  two_column: "2段組み（生徒用）",
 };
 export const AUDIENCE_LABELS: Record<string, string> = {
   staff: "職員",

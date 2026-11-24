@@ -228,7 +228,7 @@ function makeRange(view: ViewDefinitionData, fixture: RangeFixture = {}): RangeD
       : [],
     dutyAssignments: [],
   }));
-  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [] };
+  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [], monthNotes: [] };
 }
 
 function cell(date: string): HTMLElement {

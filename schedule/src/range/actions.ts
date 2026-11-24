@@ -13,6 +13,7 @@ import {
 } from "@school-manage/calendar-types";
 import * as definitionsStore from "../db/definitions.js";
 import * as dailyValuesStore from "../db/dailyValues.js";
+import * as monthNotesStore from "../db/monthNotes.js";
 import * as dutiesStore from "../db/duties.js";
 import * as eventValuesStore from "../db/eventValues.js";
 import * as templatesStore from "../db/kindTemplates.js";
@@ -143,6 +144,7 @@ export async function computeRange(
     dailyValues,
     assignments,
     conflicts,
+    monthNotes,
   ] = await Promise.all([
     definitionsStore.getDefinitionSet(db, schoolId),
     platformItems(platformClient, `${DAYS_PATH}?${range}`, input.cookie),
@@ -173,6 +175,18 @@ export async function computeRange(
           to: input.to,
         })
       : [],
+    // The view's monthly accompanying notes (Issue #46), for
+    // the months this range touches: the student table's header
+    // is drawn from the same bundle as its days. The notes are
+    // written to be read by the view's audience, so every view
+    // reads its own — no audience condition applies.
+    monthNotesStore.getViewMonthNotes(
+      db,
+      schoolId,
+      view.id,
+      input.from.slice(0, 7),
+      input.to.slice(0, 7),
+    ),
   ]);
 
   // The view's own filter (Issue #32): which columns the
@@ -310,6 +324,7 @@ export async function computeRange(
     undecided,
     eventValues,
     conflicts,
+    monthNotes,
   };
 }
 

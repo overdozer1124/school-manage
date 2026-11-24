@@ -1,4 +1,13 @@
-import { datesInRange, weekdayOf } from "@school-manage/calendar-types";
+import {
+  audienceColumns,
+  audienceItems,
+  datesInRange,
+  isVisibleTo,
+  viewAudienceRank,
+  weekdayOf,
+  type Audience,
+  type Visibility,
+} from "@school-manage/calendar-types";
 import {
   ApiError,
   UnauthorizedError,
@@ -41,6 +50,7 @@ import type {
   RangeDayData,
   SchoolSettingsData,
   ViewDefinitionData,
+  ViewMonthNoteData,
 } from "./types";
 
 /**
@@ -147,7 +157,14 @@ export const DEV_BOOTSTRAP: BootstrapData = {
   views: [], // filled below (needs the column helper)
   itemDefinitions: [
     item("item-events", "events", "行事", "event_list", 1),
+    // Lunch and dismissal reach students in this school: the
+    // shipped preset defaults an item's reach to guardians, and
+    // a school that turns the student table on (Issue #46)
+    // widens the items it shows there to student reach — the
+    // fixture school has done so, as its student view below
+    // expects.
     item("item-lunch", "lunch", "給食", "symbol", 2, {
+      defaultVisibility: "student",
       options: [
         { id: "opt-lunch-yes", code: "yes", label: "○", sort: 1 },
         { id: "opt-lunch-no", code: "no", label: "×", sort: 2 },
@@ -155,6 +172,7 @@ export const DEV_BOOTSTRAP: BootstrapData = {
     }),
     item("item-dismissal", "dismissal", "下校時刻", "time", 3, {
       targetPlatformAxis: "grade",
+      defaultVisibility: "student",
     }),
     item("item-bus", "bus", "スクールバス", "time", 4, { targetGroupId: "tg-bus-route" }),
     item("item-cleaning", "cleaning", "清掃", "symbol", 5, {
@@ -492,6 +510,32 @@ DEV_BOOTSTRAP.views = [
       }),
     ],
   },
+  {
+    // The student preset (Issue #46; DESIGN schedule 7): the
+    // two-column layout over one month, its columns the
+    // whitelist a student may read — events, lunch and the
+    // per-grade dismissal times. Nothing staff-only stands
+    // here: no 職員動静， no 〆切, no duty column, and the
+    // range read for a non-staff audience carries no absences
+    // or names in the first place.
+    id: "view-month-student",
+    name: "生徒用月表",
+    layout: "two_column",
+    layoutParams: null,
+    audience: "student",
+    periodScope: "month",
+    printSettings: null,
+    isArchived: false,
+    columns: [
+      col("view-month-student-events", "view-month-student", "event_category", 1),
+      col("view-month-student-lunch", "view-month-student", "daily_item", 2, {
+        itemDefinitionId: "item-lunch",
+      }),
+      col("view-month-student-dismissal", "view-month-student", "daily_item", 3, {
+        itemDefinitionId: "item-dismissal",
+      }),
+    ],
+  },
 ];
 
 const HOLIDAYS: Record<string, string> = {
@@ -619,6 +663,7 @@ function fixtureEvent(
   title: string,
   i: number,
   time: unknown = null,
+  visibility: string = "student",
 ): Record<string, unknown> {
   return {
     id: `ev-${date}-${i}`,
@@ -633,7 +678,12 @@ function fixtureEvent(
     locationText: null,
     description: null,
     certainty: "confirmed",
-    visibility: "guardian",
+    // The seeded events are whole-school events, written to
+    // reach students (and so guardians and staff as well): the
+    // student table's 行事 column is filled from them. The
+    // timed fixtures below name their own reach (guardian):
+    // they are the staff timeline's material.
+    visibility,
     targets: [],
     impacts: [],
     assignees: [],
@@ -850,20 +900,36 @@ function buildDevDocument(input: {
   const head = columns
     .map((column) => `<th scope="col">${escHtml(columnLabel(column, bootstrap))}</th>`)
     .join("");
-  const rows = range.days
-    .map((day) => {
-      const mark = dayMark(day, bootstrap.masters.dayPatterns);
-      const cells = columns
-        .map(
-          (column) =>
-            `<td>${cellLines(day, column)
-              .map((line) => `<div>${escHtml(line)}</div>`)
-              .join("")}</td>`,
-        )
-        .join("");
-      return `<tr${mark.closed ? ' class="closed"' : ""}><th scope="row" class="date-cell kind-${mark.kind}"><span class="date-num">${Number(day.date.slice(8, 10))}</span> <span class="date-weekday">（${weekdayLabel(day.date)}）</span>${mark.sub ? `<span class="date-sub">${escHtml(mark.sub)}</span>` : ""}</th>${cells}</tr>`;
-    })
-    .join("\n");
+  const rowFor = (day: RangeDayData): string => {
+    const mark = dayMark(day, bootstrap.masters.dayPatterns);
+    const cells = columns
+      .map(
+        (column) =>
+          `<td>${cellLines(day, column)
+            .map((line) => `<div>${escHtml(line)}</div>`)
+            .join("")}</td>`,
+      )
+      .join("");
+    return `<tr${mark.closed ? ' class="closed"' : ""}><th scope="row" class="date-cell kind-${mark.kind}"><span class="date-num">${Number(day.date.slice(8, 10))}</span> <span class="date-weekday">（${weekdayLabel(day.date)}）</span>${mark.sub ? `<span class="date-sub">${escHtml(mark.sub)}</span>` : ""}</th>${cells}</tr>`;
+  };
+  const tableFor = (days: RangeDayData[]): string => `<table>
+<thead><tr><th scope="col" class="date-cell">日</th>${head}</tr></thead>
+<tbody>
+${days.map(rowFor).join("\n")}
+</tbody>
+</table>`;
+  // The two-column document (Issue #46), the server renderer's
+  // shape: the month in two half tables side by side, headed by
+  // the month's notes when the view carries them.
+  const note = range.monthNotes.find((n) => n.month === input.targetMonth) ?? null;
+  const monthNotesHtml =
+    view.layout === "two_column" && note && (note.lifeGoal !== null || note.healthGoal !== null)
+      ? `<section class="month-notes">${note.lifeGoal !== null ? `<div><span class="goal-label">生活目標</span> ${escHtml(note.lifeGoal)}</div>` : ""}${note.healthGoal !== null ? `<div><span class="goal-label">健康目標</span> ${escHtml(note.healthGoal)}</div>` : ""}</section>`
+      : "";
+  const tableSection =
+    view.layout === "two_column"
+      ? `<div class="two-column">${tableFor(range.days.slice(0, Math.ceil(range.days.length / 2)))}${tableFor(range.days.slice(Math.ceil(range.days.length / 2)))}</div>`
+      : tableFor(range.days);
   const undecided = range.undecided.filter(
     (group) => group.month === input.targetMonth || group.month === null,
   );
@@ -905,6 +971,10 @@ tr.closed { background: #f3f4f6; }
 section.undecided { margin-top: 10px; }
 section.undecided h2 { font-size: 1.1em; margin: 0 0 4px; }
 section.undecided ul { margin: 0; padding-left: 18px; }
+.two-column { display: flex; gap: 12px; align-items: flex-start; }
+.two-column table { flex: 1; }
+section.month-notes { border: 1px solid #999; padding: 4px 8px; margin-bottom: 6px; }
+section.month-notes .goal-label { font-weight: 600; margin-right: 8px; }
 </style>
 </head>
 <body>
@@ -912,12 +982,8 @@ section.undecided ul { margin: 0; padding-left: 18px; }
 <h1>${escHtml(bootstrap.school.name ?? "行事予定")} ${escHtml(monthText)} 行事予定表</h1>
 <div class="meta"><div>${escHtml(view.name)}</div><div>版：${escHtml(input.versionLabel)}</div><div>発行：${escHtml(publishedText)}</div></div>
 </header>
-<table>
-<thead><tr><th scope="col" class="date-cell">日</th>${head}</tr></thead>
-<tbody>
-${rows}
-</tbody>
-</table>
+${monthNotesHtml}
+${tableSection}
 ${undecidedHtml}
 </body>
 </html>
@@ -1034,6 +1100,27 @@ export function createDevApi(): ScheduleApi {
   const publications: PublicationData[] = [];
   const publicationDocuments = new Map<string, string>();
   let publicationSeq = 0;
+
+  // The views' month notes of this adapter instance (Issue
+  // #46): keyed by view and month, seeded with the student
+  // preset's November note, and rewritten by setViewMonthNote —
+  // getRange reads back what was written, as on the server.
+  const monthNotes = new Map<string, ViewMonthNoteData>();
+  monthNotes.set("view-month-student|2026-11", {
+    month: "2026-11",
+    lifeGoal: "あいさつを自分からしよう",
+    healthGoal: "早寝・早起き・朝ごはん",
+  });
+  const monthNotesFor = (viewId: string, from: string, to: string): ViewMonthNoteData[] => {
+    const fromMonth = from.slice(0, 7);
+    const toMonth = to.slice(0, 7);
+    const found: ViewMonthNoteData[] = [];
+    for (const [key, note] of monthNotes) {
+      if (!key.startsWith(`${viewId}|`)) continue;
+      if (fromMonth <= note.month && note.month <= toMonth) found.push({ ...note });
+    }
+    return found.sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
+  };
 
   // The fixture world's one duty and its stop switch (Issue
   // #86): while 日番 is stopped, no new rotation assignments
@@ -1215,7 +1302,7 @@ export function createDevApi(): ScheduleApi {
       ...Object.entries(EVENTS).flatMap(([date, titles]) =>
         titles.map((title, i) => fixtureEvent(date, title, i)),
       ),
-      ...TIMED_EVENTS.map((e, i) => fixtureEvent(e.date, e.title, 100 + i, e.time)),
+      ...TIMED_EVENTS.map((e, i) => fixtureEvent(e.date, e.title, 100 + i, e.time, "guardian")),
       ...fixtureProvisionals(),
     ],
     absences: fixtureAbsences(),
@@ -1279,65 +1366,110 @@ export function createDevApi(): ScheduleApi {
       boot.views.find((v) => v.id === input.viewId) ?? (boot.views[0] as ViewDefinitionData);
     const dates = datesInRange(input.from, input.to);
     valueSeq = 0;
+    const fullDays = dates.map((date) => {
+      const base = devDay(date);
+      return {
+        ...base,
+        events: state.events.filter(
+          (e) =>
+            typeof e["startsOn"] === "string" &&
+            typeof e["endsOn"] === "string" &&
+            (e["startsOn"] as string) <= date &&
+            date <= (e["endsOn"] as string),
+        ),
+        absences: state.absences.filter(
+          (a) =>
+            typeof a["fromDate"] === "string" &&
+            typeof a["toDate"] === "string" &&
+            (a["fromDate"] as string) <= date &&
+            date <= (a["toDate"] as string),
+        ),
+        dailyValues: state.daily.get(date) ?? base.dailyValues,
+      };
+    });
+    const fullUndecided: RangeData["undecided"] = [
+      {
+        month: "2026-11",
+        events: [
+          {
+            id: "ev-undecided-month",
+            kind: "event",
+            title: "作品展",
+            datePrecision: "month",
+            startsOn: "2026-11-15",
+            endsOn: "2026-11-15",
+            certainty: "tentative",
+            visibility: "guardian",
+          },
+        ],
+      },
+      {
+        month: null,
+        events: [
+          {
+            id: "ev-undecided-year",
+            kind: "event",
+            title: "研究発表会",
+            datePrecision: "undecided",
+            startsOn: "2026-04-01",
+            endsOn: "2026-04-01",
+            certainty: "tentative",
+            visibility: "guardian",
+          },
+        ],
+      },
+    ];
+    // A view's range is shaped the way the server shapes it
+    // (schedule/src/range/actions.ts, over the platform's own
+    // event filter): the columns and daily items are the
+    // audience whitelist of @school-manage/calendar-types
+    // (audienceColumns / audienceItems — duty columns and
+    // staff-only items never reach a non-staff audience, and
+    // an item reaches only as far as its defaultVisibility
+    // says), the events are the platform filter's (isVisibleTo,
+    // shaped nameless for a non-staff audience), and absences,
+    // duty assignments and conflicts are staff dynamics that
+    // never leave the staff views. The student table (Issue
+    // #46) reads exactly this bundle. For a staff view every
+    // one of these is the identity, as on the server.
+    const staffView = view.audience === "staff";
+    const rank = viewAudienceRank(view.audience as Audience);
+    const itemSlices = boot.itemDefinitions.map((i) => ({
+      id: i.id,
+      defaultVisibility: i.defaultVisibility as Visibility,
+    }));
+    const keptColumns = audienceColumns(view.columns, itemSlices, rank);
+    const keptItemIds = new Set(audienceItems(itemSlices, keptColumns, rank).map((i) => i.id));
+    const publicEvent = (e: Record<string, unknown>): Record<string, unknown> => {
+      const shaped: Record<string, unknown> = { ...e, assignees: [] };
+      delete shaped["createdBy"];
+      delete shaped["updatedBy"];
+      return shaped;
+    };
+    const shapeEvents = (events: Record<string, unknown>[]): Record<string, unknown>[] =>
+      events
+        .filter((e) => isVisibleTo(e["visibility"] as Visibility, view.audience as Audience))
+        .map((e) => (staffView ? e : publicEvent(e)));
+    const days = fullDays.map((day) => ({
+      ...day,
+      events: shapeEvents(day.events),
+      absences: staffView ? day.absences : [],
+      dutyAssignments: staffView ? day.dutyAssignments : [],
+      dailyValues: day.dailyValues.filter((v) => keptItemIds.has(v.itemDefinitionId)),
+    }));
+    const undecided = fullUndecided.map((group) => ({
+      ...group,
+      events: shapeEvents(group.events),
+    }));
     return {
-      view: structuredClone(view),
+      view: structuredClone({ ...view, columns: keptColumns }),
       from: input.from,
       to: input.to,
-      days: dates.map((date) => {
-        const base = devDay(date);
-        return {
-          ...base,
-          events: state.events.filter(
-            (e) =>
-              typeof e["startsOn"] === "string" &&
-              typeof e["endsOn"] === "string" &&
-              (e["startsOn"] as string) <= date &&
-              date <= (e["endsOn"] as string),
-          ),
-          absences: state.absences.filter(
-            (a) =>
-              typeof a["fromDate"] === "string" &&
-              typeof a["toDate"] === "string" &&
-              (a["fromDate"] as string) <= date &&
-              date <= (a["toDate"] as string),
-          ),
-          dailyValues: state.daily.get(date) ?? base.dailyValues,
-        };
-      }),
-      undecided: [
-        {
-          month: "2026-11",
-          events: [
-            {
-              id: "ev-undecided-month",
-              kind: "event",
-              title: "作品展",
-              datePrecision: "month",
-              startsOn: "2026-11-15",
-              endsOn: "2026-11-15",
-              certainty: "tentative",
-              visibility: "guardian",
-            },
-          ],
-        },
-        {
-          month: null,
-          events: [
-            {
-              id: "ev-undecided-year",
-              kind: "event",
-              title: "研究発表会",
-              datePrecision: "undecided",
-              startsOn: "2026-04-01",
-              endsOn: "2026-04-01",
-              certainty: "tentative",
-              visibility: "guardian",
-            },
-          ],
-        },
-      ],
+      days,
+      undecided,
       eventValues: [],
-      conflicts: view.audience === "staff" ? deriveConflicts(input.from, input.to) : [],
+      conflicts: staffView ? deriveConflicts(input.from, input.to) : [],
+      monthNotes: monthNotesFor(view.id, input.from, input.to),
     } satisfies RangeData;
   };
 
@@ -1831,6 +1963,26 @@ export function createDevApi(): ScheduleApi {
       if (!view) throw new Error(`view definition not found: ${input.id}`);
       view.isArchived = input.archived;
       return structuredClone(view);
+    },
+
+    // A view's month notes (Issue #46): the write lands in the
+    // adapter's note store, and the next getRange for that view
+    // and month reads it back — the server's contract, with the
+    // same normalisation (a blank goal is no goal).
+    async setViewMonthNote(input) {
+      const view = boot.views.find((v) => v.id === input.viewId);
+      if (!view) throw new Error(`view definition not found: ${input.viewId}`);
+      const goal = (text: string | null): string | null => {
+        const trimmed = text?.trim() ?? "";
+        return trimmed === "" ? null : trimmed;
+      };
+      const note: ViewMonthNoteData = {
+        month: input.month,
+        lifeGoal: goal(input.lifeGoal),
+        healthGoal: goal(input.healthGoal),
+      };
+      monthNotes.set(`${input.viewId}|${input.month}`, note);
+      return structuredClone(note);
     },
 
     async upsertDutyDefinition(input) {

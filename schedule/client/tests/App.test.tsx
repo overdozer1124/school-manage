@@ -65,6 +65,7 @@ describe("schedule screen with the development adapter", () => {
       "職員用タイムライン",
       "職員用タイムライン（時限）",
       "部活動表",
+      "生徒用月表",
     ]);
     expect(select.value).toBe("view-week-staff");
     // The two-week table is what opens.
@@ -123,6 +124,7 @@ describe("401 / 403 handling", () => {
       upsertViewDefinition: fail,
       deleteViewDefinition: fail,
       setViewArchived: fail,
+      setViewMonthNote: fail,
       upsertDutyDefinition: fail,
       deleteDutyDefinition: fail,
       upsertKindTemplate: fail,

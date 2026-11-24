@@ -211,6 +211,7 @@ function makeFakeApi(bootstrap: BootstrapData) {
         undecided: [],
         eventValues: [],
         conflicts: [],
+        monthNotes: [],
       };
     },
     createEvent: async (input) => {
@@ -298,6 +299,7 @@ function makeFakeApi(bootstrap: BootstrapData) {
     upsertViewDefinition: unused,
     deleteViewDefinition: unused,
     setViewArchived: unused,
+    setViewMonthNote: unused,
     upsertDutyDefinition: unused,
     deleteDutyDefinition: unused,
     upsertKindTemplate: unused,

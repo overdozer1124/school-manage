@@ -192,7 +192,7 @@ function makeRange(
     dailyValues: [],
     dutyAssignments: [],
   }));
-  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [] };
+  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [], monthNotes: [] };
 }
 
 const COLS_PER_BLOCK = yearView.columns.length + 1; // date cell + columns

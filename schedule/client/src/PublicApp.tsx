@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, UnauthorizedError, type PublicApi } from "./api";
 import { CalendarGrid } from "./CalendarGrid";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
+import { MonthNotesHeader } from "./MonthNotes";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import { TransposedTable } from "./TransposedTable";
+import { TwoColumnTable } from "./TwoColumnTable";
 import { WeekTimeline } from "./WeekTimeline";
 import { YearTable } from "./YearTable";
 import type { BootstrapData, PublicBootstrapData, RangeData } from "./types";
@@ -201,6 +203,21 @@ export function PublicApp({ api }: { api: PublicApi }) {
           // the table read-only, its rows the axis's targets.
           <>
             <TransposedTable range={range} bootstrap={tableBoot} />
+            <UndecidedSection events={undecided} />
+          </>
+        ) : view.layout === "two_column" ? (
+          // The two-column student table likewise (Issue #46):
+          // the same bundle, no editor — a public student view
+          // is the two halves read-only, headed by the month's
+          // 生活目標・健康目標 (read-only here: the header is
+          // given no api, so it can only show).
+          <>
+            <MonthNotesHeader
+              key={`${range.view.id}:${anchor.slice(0, 7)}`}
+              range={range}
+              anchor={anchor}
+            />
+            <TwoColumnTable range={range} bootstrap={tableBoot} />
             <UndecidedSection events={undecided} />
           </>
         ) : (

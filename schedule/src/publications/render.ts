@@ -28,7 +28,10 @@ import type { RangeDay, RangeResult } from "../range/types.js";
  * has already applied the view's audience filter (a guardian
  * view's bundle holds no staff-only items, no duties and no
  * absences), so a guardian publication is clean by construction,
- * not by a second filter in this module. Two screen decorations
+ * not by a second filter in this module. A two_column view
+ * (Issue #46) renders as its paper form — the month in two
+ * half-month tables side by side, headed by the month's
+ * accompanying notes from the same bundle. Two screen decorations
  * are deliberately not printed: the duty conflict warnings
  * (derived alerts for the people working the table, not part of
  * the issued record) — the （交代） mark stays, because it states
@@ -482,15 +485,48 @@ export function renderPublicationDocument(input: RenderPublicationInput): string
         `<th scope="col"${column.widthHint ? ` style="width:${column.widthHint}px"` : ""}>${esc(columnLabel(column, ctx))}</th>`,
     )
     .join("");
-  const rows = range.days
-    .map((day) => {
-      const mark = dayMark(day, ctx);
-      const cells = columns
-        .map((column) => `<td>${cellHtml(day, column, columns, ctx)}</td>`)
-        .join("");
-      return `<tr${mark.closed ? ' class="closed"' : ""}><th scope="row" class="date-cell kind-${mark.kind}"><span class="date-num">${Number(day.date.slice(8, 10))}</span> <span class="date-weekday">（${weekdayLabel(day.date)}）</span>${mark.sub ? `<span class="date-sub">${esc(mark.sub)}</span>` : ""}</th>${cells}</tr>`;
-    })
-    .join("\n");
+  const tableHtml = (days: RangeDay[]): string => {
+    const rows = days
+      .map((day) => {
+        const mark = dayMark(day, ctx);
+        const cells = columns
+          .map((column) => `<td>${cellHtml(day, column, columns, ctx)}</td>`)
+          .join("");
+        return `<tr${mark.closed ? ' class="closed"' : ""}><th scope="row" class="date-cell kind-${mark.kind}"><span class="date-num">${Number(day.date.slice(8, 10))}</span> <span class="date-weekday">（${weekdayLabel(day.date)}）</span>${mark.sub ? `<span class="date-sub">${esc(mark.sub)}</span>` : ""}</th>${cells}</tr>`;
+      })
+      .join("\n");
+    return `<table>
+<thead><tr><th scope="col" class="date-cell">日</th>${head}</tr></thead>
+<tbody>
+${rows}
+</tbody>
+</table>`;
+  };
+
+  // The two-column layout (Issue #46): the month stands as two
+  // half-month tables side by side — the paper form of the
+  // student table — and the month's accompanying notes （生活
+  // 目標・健康目標） head the document, as they head the screen.
+  // Every other layout keeps the single table it has always had,
+  // and the notes stay a two-column header: they are the student
+  // table's accompanying information.
+  const twoColumn = range.view.layout === "two_column";
+  let monthNotesHtml = "";
+  let tableSection: string;
+  if (twoColumn) {
+    const note = range.monthNotes.find((n) => n.month === input.targetMonth) ?? null;
+    const goals: string[] = [];
+    if (note?.lifeGoal)
+      goals.push(`<div><span class="goal-label">生活目標</span>${esc(note.lifeGoal)}</div>`);
+    if (note?.healthGoal)
+      goals.push(`<div><span class="goal-label">健康目標</span>${esc(note.healthGoal)}</div>`);
+    monthNotesHtml =
+      goals.length > 0 ? `<section class="month-notes">${goals.join("")}</section>` : "";
+    const half = Math.ceil(range.days.length / 2);
+    tableSection = `<div class="two-column">${tableHtml(range.days.slice(0, half))}${tableHtml(range.days.slice(half))}</div>`;
+  } else {
+    tableSection = tableHtml(range.days);
+  }
 
   const undecided = range.undecided.filter(
     (group) => group.month === input.targetMonth || group.month === null,
@@ -523,6 +559,10 @@ header.print-head { display: flex; justify-content: space-between; align-items: 
 header.print-head h1 { font-size: 1.5em; margin: 0; }
 header.print-head .meta { text-align: right; white-space: nowrap; }
 table { border-collapse: collapse; width: 100%; }
+.two-column { display: flex; gap: 12px; align-items: flex-start; }
+.two-column table { flex: 1 1 0; }
+section.month-notes { border: 1px solid #999; padding: 4px 8px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 2px; }
+section.month-notes .goal-label { font-weight: 600; margin-right: 8px; }
 th, td { border: 1px solid #999; padding: 2px 4px; vertical-align: top; text-align: left; }
 thead th { background: #eee; }
 tr.closed { background: #f3f4f6; }
@@ -541,12 +581,8 @@ section.undecided ul { margin: 0; padding-left: 18px; }
 <h1>${esc(schoolName)} ${esc(monthText)} 行事予定表</h1>
 <div class="meta"><div>${esc(input.viewName)}</div><div>版：${esc(input.versionLabel)}</div><div>発行：${esc(publishedText)}</div></div>
 </header>
-<table>
-<thead><tr><th scope="col" class="date-cell">日</th>${head}</tr></thead>
-<tbody>
-${rows}
-</tbody>
-</table>
+${monthNotesHtml}
+${tableSection}
 ${undecidedHtml}
 </body>
 </html>
