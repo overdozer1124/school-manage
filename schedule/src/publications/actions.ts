@@ -195,6 +195,13 @@ export function createPublicationActions(
         patch,
       );
       if (!meta) {
+        // The update's own where clause refuses cancelled
+        // versions, so a cancellation that landed after the
+        // read above surfaces here; tell the two apart.
+        const now = await publicationsStore.getPublication(db, auth.schoolId, input.id);
+        if (now?.cancelledAt) {
+          throw new Error("取り消した版のラベルとメモは編集できません");
+        }
         throw new Error(`publication not found: ${input.id}`);
       }
       return meta;

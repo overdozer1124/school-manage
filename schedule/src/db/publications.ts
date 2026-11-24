@@ -150,9 +150,12 @@ export async function getPreviousPublication(
 /**
  * Corrects a version's label and/or note (Issue #48). Only
  * those two columns are set — the document and the snapshot are
- * not part of the update and cannot change here. Returns the
- * updated meta, or null when the publication is not this
- * school's.
+ * not part of the update and cannot change here. A cancelled
+ * version's record stands as it was left, so the where clause
+ * carries the not-cancelled condition itself: a cancellation
+ * landing between the caller's read and this update makes the
+ * update match nothing. Returns the updated meta, or null when
+ * the publication is not this school's or is already cancelled.
  */
 export async function updatePublicationMeta(
   db: Db,
@@ -166,7 +169,13 @@ export async function updatePublicationMeta(
   const rows = await db
     .update(publications)
     .set(set)
-    .where(and(eq(publications.schoolId, schoolId), eq(publications.id, id)))
+    .where(
+      and(
+        eq(publications.schoolId, schoolId),
+        eq(publications.id, id),
+        isNull(publications.cancelledAt),
+      ),
+    )
     .returning();
   const row = rows[0] as PublicationRow | undefined;
   return row ? toPublicationMeta(row) : null;
