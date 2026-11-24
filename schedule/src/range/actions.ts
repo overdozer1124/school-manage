@@ -61,12 +61,31 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" ? value : null;
 }
 
-async function platformItems(
+export async function platformItems(
   platformClient: PlatformApiClient,
   path: string,
   cookie: string,
 ): Promise<Record<string, unknown>[]> {
   return itemsOf(unwrapPlatformResult(await platformClient.getJson(path, cookie)));
+}
+
+/**
+ * The day type one date counts as, as a code: the platform's
+ * recorded type when a record exists (and names one), a closed
+ * day for a date on the holiday list, and Issue #23's weekday
+ * default otherwise. dayFor below synthesizes a missing day by
+ * this same rule, and getSummary (Issue #47) counts days by it,
+ * so the summary and the table it foots can never disagree
+ * about what a date was.
+ */
+export function dayTypeFor(
+  date: string,
+  recorded: Record<string, unknown> | undefined,
+  onHolidayList: boolean,
+): string {
+  const recordedType = recorded ? stringField(recorded, "dayType") : null;
+  if (recordedType) return recordedType;
+  return onHolidayList ? "closed_day" : defaultDayType(date);
 }
 
 /**
@@ -90,7 +109,7 @@ function dayFor(
   if (recorded) return { ...recorded, source: "recorded" };
   return {
     date,
-    dayType: onHolidayList ? "closed_day" : defaultDayType(date),
+    dayType: dayTypeFor(date, undefined, onHolidayList),
     dayTypeLabel: null,
     dayScheduleId: null,
     weekdaySwap: null,

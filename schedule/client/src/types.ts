@@ -41,6 +41,9 @@ export interface ItemOptionData {
   label: string;
   meaning?: string | null;
   sort: number;
+  /** The option's aggregation condition (DESIGN schedule 4.4),
+   *  as the server sends it; absent on older payloads. */
+  countsAs?: Record<string, unknown> | boolean | null;
 }
 
 export interface ItemDefinitionData {
@@ -53,6 +56,9 @@ export interface ItemDefinitionData {
   granularity: string;
   defaultVisibility: string;
   isActive?: boolean;
+  /** Whether the item's days are counted by the summary
+   *  (Issue #47); absent on older payloads. */
+  isAggregatable?: boolean;
   sort: number;
   options: ItemOptionData[];
 }
@@ -388,6 +394,55 @@ export interface RangeData {
   /** The view's month notes for the months this range covers
    *  (Issue #46): a month nobody wrote notes for is absent. */
   monthNotes: ViewMonthNoteData[];
+}
+
+// ---- summary (Issue #47) ------------------------------------------
+
+/** One day type's day count in a summary period, in the fixed
+ *  code order the server derives. */
+export interface SummaryDayTypeCountData {
+  dayType: string;
+  count: number;
+}
+
+/** One target's distinct counted days for an item; a null
+ *  targetId is the item's unsplit （全体） values. */
+export interface SummaryTargetCountData {
+  targetId: string | null;
+  targetName: string;
+  count: number;
+}
+
+/** One aggregatable item's counts in a period: the distinct
+ *  days any target counted, and the per-target breakdown. */
+export interface SummaryItemCountData {
+  itemId: string;
+  name: string;
+  total: number;
+  byTarget: SummaryTargetCountData[];
+}
+
+/** One period's counts (a month bucket, or the whole range). */
+export interface SummaryPeriodData {
+  schoolDays: number;
+  dayTypeCounts: SummaryDayTypeCountData[];
+  items: SummaryItemCountData[];
+}
+
+/** One month bucket of a summary. */
+export interface SummaryMonthData extends SummaryPeriodData {
+  month: string;
+}
+
+/** getSummary's answer: the derived counts of one view over
+ *  one period — school days and the aggregatable items' days,
+ *  per month and in total. Nothing behind it is stored. */
+export interface SummaryData {
+  from: string;
+  to: string;
+  viewId: string;
+  months: SummaryMonthData[];
+  total: SummaryPeriodData;
 }
 
 // ---- public viewing (Issue #41) -----------------------------------

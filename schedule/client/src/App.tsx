@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   ForbiddenError,
@@ -15,11 +15,12 @@ import { PendingPanel } from "./PendingPanel";
 import { PublishPanel } from "./PublishPanel";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import { SettingsPanel } from "./SettingsPanel";
+import { SummaryFailure, SummarySection, SummaryTable } from "./Summary";
 import { TransposedTable } from "./TransposedTable";
 import { TwoColumnTable } from "./TwoColumnTable";
 import { WeekTimeline } from "./WeekTimeline";
 import { YearTable } from "./YearTable";
-import type { BootstrapData, RangeData } from "./types";
+import type { BootstrapData, RangeData, SummaryData } from "./types";
 
 /**
  * The schedule screen (Issue #34): pick a view, move through its
@@ -51,6 +52,10 @@ export function App({
 }) {
   const [bootstrap, setBootstrap] = useState<BootstrapData | null>(null);
   const [range, setRange] = useState<RangeData | null>(null);
+  // The period's derived summary (Issue #47) and its own error:
+  // a failed summary read dims only the counts, never the table.
+  const [summary, setSummary] = useState<SummaryData | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [viewId, setViewId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<string>(initialAnchor ?? todayText());
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +144,62 @@ export function App({
       })
       .catch((cause: unknown) => {
         if (!cancelled) handleError(cause);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api, bootstrap, view, anchor, reloadTick, handleError]);
+
+  // The summary (Issue #47) is read for the same period as the
+  // range, and re-read with it — a saved cell edit bumps
+  // reloadTick, and the counts are derived, so they follow the
+  // edit. Only the layouts that show it are read: the month
+  // tables foot themselves with it and the year table
+  // tabulates it. Its failure is kept apart from the range's:
+  // the table stays up with a note where the counts would be.
+  // A 401 / 403 still goes through handleError, as every read's
+  // does (the summary is view.read, like the range).
+  //
+  // A change of view or period clears the counts before the
+  // new read starts, so the previous period's summary never
+  // sits under the new table while it loads; a re-read of the
+  // same period (a saved edit) keeps them until they land.
+  const summaryPeriodRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!bootstrap || !view) return;
+    if (
+      view.layout !== "month_rows" &&
+      view.layout !== "two_column" &&
+      view.layout !== "year_columns"
+    ) {
+      summaryPeriodRef.current = null;
+      setSummary(null);
+      setSummaryError(null);
+      return;
+    }
+    let cancelled = false;
+    const { from, to } = rangeFor(view, anchor);
+    const periodKey = `${view.id}:${from}:${to}`;
+    if (summaryPeriodRef.current !== periodKey) {
+      summaryPeriodRef.current = periodKey;
+      setSummary(null);
+      setSummaryError(null);
+    }
+    api
+      .getSummary({ from, to, viewId: view.id })
+      .then((result) => {
+        if (cancelled) return;
+        setSummary(result);
+        setSummaryError(null);
+      })
+      .catch((cause: unknown) => {
+        if (cancelled) return;
+        if (cause instanceof UnauthorizedError || cause instanceof ForbiddenError) {
+          handleError(cause);
+          return;
+        }
+        setSummary(null);
+        setSummaryError(cause instanceof Error ? cause.message : "集計の読み込みに失敗しました");
       });
     return () => {
       cancelled = true;
@@ -308,6 +369,9 @@ export function App({
       {supported && range && view.layout === "year_columns" && (
         <YearTable bootstrap={bootstrap} range={range} editor={editor} />
       )}
+      {supported && range && view.layout === "year_columns" && summary && (
+        <SummaryTable summary={summary} />
+      )}
       {supported && range && view.layout === "calendar_grid" && (
         <CalendarGrid bootstrap={bootstrap} range={range} anchor={anchor} editor={editor} />
       )}
@@ -321,6 +385,9 @@ export function App({
         <>
           <RowsTable bootstrap={bootstrap} range={range} editor={editor} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />
+          {view.layout === "month_rows" && summary && (
+            <SummarySection period={summary.months[0] ?? summary.total} />
+          )}
         </>
       )}
       {supported && range && view.layout === "two_column" && (
@@ -335,8 +402,16 @@ export function App({
           />
           <TwoColumnTable bootstrap={bootstrap} range={range} editor={editor} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />
+          {summary && <SummarySection period={summary.months[0] ?? summary.total} />}
         </>
       )}
+      {supported &&
+        range &&
+        !summary &&
+        summaryError &&
+        (view.layout === "month_rows" ||
+          view.layout === "two_column" ||
+          view.layout === "year_columns") && <SummaryFailure message={summaryError} />}
       {supported && !range && <p>読み込み中…</p>}
       {panelOpen && range && (
         <DutyPanel

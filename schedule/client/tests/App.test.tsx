@@ -90,6 +90,7 @@ describe("401 / 403 handling", () => {
     };
     return {
       getBootstrap: fail,
+      getSummary: fail,
       getRange: fail,
       createEvent: fail,
       updateEvent: fail,

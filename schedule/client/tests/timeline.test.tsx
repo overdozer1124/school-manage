@@ -685,6 +685,9 @@ describe("the schedule screen with a timeline view", () => {
     const api: ScheduleApi = {
       ...createDevApi(),
       getBootstrap: async () => bootstrap,
+      getSummary: async (): Promise<never> => {
+        throw new Error("not used");
+      },
       getRange: async (input) => {
         rangeCalls.push(input);
         return makeRange(timelineView, {}, input.from);
