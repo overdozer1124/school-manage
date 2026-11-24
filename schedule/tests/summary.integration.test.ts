@@ -407,12 +407,31 @@ describe.skipIf(!url)("summary (Issue #47)", () => {
       viewId: "view-month",
       cookie: COOKIE,
     });
-    expect(result.total.schoolDays).toBe(4);
+    // The event day counts as a school day, so the total is
+    // still five — four class days and one event day.
+    expect(result.total.schoolDays).toBe(5);
     expect(result.total.dayTypeCounts).toEqual([
       { dayType: "class_day", count: 4 },
       { dayType: "event_day", count: 1 },
       { dayType: "attendance_day", count: 0 },
       { dayType: "closed_day", count: 2 },
+      { dayType: "long_vacation", count: 0 },
+    ]);
+    // Close the Saturday as well, and the count drops: nothing
+    // anywhere stores the earlier answer.
+    fake.days = fake.days.map((d) => (d.id === "day-1002" ? { ...d, dayType: "closed_day" } : d));
+    const closed = await summary.getSummary.run(auth("Editor"), {
+      from: FROM,
+      to: TO,
+      viewId: "view-month",
+      cookie: COOKIE,
+    });
+    expect(closed.total.schoolDays).toBe(4);
+    expect(closed.total.dayTypeCounts).toEqual([
+      { dayType: "class_day", count: 4 },
+      { dayType: "event_day", count: 0 },
+      { dayType: "attendance_day", count: 0 },
+      { dayType: "closed_day", count: 3 },
       { dayType: "long_vacation", count: 0 },
     ]);
     fake.days = [];

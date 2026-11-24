@@ -100,7 +100,9 @@ export interface SummaryItemCount {
 }
 
 export interface SummaryPeriod {
-  /** The days of the period whose type is class_day. */
+  /** The period's school days: class days plus event days
+   *  (a school event day is a school day; attendance days are
+   *  not counted — the school's ruling, 2026-11-24). */
   schoolDays: number;
   dayTypeCounts: SummaryDayTypeCount[];
   items: SummaryItemCount[];
@@ -135,7 +137,7 @@ function summarizePeriod(
     return index === -1 ? targets.length : index;
   };
   return {
-    schoolDays: countByType.get("class_day") ?? 0,
+    schoolDays: (countByType.get("class_day") ?? 0) + (countByType.get("event_day") ?? 0),
     dayTypeCounts: SUMMARY_DAY_TYPES.map((dayType) => ({
       dayType,
       count: countByType.get(dayType) ?? 0,

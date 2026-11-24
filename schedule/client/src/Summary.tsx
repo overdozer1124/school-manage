@@ -63,7 +63,11 @@ function itemLine(item: SummaryItemCountData) {
  *  the other day types that occurred, and each counted item's
  *  days with its per-target breakdown. */
 export function SummarySection({ period }: { period: SummaryPeriodData }) {
-  const otherTypes = period.dayTypeCounts.filter((c) => c.dayType !== "class_day" && c.count > 0);
+  // Event days are already inside the school-day count, so the
+  // chips below it list only the types that are not school days.
+  const otherTypes = period.dayTypeCounts.filter(
+    (c) => c.dayType !== "class_day" && c.dayType !== "event_day" && c.count > 0,
+  );
   return (
     <section className="summary" aria-label="集計">
       <h2>集計</h2>

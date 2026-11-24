@@ -39,7 +39,9 @@ describe("summarizeRange day types", () => {
       values: [],
       targets: [],
     });
-    expect(result.total.schoolDays).toBe(2);
+    // School days are class days plus event days (attendance
+    // days do not count).
+    expect(result.total.schoolDays).toBe(3);
     expect(result.total.dayTypeCounts).toEqual([
       { dayType: "class_day", count: 2 },
       { dayType: "event_day", count: 1 },
