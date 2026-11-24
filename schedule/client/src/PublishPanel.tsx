@@ -6,6 +6,7 @@ import type {
   BootstrapData,
   PrintSettingsData,
   PublicationData,
+  PublicationDiffData,
   PublicationDocumentData,
   ViewDefinitionData,
 } from "./types";
@@ -27,6 +28,13 @@ import type {
  * open to every role. As everywhere in these screens, the
  * display choice is not the guard — the server checks the
  * publish permission on createPublication itself.
+ *
+ * Issue #48 grows the list into the version history: it filters
+ * by month; a version's label and note can be corrected in
+ * place (the document never changes); a version can be
+ * cancelled, which keeps its row, badged 取り消し； and each
+ * version can be read against the one issued before it — the
+ * days and items that changed, and only those.
  */
 export function PublishPanel({
   bootstrap,
@@ -60,10 +68,28 @@ export function PublishPanel({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Issue #48: the version history's own state — the month
+  // filter, the row being edited, the row whose cancellation
+  // is being confirmed, and the diff being read.
+  const [monthFilter, setMonthFilter] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [editNote, setEditNote] = useState("");
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [diff, setDiff] = useState<{
+    publicationId: string;
+    label: string;
+    data: PublicationDiffData;
+  } | null>(null);
 
   const load = useCallback(async () => {
-    setPublications(await api.getPublications({ viewId: view.id }));
-  }, [api, view.id]);
+    setPublications(
+      await api.getPublications({
+        viewId: view.id,
+        ...(monthFilter ? { targetMonth: monthFilter } : {}),
+      }),
+    );
+  }, [api, view.id, monthFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,6 +132,67 @@ export function PublishPanel({
       setPreview(await api.getPublication({ id }));
     } catch (cause) {
       setError(errorText(cause, "文書を読み込めませんでした"));
+    }
+  };
+
+  const startEdit = (publication: PublicationData) => {
+    setEditingId(publication.id);
+    setEditLabel(publication.versionLabel);
+    setEditNote(publication.snapshotNote ?? "");
+    setConfirmCancelId(null);
+  };
+
+  /** Corrects a version's label and note (Issue #48). The
+   *  stored document is not part of the call and never changes;
+   *  the server refuses the edit on a cancelled version. */
+  const saveEdit = async (id: string) => {
+    const label = editLabel.trim();
+    if (!label || busy) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await api.updatePublication({
+        id,
+        versionLabel: label,
+        note: editNote.trim() === "" ? null : editNote.trim(),
+      });
+      setEditingId(null);
+      setNotice(`「${updated.versionLabel}」のラベルとメモを直しました`);
+      await load();
+    } catch (cause) {
+      setError(errorText(cause, "ラベルとメモを直せませんでした"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Cancels a version (Issue #48): the record stays in the
+   *  list, badged as cancelled; the document stays readable. */
+  const cancelVersion = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await api.cancelPublication({ id });
+      setConfirmCancelId(null);
+      setNotice(`「${updated.versionLabel}」を取り消しました`);
+      await load();
+    } catch (cause) {
+      setError(errorText(cause, "取り消せませんでした"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const showDiff = async (publication: PublicationData) => {
+    setError(null);
+    try {
+      const data = await api.getPublicationDiff({ id: publication.id });
+      setDiff({ publicationId: publication.id, label: publication.versionLabel, data });
+    } catch (cause) {
+      setError(errorText(cause, "違いを読み込めませんでした"));
     }
   };
 
@@ -250,15 +337,39 @@ export function PublishPanel({
 
         <section aria-label="発行済みの一覧">
           <h3>発行済み</h3>
+          <div className="publication-filter">
+            <label>
+              月で絞り込む{" "}
+              <input
+                type="month"
+                aria-label="月で絞り込む"
+                value={monthFilter}
+                onChange={(e) => setMonthFilter(e.target.value)}
+              />
+            </label>
+            {monthFilter && (
+              <button type="button" onClick={() => setMonthFilter("")}>
+                絞り込みをやめる
+              </button>
+            )}
+          </div>
           {publications === null ? (
             <p>読み込み中…</p>
           ) : publications.length === 0 ? (
-            <p className="dim">まだ発行されていません。</p>
+            <p className="dim">
+              {monthFilter ? "その月はまだ発行されていません。" : "まだ発行されていません。"}
+            </p>
           ) : (
             <ul className="publication-list">
               {publications.map((publication) => (
-                <li key={publication.id}>
+                <li
+                  key={publication.id}
+                  className={publication.cancelledAt ? "publication-cancelled-row" : undefined}
+                >
                   <span className="publication-label">{publication.versionLabel}</span>
+                  {publication.cancelledAt && (
+                    <span className="publication-cancelled-badge">取り消し</span>
+                  )}
                   <span className="dim">
                     {publication.targetMonth.slice(0, 4)}年
                     {Number(publication.targetMonth.slice(5, 7))}月・
@@ -272,12 +383,117 @@ export function PublishPanel({
                     <button type="button" onClick={() => void print(publication.id)}>
                       印刷／PDF
                     </button>
+                    <button type="button" onClick={() => void showDiff(publication)}>
+                      前の版との違い
+                    </button>
+                    {canPublish && !publication.cancelledAt && (
+                      <>
+                        <button type="button" onClick={() => startEdit(publication)}>
+                          ラベル・メモを編集
+                        </button>
+                        {confirmCancelId === publication.id ? (
+                          <span className="publication-cancel-confirm">
+                            取り消しますか？
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void cancelVersion(publication.id)}
+                            >
+                              取り消す
+                            </button>
+                            <button type="button" onClick={() => setConfirmCancelId(null)}>
+                              やめる
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setConfirmCancelId(publication.id);
+                              setEditingId(null);
+                            }}
+                          >
+                            取り消す
+                          </button>
+                        )}
+                      </>
+                    )}
                   </span>
+                  {editingId === publication.id && (
+                    <span className="publication-edit-form">
+                      <label>
+                        版ラベル{" "}
+                        <input
+                          aria-label="版ラベル（編集）"
+                          value={editLabel}
+                          onChange={(e) => setEditLabel(e.target.value)}
+                        />
+                      </label>
+                      <label>
+                        メモ{" "}
+                        <textarea
+                          aria-label="メモ（編集）"
+                          rows={2}
+                          value={editNote}
+                          onChange={(e) => setEditNote(e.target.value)}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={busy || editLabel.trim() === ""}
+                        onClick={() => void saveEdit(publication.id)}
+                      >
+                        保存する
+                      </button>
+                      <button type="button" onClick={() => setEditingId(null)}>
+                        やめる
+                      </button>
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </section>
+
+        {diff && (
+          <section aria-label="前の版との違い" className="publication-diff">
+            <h3>前の版との違い（{diff.label}）</h3>
+            {!diff.data.comparable ? (
+              <p className="dim">この版は古い形式のため、違いを比べられません</p>
+            ) : diff.data.fromId === null ? (
+              <p className="dim">前の版がありません</p>
+            ) : (diff.data.changes ?? []).length === 0 ? (
+              <p className="dim">前の版から変わった日はありません</p>
+            ) : (
+              (diff.data.changes ?? []).map((day) => (
+                <div key={day.date} className="publication-diff-day">
+                  <h4>{dateHeading(day.date)}</h4>
+                  <ul>
+                    {day.dayType && (
+                      <li>
+                        日の種別：{dayTypeName(day.dayType.before)} →{" "}
+                        {dayTypeName(day.dayType.after)}
+                      </li>
+                    )}
+                    {day.cells.map((cell) => (
+                      <li key={cell.columnId}>
+                        {cell.label}：
+                        <span className="publication-diff-text">
+                          {cell.before === "" ? "（なし）" : cell.before}
+                        </span>{" "}
+                        →{" "}
+                        <span className="publication-diff-text">
+                          {cell.after === "" ? "（なし）" : cell.after}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            )}
+          </section>
+        )}
 
         {preview && (
           <section aria-label="印刷プレビュー">
@@ -332,4 +548,32 @@ function initialSettings(viewSettings: Record<string, unknown> | null): PrintSet
 
 function errorText(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message ? cause.message : fallback;
+}
+
+/** 「2026年11月19日」 for one diff day's "YYYY-MM-DD". */
+function dateHeading(date: string): string {
+  return `${date.slice(0, 4)}年${Number(date.slice(5, 7))}月${Number(date.slice(8, 10))}日`;
+}
+
+/**
+ * The day-type names a diff speaks in (Issue #48): every code
+ * named, a class day included — the tables' own label map
+ * (lib.ts) leaves a class day blank as a table's unmarked
+ * default, which would read as a missing name in a change
+ * list, so this map follows the summary's (Summary.tsx) and
+ * adds the remaining codes from lib.ts's map.
+ */
+const DIFF_DAY_TYPE_LABELS: Record<string, string> = {
+  class_day: "授業日",
+  event_day: "行事日",
+  attendance_day: "登校日",
+  exam_day: "試験日",
+  closed_day: "休業日",
+  long_vacation: "長期休業",
+  make_up_day: "振替授業日",
+};
+
+function dayTypeName(code: string): string {
+  if (code === "") return "（なし）";
+  return DIFF_DAY_TYPE_LABELS[code] ?? code;
 }

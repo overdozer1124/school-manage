@@ -1853,6 +1853,7 @@ span.timeline-block {
 .publication-list li {
   display: flex;
   align-items: baseline;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
@@ -1866,6 +1867,79 @@ span.timeline-block {
   margin-left: auto;
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* A cancelled version (Issue #48): the row stays in the
+   history, muted, with its badge. */
+.publication-list li.publication-cancelled-row {
+  opacity: 0.65;
+}
+
+.publication-cancelled-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sun);
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
+.publication-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.publication-edit-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.publication-cancel-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.publication-diff {
+  margin-top: 12px;
+}
+
+.publication-diff-day {
+  margin-bottom: 8px;
+}
+
+.publication-diff-day h4 {
+  margin: 0 0 2px;
+  font-size: 13px;
+}
+
+.publication-diff-day ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.publication-diff-text {
+  white-space: pre-line;
+}
+
+/* The public screen's latest-version notice (Issue #48). */
+.latest-publication {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 13px;
 }
 
 .publish-preview {

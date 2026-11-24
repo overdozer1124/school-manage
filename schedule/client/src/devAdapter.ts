@@ -46,7 +46,10 @@ import type {
   MastersData,
   PrintSettingsData,
   PublicationData,
+  PublicationDayChangeData,
+  PublicationDiffData,
   PublicBootstrapData,
+  PublicRangeData,
   PublicViewTokenData,
   RangeData,
   RangeDayData,
@@ -821,6 +824,89 @@ const PRINT_FONT_SIZES: Record<PrintSettingsData["fontScale"], string> = {
   large: "12px",
 };
 
+/** Whether one of the view's columns is the 職員動静 column:
+ *  the event column then leaves the absence kinds' provisional
+ *  entries to it, as the server's renderer does. */
+function viewHasMovement(
+  bootstrap: BootstrapData,
+  columns: ViewDefinitionData["columns"],
+): boolean {
+  return columns.some((c) => {
+    const item = bootstrap.itemDefinitions.find((i) => i.id === c.itemDefinitionId);
+    return c.sourceKind === "daily_item" && item?.key === "staff_movement";
+  });
+}
+
+/**
+ * The lines one cell of a dev document prints: the dev mirror
+ * of the server renderer's cell composition (the audience rules
+ * applied the way getRange applies them — a non-staff view's
+ * cells hold no staff-only events, no absences and no duty
+ * names). Shared by the document builder and the publication
+ * snapshot builder (Issue #48), so the dev snapshot's texts are
+ * the dev document's texts.
+ */
+function devCellLines(input: {
+  bootstrap: BootstrapData;
+  staffView: boolean;
+  hasMovement: boolean;
+  conflicts: RangeData["conflicts"];
+  day: RangeDayData;
+  column: ViewDefinitionData["columns"][number];
+}): string[] {
+  const { bootstrap, staffView, hasMovement, day, column } = input;
+  if (column.sourceKind === "event_category") {
+    return [
+      ...day.events
+        .filter((e) => staffView || e["visibility"] !== "staff_only")
+        .filter((e) => !(hasMovement && provisionalTemplateOf(e, bootstrap)))
+        .map((e) => `${eventTimeText(e)}${eventTitle(e)}`),
+      ...(staffView ? day.absences.map((a) => absenceLineText(a, bootstrap)) : []),
+    ];
+  }
+  if (column.sourceKind === "daily_item") {
+    const item = bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
+    if (item?.valueType === "event_list") {
+      if (item.key === "staff_movement") {
+        return [
+          ...day.events
+            .filter((e) => provisionalTemplateOf(e, bootstrap) !== null)
+            .map((e) => provisionalLineText(e)),
+          ...(staffView ? day.absences.map((a) => absenceLineText(a, bootstrap)) : []),
+        ];
+      }
+      const bound =
+        bootstrap.kindTemplates.find((t) => t.key === item.key || t.kindCode === item.key) ?? null;
+      if (bound?.subjectKind === "absence") {
+        return [
+          ...day.events
+            .filter((e) => provisionalTemplateOf(e, bootstrap)?.key === bound.key)
+            .map((e) => provisionalLineText(e)),
+          ...(staffView
+            ? day.absences
+                .filter((a) => a["kind"] === bound.kindCode)
+                .map((a) => absenceLineText(a, bootstrap))
+            : []),
+        ];
+      }
+      const kindCode = bound?.kindCode ?? "event";
+      return day.events
+        .filter((e) => e["kind"] === kindCode)
+        .map((e) => `${eventTimeText(e)}${eventTitle(e)}`);
+    }
+    const text = dailyCellText(day, column, bootstrap);
+    return text === "" ? [] : [text];
+  }
+  if (column.sourceKind === "duty") {
+    if (!staffView) return [];
+    return dutyCellLines(day, column, bootstrap, input.conflicts).map(
+      (line) => `${line.text}${line.swapped ? "（交代）" : ""}`,
+    );
+  }
+  const text = dayAttributeText(day);
+  return text === "" ? [] : [text];
+}
+
 /**
  * The issued document of the dev adapter (Issue #40): a mirror
  * of the server's print renderer over the adapter's own range,
@@ -844,63 +930,16 @@ function buildDevDocument(input: {
   const { bootstrap, view, range, settings } = input;
   const staffView = view.audience === "staff";
   const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
-  const hasMovement = columns.some((c) => {
-    const item = bootstrap.itemDefinitions.find((i) => i.id === c.itemDefinitionId);
-    return c.sourceKind === "daily_item" && item?.key === "staff_movement";
-  });
-  const cellLines = (day: RangeDayData, column: (typeof columns)[number]): string[] => {
-    if (column.sourceKind === "event_category") {
-      return [
-        ...day.events
-          .filter((e) => staffView || e["visibility"] !== "staff_only")
-          .filter((e) => !(hasMovement && provisionalTemplateOf(e, bootstrap)))
-          .map((e) => `${eventTimeText(e)}${eventTitle(e)}`),
-        ...(staffView ? day.absences.map((a) => absenceLineText(a, bootstrap)) : []),
-      ];
-    }
-    if (column.sourceKind === "daily_item") {
-      const item = bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
-      if (item?.valueType === "event_list") {
-        if (item.key === "staff_movement") {
-          return [
-            ...day.events
-              .filter((e) => provisionalTemplateOf(e, bootstrap) !== null)
-              .map((e) => provisionalLineText(e)),
-            ...(staffView ? day.absences.map((a) => absenceLineText(a, bootstrap)) : []),
-          ];
-        }
-        const bound =
-          bootstrap.kindTemplates.find((t) => t.key === item.key || t.kindCode === item.key) ??
-          null;
-        if (bound?.subjectKind === "absence") {
-          return [
-            ...day.events
-              .filter((e) => provisionalTemplateOf(e, bootstrap)?.key === bound.key)
-              .map((e) => provisionalLineText(e)),
-            ...(staffView
-              ? day.absences
-                  .filter((a) => a["kind"] === bound.kindCode)
-                  .map((a) => absenceLineText(a, bootstrap))
-              : []),
-          ];
-        }
-        const kindCode = bound?.kindCode ?? "event";
-        return day.events
-          .filter((e) => e["kind"] === kindCode)
-          .map((e) => `${eventTimeText(e)}${eventTitle(e)}`);
-      }
-      const text = dailyCellText(day, column, bootstrap);
-      return text === "" ? [] : [text];
-    }
-    if (column.sourceKind === "duty") {
-      if (!staffView) return [];
-      return dutyCellLines(day, column, bootstrap, range.conflicts).map(
-        (line) => `${line.text}${line.swapped ? "（交代）" : ""}`,
-      );
-    }
-    const text = dayAttributeText(day);
-    return text === "" ? [] : [text];
-  };
+  const hasMovement = viewHasMovement(bootstrap, columns);
+  const cellLines = (day: RangeDayData, column: (typeof columns)[number]): string[] =>
+    devCellLines({
+      bootstrap,
+      staffView,
+      hasMovement,
+      conflicts: range.conflicts,
+      day,
+      column,
+    });
   const monthText = `${input.targetMonth.slice(0, 4)}年${Number(input.targetMonth.slice(5, 7))}月`;
   const publishedText = input.publishedAt.toLocaleString("ja-JP");
   const head = columns
@@ -994,6 +1033,109 @@ ${undecidedHtml}
 </body>
 </html>
 `;
+}
+
+/**
+ * The structured snapshot of a dev publication (Issue #48):
+ * the mirror of the server's PublicationSnapshot — every date
+ * of the range in order, its day type, and every column's cell
+ * text, composed by the same devCellLines the dev document
+ * prints, so the dev diff compares what the dev document
+ * shows.
+ */
+interface DevPublicationSnapshot {
+  version: 1;
+  days: Array<{
+    date: string;
+    dayType: string;
+    cells: Array<{ columnId: string; label: string; text: string }>;
+  }>;
+}
+
+function buildDevSnapshot(input: {
+  bootstrap: BootstrapData;
+  view: ViewDefinitionData;
+  range: RangeData;
+}): DevPublicationSnapshot {
+  const { bootstrap, view, range } = input;
+  const staffView = view.audience === "staff";
+  const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
+  const hasMovement = viewHasMovement(bootstrap, columns);
+  return {
+    version: 1,
+    days: range.days.map((day) => ({
+      date: day.date,
+      dayType: typeof day.day["dayType"] === "string" ? (day.day["dayType"] as string) : "",
+      cells: columns.map((column) => ({
+        columnId: column.id,
+        label: columnLabel(column, bootstrap),
+        text: devCellLines({
+          bootstrap,
+          staffView,
+          hasMovement,
+          conflicts: range.conflicts,
+          day,
+          column,
+        }).join("\n"),
+      })),
+    })),
+  };
+}
+
+/**
+ * The version diff over the dev snapshots (Issue #48): a mirror
+ * of the server's diffSnapshots (schedule/src/publications/
+ * diff.ts) — the client cannot import the server module, so the
+ * same rules are kept here: only the changed days are listed,
+ * cells are compared by column id in the later version's
+ * order, and a side that lacks the day or the column reads as
+ * an empty text.
+ */
+function diffDevSnapshots(
+  before: DevPublicationSnapshot,
+  after: DevPublicationSnapshot,
+): PublicationDayChangeData[] {
+  const beforeDays = new Map(before.days.map((day) => [day.date, day]));
+  const afterDays = new Map(after.days.map((day) => [day.date, day]));
+  const dates = [...new Set([...beforeDays.keys(), ...afterDays.keys()])].sort();
+  const changes: PublicationDayChangeData[] = [];
+  for (const date of dates) {
+    const beforeDay = beforeDays.get(date);
+    const afterDay = afterDays.get(date);
+    const dayChange: PublicationDayChangeData = { date, cells: [] };
+    const beforeType = beforeDay?.dayType ?? "";
+    const afterType = afterDay?.dayType ?? "";
+    if (beforeType !== afterType) {
+      dayChange.dayType = { before: beforeType, after: afterType };
+    }
+    const beforeCells = new Map((beforeDay?.cells ?? []).map((cell) => [cell.columnId, cell]));
+    const afterCells = new Map((afterDay?.cells ?? []).map((cell) => [cell.columnId, cell]));
+    const columnIds: string[] = [];
+    for (const cell of afterDay?.cells ?? []) {
+      if (!columnIds.includes(cell.columnId)) columnIds.push(cell.columnId);
+    }
+    for (const cell of beforeDay?.cells ?? []) {
+      if (!columnIds.includes(cell.columnId)) columnIds.push(cell.columnId);
+    }
+    for (const columnId of columnIds) {
+      const beforeCell = beforeCells.get(columnId);
+      const afterCell = afterCells.get(columnId);
+      const beforeText = beforeCell?.text ?? "";
+      const afterText = afterCell?.text ?? "";
+      if (beforeText !== afterText) {
+        dayChange.cells.push({
+          columnId,
+          label: afterCell?.label ?? beforeCell?.label ?? "",
+          before: beforeText,
+          after: afterText,
+        });
+      }
+    }
+    if (dayChange.dayType !== undefined || dayChange.cells.length > 0) {
+      changes.push(dayChange);
+    }
+  }
+  return changes;
 }
 
 export function createDevApi(): ScheduleApi {
@@ -1105,7 +1247,101 @@ export function createDevApi(): ScheduleApi {
   // and never rebuilt, as on the server.
   const publications: PublicationData[] = [];
   const publicationDocuments = new Map<string, string>();
+  // The structured snapshots by id (Issue #48), the dev mirror
+  // of snapshot_json: what getPublicationDiff compares. A null
+  // snapshot is a version issued before snapshots existed.
+  const publicationSnapshots = new Map<string, DevPublicationSnapshot | null>();
   let publicationSeq = 0;
+
+  // The seeded version history (Issue #48): two November
+  // versions of the staff month view whose snapshots differ on
+  // exactly one day's one cell （給食 on the 19th: ○ in the
+  // first version, × in the second), and one cancelled October
+  // version — so the panel's history, its 取り消し badge and
+  // its diff are exercised by hand, not only in tests.
+  const seedSnapshot = (lunchOn19: string): DevPublicationSnapshot => ({
+    version: 1,
+    days: datesInRange("2026-11-01", "2026-11-30").map((date) => {
+      const weekday = weekdayOf(date);
+      return {
+        date,
+        dayType: weekday === "sat" || weekday === "sun" ? "closed_day" : "class_day",
+        cells: staffColumns("view-month-staff").map((column) => ({
+          columnId: column.id,
+          label: columnLabel(column, DEV_BOOTSTRAP),
+          text:
+            date === "2026-11-19" && column.id === "view-month-staff-lunch"
+              ? lunchOn19
+              : date === "2026-11-21" && column.id === "view-month-staff-events"
+                ? "授業参観"
+                : "",
+        })),
+      };
+    }),
+  });
+  const seedDocument = (label: string, monthText: string): string =>
+    `<!doctype html>\n<html lang="ja">\n<head>\n<meta charset="utf-8">\n<title>開発用小学校 ${monthText} 行事予定表（${label}）</title>\n</head>\n<body>\n<header class="print-head">\n<h1>開発用小学校 ${monthText} 行事予定表</h1>\n<div class="meta"><div>職員用月表</div><div>版：${label}</div></div>\n</header>\n<p>開発用データの発行済み文書です。</p>\n</body>\n</html>\n`;
+  const seedPublications: {
+    publication: PublicationData;
+    snapshot: DevPublicationSnapshot | null;
+  }[] = [
+    {
+      publication: {
+        id: "pub-seed-nov-2",
+        viewDefinitionId: "view-month-staff",
+        targetMonth: "2026-11",
+        versionLabel: "11月18日修正",
+        publishedAt: "2026-11-18T09:00:00.000Z",
+        publishedBy: "dev-user",
+        snapshotNote: "給食の訂正",
+        printSettings: { paper: "A4", orientation: "landscape", marginMm: 10, fontScale: "medium" },
+        documentFormat: "html",
+        cancelledAt: null,
+      },
+      snapshot: seedSnapshot("×"),
+    },
+    {
+      publication: {
+        id: "pub-seed-nov-1",
+        viewDefinitionId: "view-month-staff",
+        targetMonth: "2026-11",
+        versionLabel: "11月10日版",
+        publishedAt: "2026-11-10T09:00:00.000Z",
+        publishedBy: "dev-user",
+        snapshotNote: "最初の配布",
+        printSettings: { paper: "A4", orientation: "landscape", marginMm: 10, fontScale: "medium" },
+        documentFormat: "html",
+        cancelledAt: null,
+      },
+      snapshot: seedSnapshot("○"),
+    },
+    {
+      publication: {
+        id: "pub-seed-oct-1",
+        viewDefinitionId: "view-month-staff",
+        targetMonth: "2026-10",
+        versionLabel: "10月5日版",
+        publishedAt: "2026-10-05T09:00:00.000Z",
+        publishedBy: "dev-user",
+        snapshotNote: "配布を取りやめ",
+        printSettings: { paper: "A4", orientation: "landscape", marginMm: 10, fontScale: "medium" },
+        documentFormat: "html",
+        cancelledAt: "2026-10-06T09:00:00.000Z",
+      },
+      snapshot: null,
+    },
+  ];
+  for (const seed of seedPublications) {
+    publications.push(seed.publication);
+    publicationDocuments.set(
+      seed.publication.id,
+      seedDocument(
+        seed.publication.versionLabel,
+        `${seed.publication.targetMonth.slice(0, 4)}年${Number(seed.publication.targetMonth.slice(5, 7))}月`,
+      ),
+    );
+    publicationSnapshots.set(seed.publication.id, seed.snapshot);
+  }
 
   // The views' month notes of this adapter instance (Issue
   // #46): keyed by view and month, seeded with the student
@@ -2350,15 +2586,26 @@ export function createDevApi(): ScheduleApi {
         snapshotNote: input.note ?? null,
         printSettings: settings,
         documentFormat: "html",
+        cancelledAt: null,
       };
       publications.unshift(publication);
       publicationDocuments.set(publication.id, documentHtml);
+      // The snapshot of the same range (Issue #48), stored with
+      // the document as on the server.
+      publicationSnapshots.set(
+        publication.id,
+        buildDevSnapshot({ bootstrap: bootstrapNow(), view, range }),
+      );
       return structuredClone(publication);
     },
 
     async getPublications(input) {
       return structuredClone(
-        publications.filter((p) => !input?.viewId || p.viewDefinitionId === input.viewId),
+        publications.filter(
+          (p) =>
+            (!input?.viewId || p.viewDefinitionId === input.viewId) &&
+            (!input?.targetMonth || p.targetMonth === input.targetMonth),
+        ),
       );
     },
 
@@ -2368,6 +2615,75 @@ export function createDevApi(): ScheduleApi {
       return {
         ...structuredClone(publication),
         documentHtml: publicationDocuments.get(publication.id) ?? "",
+      };
+    },
+
+    // Issue #48: the record keeping around an issued version.
+    // The rules are the server's: a cancelled version's label
+    // and note stand as they were left, and a version is
+    // cancelled at most once.
+
+    async updatePublication(input) {
+      const publication = publications.find((p) => p.id === input.id);
+      if (!publication) throw new Error(`publication not found: ${input.id}`);
+      if (input.versionLabel === undefined && input.note === undefined) {
+        throw new Error("versionLabel or note is required");
+      }
+      if (publication.cancelledAt) {
+        throw new Error("取り消した版のラベルとメモは編集できません");
+      }
+      if (input.versionLabel !== undefined) publication.versionLabel = input.versionLabel;
+      if (input.note !== undefined) publication.snapshotNote = input.note;
+      return structuredClone(publication);
+    },
+
+    async cancelPublication(input) {
+      const publication = publications.find((p) => p.id === input.id);
+      if (!publication) throw new Error(`publication not found: ${input.id}`);
+      if (publication.cancelledAt) {
+        throw new Error("この版はすでに取り消されています");
+      }
+      publication.cancelledAt = new Date().toISOString();
+      return structuredClone(publication);
+    },
+
+    async getPublicationDiff(input): Promise<PublicationDiffData> {
+      const publication = publications.find((p) => p.id === input.id);
+      if (!publication) throw new Error(`publication not found: ${input.id}`);
+      // The version issued immediately before this one, of the
+      // same view and month, in the list's own order (newest
+      // first, then id) — cancelled versions count, as on the
+      // server.
+      const siblings = publications
+        .filter(
+          (p) =>
+            p.viewDefinitionId === publication.viewDefinitionId &&
+            p.targetMonth === publication.targetMonth,
+        )
+        .sort((a, b) =>
+          a.publishedAt !== b.publishedAt
+            ? a.publishedAt < b.publishedAt
+              ? 1
+              : -1
+            : a.id < b.id
+              ? 1
+              : -1,
+        );
+      const index = siblings.findIndex((p) => p.id === publication.id);
+      const previous = index >= 0 ? siblings[index + 1] : undefined;
+      if (!previous) {
+        return { comparable: true, fromId: null, toId: publication.id, changes: [] };
+      }
+      const before = publicationSnapshots.get(previous.id) ?? null;
+      const after = publicationSnapshots.get(publication.id) ?? null;
+      if (!before || !after) {
+        return { comparable: false, fromId: previous.id, toId: publication.id };
+      }
+      return {
+        comparable: true,
+        fromId: previous.id,
+        toId: publication.id,
+        changes: diffDevSnapshots(before, after),
       };
     },
 
@@ -2532,7 +2848,7 @@ export function createDevPublicApi(tokenValue: string): PublicApi {
       };
     },
 
-    async getPublicRange(input): Promise<RangeData> {
+    async getPublicRange(input): Promise<PublicRangeData> {
       const row = resolve();
       const boot = await inner.getBootstrap();
       const view =
@@ -2545,6 +2861,15 @@ export function createDevPublicApi(tokenValue: string): PublicApi {
           .map((c) => c.itemDefinitionId as string),
       );
       const visible = (e: Record<string, unknown>) => e["visibility"] !== "staff_only";
+      // The latest-version notice (Issue #48): the newest
+      // non-cancelled version of the range's first month, from
+      // this adapter's own version list (newest first), as the
+      // server reads its publications store.
+      const monthPublications = await inner.getPublications({
+        viewId: view.id,
+        targetMonth: input.from.slice(0, 7),
+      });
+      const latest = monthPublications.find((p) => !p.cancelledAt) ?? null;
       return {
         ...range,
         days: range.days.map((day) => ({
@@ -2562,6 +2887,9 @@ export function createDevPublicApi(tokenValue: string): PublicApi {
         })),
         eventValues: [],
         conflicts: [],
+        latestPublication: latest
+          ? { versionLabel: latest.versionLabel, publishedAt: latest.publishedAt }
+          : null,
       };
     },
   };

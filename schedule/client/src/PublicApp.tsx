@@ -8,7 +8,7 @@ import { TransposedTable } from "./TransposedTable";
 import { TwoColumnTable } from "./TwoColumnTable";
 import { WeekTimeline } from "./WeekTimeline";
 import { YearTable } from "./YearTable";
-import type { BootstrapData, PublicBootstrapData, RangeData } from "./types";
+import type { BootstrapData, PublicBootstrapData, PublicRangeData, RangeData } from "./types";
 
 function todayText(): string {
   const now = new Date();
@@ -50,7 +50,7 @@ function asTableBootstrap(boot: PublicBootstrapData): BootstrapData {
 export function PublicApp({ api }: { api: PublicApi }) {
   const [boot, setBoot] = useState<PublicBootstrapData | null>(null);
   const [anchor, setAnchor] = useState<string>(() => todayText());
-  const [range, setRange] = useState<RangeData | null>(null);
+  const [range, setRange] = useState<PublicRangeData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [rangeError, setRangeError] = useState<string | null>(null);
@@ -172,6 +172,16 @@ export function PublicApp({ api }: { api: PublicApi }) {
           {rangeError}
         </p>
       )}
+      {range?.latestPublication && (
+        // The latest-version notice (Issue #48): the newest
+        // issued version of this month, named by its label and
+        // its issue date, so a reader holding a printed copy can
+        // tell whether theirs is the newest one.
+        <p className="latest-publication">
+          この月の最新版は {range.latestPublication.versionLabel}（
+          {issuedDateText(range.latestPublication.publishedAt)} 発行）です
+        </p>
+      )}
       {range ? (
         view.layout === "year_columns" ? (
           // The year table reads the same bundle, without an
@@ -236,4 +246,18 @@ export function PublicApp({ api }: { api: PublicApi }) {
 function rangeLabel(range: RangeData | null): string {
   if (!range) return "";
   return `${range.from} ～ ${range.to}`;
+}
+
+/** An issue date as 「2026年11月18日」, in Japan time: the
+ *  stored instant is UTC, and the day a version was issued is
+ *  the day it was handed out in Japan. */
+function issuedDateText(iso: string): string {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(new Date(iso));
+  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${part("year")}年${part("month")}月${part("day")}日`;
 }

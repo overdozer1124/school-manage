@@ -863,4 +863,49 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     // @ts-expect-error the public registry has no createEvent
     void publicActions.createEvent;
   });
+
+  it("the public range announces the month's latest live version (Issue #48)", async () => {
+    const rangeNow = async () =>
+      (await publicActions.getPublicRange.run({
+        token: guardianToken,
+        slug: "test",
+        from: FROM,
+        to: TO,
+      })) as unknown as Record_;
+
+    // Nothing issued for the month yet: nothing to announce.
+    expect((await rangeNow())["latestPublication"]).toBeNull();
+
+    const first = (await actions.createPublication.run(auth("Admin"), {
+      cookie: COOKIE,
+      viewId: "view-guardian",
+      targetMonth: "2027-10",
+      versionLabel: "10月・最初の版",
+    })) as Record_;
+    let range = await rangeNow();
+    expect(range["latestPublication"]).toEqual({
+      versionLabel: "10月・最初の版",
+      publishedAt: expect.any(String) as unknown,
+    });
+    // The announcement names the version, never its publisher.
+    expect(JSON.stringify(range)).not.toContain("user-41");
+
+    // A newer version takes over the announcement; cancelling
+    // it hands the announcement back to the earlier live one.
+    const second = (await actions.createPublication.run(auth("Admin"), {
+      cookie: COOKIE,
+      viewId: "view-guardian",
+      targetMonth: "2027-10",
+      versionLabel: "10月・訂正版",
+    })) as Record_;
+    range = await rangeNow();
+    expect((range["latestPublication"] as Record_)["versionLabel"]).toBe("10月・訂正版");
+    await actions.cancelPublication.run(auth("Admin"), { id: second["id"] as string });
+    range = await rangeNow();
+    expect((range["latestPublication"] as Record_)["versionLabel"]).toBe("10月・最初の版");
+
+    // Every version of the month cancelled: nothing to announce.
+    await actions.cancelPublication.run(auth("Admin"), { id: first["id"] as string });
+    expect((await rangeNow())["latestPublication"]).toBeNull();
+  });
 });

@@ -737,7 +737,7 @@ describe("the public screen with a timeline view", () => {
     });
     const api: PublicApi = {
       getPublicBootstrap: async () => structuredClone(boot),
-      getPublicRange: async () => structuredClone(range),
+      getPublicRange: async () => ({ ...structuredClone(range), latestPublication: null }),
     };
     render(<PublicApp api={api} />);
     expect(await screen.findByText(/運動会/)).toBeInTheDocument();

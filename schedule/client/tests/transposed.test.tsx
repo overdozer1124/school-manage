@@ -799,7 +799,7 @@ describe("the public screen with a transposed view", () => {
     });
     const api: PublicApi = {
       getPublicBootstrap: async () => structuredClone(boot),
-      getPublicRange: async () => structuredClone(range),
+      getPublicRange: async () => ({ ...structuredClone(range), latestPublication: null }),
     };
     render(<PublicApp api={api} />);
     expect(await screen.findByText("吹奏楽部")).toBeInTheDocument();

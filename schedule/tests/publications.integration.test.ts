@@ -9,6 +9,7 @@ import {
 } from "@school-manage/calendar-types";
 import { createScheduleActions } from "../src/composition.js";
 import { createDb, type Db } from "../src/db/client.js";
+import { insertPublication } from "../src/db/publications.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { createPlatformApiClient, PlatformRelayError } from "../src/platformClient.js";
 
@@ -648,5 +649,254 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
     ).resolves.toEqual({ deleted: true });
     const after = await actions.getViews.run(auth("Admin"), {});
     expect(after.map((v) => v.id)).not.toContain("view-disposable");
+  });
+
+  // ---- Issue #48: the version history around the document ----
+
+  const NOV = "2027-11";
+
+  it("the version list filters by month as well as by view (Issue #48)", async () => {
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: NOV,
+      versionLabel: "11月版",
+    })) as Record<string, unknown>;
+    // The list's meta carries the cancellation stamp (null
+    // while live) and never the snapshot.
+    expect(meta["cancelledAt"]).toBeNull();
+    expect(meta["snapshotJson"]).toBeUndefined();
+
+    const november = (await actions.getPublications.run(auth("Viewer"), {
+      viewId: "view-staff",
+      targetMonth: NOV,
+    })) as Record<string, unknown>[];
+    expect(november.map((p) => p["versionLabel"])).toEqual(["11月版"]);
+
+    const october = (await actions.getPublications.run(auth("Viewer"), {
+      viewId: "view-staff",
+      targetMonth: MONTH,
+    })) as Record<string, unknown>[];
+    expect(october.length).toBeGreaterThan(0);
+    expect(october.every((p) => p["targetMonth"] === MONTH)).toBe(true);
+
+    const all = (await actions.getPublications.run(auth("Viewer"), {
+      viewId: "view-staff",
+    })) as Record<string, unknown>[];
+    expect(all.map((p) => p["versionLabel"])).toContain("11月版");
+  });
+
+  it("a version's label and note can be corrected; its document cannot (Issue #48)", async () => {
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: NOV,
+      versionLabel: "直す前の版",
+      note: "前のメモ",
+    })) as Record<string, unknown>;
+    const id = meta["id"] as string;
+    const before = (await actions.getPublication.run(auth("Editor"), { id })) as Record<
+      string,
+      unknown
+    >;
+
+    // Editing is the publish permission's, like issuing.
+    await expect(
+      actions.updatePublication.run(auth("Viewer"), { id, versionLabel: "見るだけの人の訂正" }),
+    ).rejects.toBeInstanceOf(AuthAccessError);
+    // An update naming neither field is refused.
+    await expect(actions.updatePublication.run(auth("Editor"), { id })).rejects.toThrow();
+
+    const updated = (await actions.updatePublication.run(auth("Editor"), {
+      id,
+      versionLabel: "直した版",
+      note: "直したメモ",
+    })) as Record<string, unknown>;
+    expect(updated["versionLabel"]).toBe("直した版");
+    expect(updated["snapshotNote"]).toBe("直したメモ");
+
+    // The stored document is byte for byte what was issued.
+    const after = (await actions.getPublication.run(auth("Editor"), { id })) as Record<
+      string,
+      unknown
+    >;
+    expect(after["documentHtml"]).toBe(before["documentHtml"]);
+
+    // The note can be cleared by naming it null; the label
+    // stays as corrected.
+    const cleared = (await actions.updatePublication.run(auth("Editor"), {
+      id,
+      note: null,
+    })) as Record<string, unknown>;
+    expect(cleared["snapshotNote"]).toBeNull();
+    expect(cleared["versionLabel"]).toBe("直した版");
+  });
+
+  it("a cancelled version stays in the list, marked cancelled (Issue #48)", async () => {
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: NOV,
+      versionLabel: "取り消す版",
+    })) as Record<string, unknown>;
+    const id = meta["id"] as string;
+
+    // Cancellation is the publish permission's.
+    await expect(actions.cancelPublication.run(auth("Viewer"), { id })).rejects.toBeInstanceOf(
+      AuthAccessError,
+    );
+
+    const cancelled = (await actions.cancelPublication.run(auth("Editor"), { id })) as Record<
+      string,
+      unknown
+    >;
+    expect(cancelled["cancelledAt"]).not.toBeNull();
+
+    // The record stays in the history, carrying its stamp.
+    const list = (await actions.getPublications.run(auth("Viewer"), {
+      viewId: "view-staff",
+      targetMonth: NOV,
+    })) as Record<string, unknown>[];
+    const row = list.find((p) => p["id"] === id);
+    expect(row).toBeDefined();
+    expect(row?.["cancelledAt"]).not.toBeNull();
+
+    // A version is cancelled at most once, and a cancelled
+    // version's label and note stand as they were left.
+    await expect(actions.cancelPublication.run(auth("Editor"), { id })).rejects.toThrow(
+      /すでに取り消されています/,
+    );
+    await expect(
+      actions.updatePublication.run(auth("Editor"), { id, versionLabel: "取り消した版の訂正" }),
+    ).rejects.toThrow(/取り消した版/);
+  });
+
+  it("the diff between two versions lists only the changed days (Issue #48)", async () => {
+    const DAY = "2027-11-10";
+    const first = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: NOV,
+      versionLabel: "差分第1版",
+    })) as Record<string, unknown>;
+    // One cell of one day changes; nothing else does.
+    await actions.setDailyValue.run(auth("Editor"), {
+      date: DAY,
+      itemDefinitionId: "item-lunch",
+      value: "yes",
+    });
+    const second = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: NOV,
+      versionLabel: "差分第2版",
+    })) as Record<string, unknown>;
+
+    const diff = (await actions.getPublicationDiff.run(auth("Viewer"), {
+      id: second["id"] as string,
+    })) as Record<string, unknown>;
+    expect(diff["comparable"]).toBe(true);
+    expect(diff["fromId"]).toBe(first["id"]);
+    expect(diff["toId"]).toBe(second["id"]);
+    expect(diff["changes"]).toEqual([
+      {
+        date: DAY,
+        cells: [{ columnId: "col-staff-lunch", label: "給食", before: "", after: "○" }],
+      },
+    ]);
+  });
+
+  it("a day-type change alone appears in the diff (Issue #48)", async () => {
+    const record: Record_ = {
+      revision: 1,
+      schoolId: SCHOOL,
+      id: "day-nov-15",
+      date: "2027-11-15",
+      dayType: "class_day",
+      dayTypeLabel: null,
+      dayScheduleId: null,
+      weekdaySwap: null,
+      note: null,
+    };
+    fake.days.push(record);
+    try {
+      await actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-staff",
+        targetMonth: NOV,
+        versionLabel: "種別第1版",
+      });
+      record["dayType"] = "event_day";
+      const second = (await actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-staff",
+        targetMonth: NOV,
+        versionLabel: "種別第2版",
+      })) as Record<string, unknown>;
+      const diff = (await actions.getPublicationDiff.run(auth("Viewer"), {
+        id: second["id"] as string,
+      })) as Record<string, unknown>;
+      expect(diff["comparable"]).toBe(true);
+      expect(diff["changes"]).toEqual([
+        {
+          date: "2027-11-15",
+          dayType: { before: "class_day", after: "event_day" },
+          cells: [],
+        },
+      ]);
+    } finally {
+      fake.days.splice(fake.days.indexOf(record), 1);
+    }
+  });
+
+  it("the first version of a month has no previous version to diff against (Issue #48)", async () => {
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: "2027-12",
+      versionLabel: "12月版",
+    })) as Record<string, unknown>;
+    const diff = (await actions.getPublicationDiff.run(auth("Viewer"), {
+      id: meta["id"] as string,
+    })) as Record<string, unknown>;
+    expect(diff).toEqual({
+      comparable: true,
+      fromId: null,
+      toId: meta["id"],
+      changes: [],
+    });
+  });
+
+  it("a version issued before snapshots existed cannot be diffed (Issue #48)", async () => {
+    // A legacy row, written straight into the store the way a
+    // pre-#48 publication lies in the table: a document, and
+    // no structured snapshot.
+    const extra = createDb(url as string);
+    try {
+      await insertPublication(extra.db, SCHOOL, {
+        id: "pub-legacy",
+        viewDefinitionId: "view-staff",
+        targetMonth: "2028-01",
+        versionLabel: "旧形式の版",
+        publishedAt: new Date("2020-01-05T00:00:00.000Z"),
+        publishedBy: "user-40",
+        snapshotNote: null,
+        printSettings: { paper: "A4", orientation: "landscape", marginMm: 10, fontScale: "medium" },
+        documentFormat: "html",
+        documentHtml: "<!doctype html><html></html>",
+      });
+    } finally {
+      await extra.queryClient.end();
+    }
+    const fresh = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-staff",
+      targetMonth: "2028-01",
+      versionLabel: "新しい版",
+    })) as Record<string, unknown>;
+    const diff = (await actions.getPublicationDiff.run(auth("Viewer"), {
+      id: fresh["id"] as string,
+    })) as Record<string, unknown>;
+    expect(diff).toEqual({ comparable: false, fromId: "pub-legacy", toId: fresh["id"] });
   });
 });

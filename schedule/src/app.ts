@@ -166,6 +166,12 @@ const ACTION_NAMES = [
   "createPublication",
   "getPublications",
   "getPublication",
+  // Issue #48: the version history's record keeping — the
+  // label/note correction, the cancellation, and the diff
+  // against the previous version.
+  "updatePublication",
+  "cancelPublication",
+  "getPublicationDiff",
   // Issue #41: managing the public viewing tokens (school.admin).
   // The public reads are not here: they take no AuthContext and
   // are served by the public route below (PUBLIC_ACTION_NAMES).

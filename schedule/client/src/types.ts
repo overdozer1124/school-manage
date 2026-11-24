@@ -353,8 +353,11 @@ export interface PrintSettingsData {
 
 /** One issued version of a view's month table (Issue #40), as
  *  the version list returns it: the record, without the document.
- *  An issued publication is never rewritten — to hand out a
- *  corrected table, a new version is issued. */
+ *  The document of an issued publication is never rewritten —
+ *  to hand out a corrected table, a new version is issued. The
+ *  record around it may move (Issue #48): the label and note
+ *  can be corrected, and cancelledAt stamps a version that was
+ *  withdrawn — the row stays in the list, marked cancelled. */
 export interface PublicationData {
   id: string;
   viewDefinitionId: string;
@@ -365,12 +368,46 @@ export interface PublicationData {
   snapshotNote: string | null;
   printSettings: PrintSettingsData;
   documentFormat: string;
+  cancelledAt: string | null;
 }
 
 /** One issued publication with its document: the stored,
  *  self-contained print HTML, returned byte for byte as issued. */
 export interface PublicationDocumentData extends PublicationData {
   documentHtml: string;
+}
+
+/** One column's text change on one day, in a version diff
+ *  (Issue #48). An empty side is a column or value that exists
+ *  on only one of the two versions. */
+export interface PublicationCellChangeData {
+  columnId: string;
+  label: string;
+  before: string;
+  after: string;
+}
+
+/** One changed day of a version diff: the day-type change when
+ *  the type moved, and the day's changed cells. Unchanged days
+ *  are not listed at all. */
+export interface PublicationDayChangeData {
+  date: string;
+  dayType?: { before: string; after: string };
+  cells: PublicationCellChangeData[];
+}
+
+/** getPublicationDiff's answer (Issue #48): how one version
+ *  differs from the version issued before it. comparable is
+ *  false when either side predates the structured snapshot —
+ *  the documents exist, but there is nothing structured to
+ *  compare — and then changes is absent. A comparable diff
+ *  with fromId null is the first version of its view and
+ *  month: there is no previous version. */
+export interface PublicationDiffData {
+  comparable: boolean;
+  fromId: string | null;
+  toId: string;
+  changes?: PublicationDayChangeData[];
 }
 
 /** One month of a view's accompanying notes (Issue #46), as
@@ -462,6 +499,16 @@ export interface PublicViewTokenData {
  *  shown once so the URL can be copied. */
 export interface PublicTokenCreatedData extends PublicViewTokenData {
   token: string;
+}
+
+/** The public range (Issue #41) with the latest-version
+ *  notice (Issue #48): the newest non-cancelled version issued
+ *  for the view's month at the range's head, named by its label
+ *  and its issue date — the two facts the printed document
+ *  itself carries — or null when the month has no live version
+ *  to announce. */
+export interface PublicRangeData extends RangeData {
+  latestPublication: { versionLabel: string; publishedAt: string } | null;
 }
 
 /** What the public screen opens with: the school's name, the

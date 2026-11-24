@@ -5,7 +5,7 @@ import { App } from "../src/App";
 import type { PublicApi } from "../src/api";
 import { createDevApi } from "../src/devAdapter";
 import { PublicApp } from "../src/PublicApp";
-import type { PublicBootstrapData, RangeData } from "../src/types";
+import type { PublicBootstrapData, PublicRangeData } from "../src/types";
 
 afterEach(cleanup);
 
@@ -235,7 +235,7 @@ const PUBLIC_BOOT: PublicBootstrapData = {
   holidays: [],
 };
 
-const PUBLIC_RANGE: RangeData = {
+const PUBLIC_RANGE: PublicRangeData = {
   view: STUDENT_VIEW,
   from: "2026-11-01",
   to: "2026-11-30",
@@ -266,6 +266,7 @@ const PUBLIC_RANGE: RangeData = {
       healthGoal: "早寝・早起き・朝ごはん",
     },
   ],
+  latestPublication: null,
 };
 
 describe("the public screen with a student view (Issue #46)", () => {

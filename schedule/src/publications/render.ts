@@ -36,6 +36,11 @@ import type { RangeDay, RangeResult } from "../range/types.js";
  * (derived alerts for the people working the table, not part of
  * the issued record) — the （交代） mark stays, because it states
  * what the assignment is, not that something needs attention.
+ *
+ * The structured snapshot a publication stores beside its
+ * document (Issue #48, snapshot.ts) is built from this same
+ * input through cellText below, so the version diffs compare
+ * exactly the texts this renderer prints.
  */
 
 type Record_ = Record<string, unknown>;
@@ -415,7 +420,7 @@ function dayAttributeText(day: RangeDay): string {
   return parts.join(" ");
 }
 
-function columnLabel(column: ViewColumnRow, ctx: PrintContext): string {
+export function columnLabel(column: ViewColumnRow, ctx: PrintContext): string {
   if (column.sourceKind === "daily_item") {
     return ctx.itemDefinitions.find((i) => i.id === column.itemDefinitionId)?.name ?? "項目";
   }
@@ -450,6 +455,35 @@ function cellHtml(
       .join("");
   }
   return esc(dayAttributeText(day));
+}
+
+/**
+ * One cell's text as printed (Issue #48): the same lines
+ * cellHtml wraps in the document — composed by the same
+ * entryLines / dailyCellText / dutyLines / dayAttributeText, so
+ * the snapshot's text cannot drift from the document's — joined
+ * by newlines into the one string the version diff compares.
+ */
+export function cellText(
+  day: RangeDay,
+  column: ViewColumnRow,
+  columns: ViewColumnRow[],
+  ctx: PrintContext,
+): string {
+  if (column.sourceKind === "event_category") {
+    return entryLines(day, column, columns, ctx).join("\n");
+  }
+  if (column.sourceKind === "daily_item") {
+    const item = ctx.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
+    if (item?.valueType === "event_list") {
+      return entryLines(day, column, columns, ctx).join("\n");
+    }
+    return dailyCellText(day, column, ctx);
+  }
+  if (column.sourceKind === "duty") {
+    return dutyLines(day, column, ctx).join("\n");
+  }
+  return dayAttributeText(day);
 }
 
 const FONT_SIZES: Record<PublicationPrintSettings["fontScale"], string> = {
