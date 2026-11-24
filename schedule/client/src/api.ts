@@ -24,6 +24,7 @@ import type {
   TargetGroupData,
   TargetRefData,
   ViewDefinitionData,
+  ViewMonthNoteData,
 } from "./types";
 
 /**
@@ -174,6 +175,15 @@ export interface ScheduleApi {
   upsertViewDefinition(input: Record<string, unknown>): Promise<ViewDefinitionData>;
   deleteViewDefinition(input: { id: string }): Promise<{ deleted: true }>;
   setViewArchived(input: { id: string; archived: boolean }): Promise<ViewDefinitionData>;
+  // Issue #46: a view's monthly accompanying notes （生活目標・
+  // 健康目標） — the write is daily.write's on the server
+  // (Admin and Editor); reading them rides on getRange.
+  setViewMonthNote(input: {
+    viewId: string;
+    month: string;
+    lifeGoal: string | null;
+    healthGoal: string | null;
+  }): Promise<ViewMonthNoteData>;
   upsertDutyDefinition(input: Record<string, unknown>): Promise<DutyDefinitionData>;
   deleteDutyDefinition(input: { id: string }): Promise<{ deleted: true }>;
   upsertKindTemplate(input: Record<string, unknown>): Promise<KindTemplateData>;
@@ -327,6 +337,7 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     upsertViewDefinition: (input) => call<ViewDefinitionData>("upsertViewDefinition", input),
     deleteViewDefinition: (input) => call<{ deleted: true }>("deleteViewDefinition", input),
     setViewArchived: (input) => call<ViewDefinitionData>("setViewArchived", input),
+    setViewMonthNote: (input) => call<ViewMonthNoteData>("setViewMonthNote", input),
     upsertDutyDefinition: (input) => call<DutyDefinitionData>("upsertDutyDefinition", input),
     deleteDutyDefinition: (input) => call<{ deleted: true }>("deleteDutyDefinition", input),
     upsertKindTemplate: (input) => call<KindTemplateData>("upsertKindTemplate", input),

@@ -417,6 +417,55 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
     expect(html).toContain("size: A3 landscape");
   });
 
+  it("a student publication is two half-month tables headed by the month's goals (Issue #46)", async () => {
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-student",
+      name: "生徒用月表",
+      layout: "two_column",
+      audience: "student",
+      periodScope: "month",
+      columns: [
+        { id: "col-student-events", sourceKind: "event_category" },
+        { id: "col-student-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+      ],
+    });
+    await actions.setViewMonthNote.run(auth("Editor"), {
+      viewId: "view-student",
+      month: MONTH,
+      lifeGoal: "あいさつを自分からしよう",
+      healthGoal: "早寝・早起き・朝ごはん",
+    });
+    await actions.createEvent.run(auth("Editor"), {
+      cookie: COOKIE,
+      event: eventPayload({ id: "ev-student", title: "学習発表会", visibility: "student" }),
+    });
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-student",
+      targetMonth: MONTH,
+      versionLabel: "生徒版",
+    })) as Record<string, unknown>;
+    const doc = (await actions.getPublication.run(auth("Viewer"), {
+      id: meta["id"] as string,
+    })) as Record<string, unknown>;
+    const html = doc["documentHtml"] as string;
+    // Two half-month tables stand side by side in one
+    // two-column block, and the month's goals head the document.
+    expect(html).toContain('class="two-column"');
+    expect(html.match(/<table/g)).toHaveLength(2);
+    expect(html).toContain('class="month-notes"');
+    expect(html).toContain("生活目標");
+    expect(html).toContain("あいさつを自分からしよう");
+    expect(html).toContain("健康目標");
+    expect(html).toContain("早寝・早起き・朝ごはん");
+    // The student-facing event stands; nothing staff-shaped does.
+    expect(html).toContain("学習発表会");
+    expect(html).not.toContain("職員会議");
+    expect(html).not.toContain("職員だけのメモ");
+    expect(html).not.toContain("先生A");
+    expect(html).not.toContain("年休");
+  });
+
   it("a school with a day pattern that has no periods can still publish (Issue #109)", async () => {
     // A stored pattern whose period rows are gone reads back
     // from the platform with an empty periods list (Issue #104);

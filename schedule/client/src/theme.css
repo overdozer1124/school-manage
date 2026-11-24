@@ -159,6 +159,70 @@ body {
   background: var(--bg);
 }
 
+/* The two-column student table (Issue #46): the month's rows
+   table in two halves side by side, so the month stands half
+   as tall on the screen as it does in the month table. Each
+   half scrolls its own way on a narrow screen; on paper the
+   two halves keep standing side by side (see the print block
+   below), the way the issued sheet lays them out. */
+.two-column {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.two-column > * {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+/* The month's goals heading the student table (Issue #46):
+   the 生活目標・健康目標 stand in one bordered band over the
+   table, label first, the way they head the printed sheet. */
+.month-notes {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.month-note-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.month-note-label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.month-notes-edit {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.month-notes-edit label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.month-notes-edit input {
+  min-width: 16em;
+}
+
+.month-notes-error {
+  color: var(--sun);
+  margin: 0;
+}
+
 /* The transposed table (Issue #45): rows are the targets of
    the view's axis, columns the days — the rows table turned
    on its side, so it keeps the rows table's cells and marks
@@ -1415,6 +1479,17 @@ span.timeline-block {
   }
   .schedule-app {
     max-width: none;
+  }
+  /* The two-column table prints as it stands on the screen
+     (Issue #46): the halves side by side, no sideways scroll. */
+  .two-column {
+    flex-direction: row;
+  }
+  .two-column > * {
+    overflow-x: visible;
+  }
+  .month-notes-edit-button {
+    display: none;
   }
 }
 

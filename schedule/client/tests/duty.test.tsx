@@ -114,6 +114,9 @@ const unusedWrites = {
   setViewArchived: async (): Promise<never> => {
     throw new Error("not used");
   },
+  setViewMonthNote: async (): Promise<never> => {
+    throw new Error("not used");
+  },
   upsertDutyDefinition: async (): Promise<never> => {
     throw new Error("not used");
   },
@@ -257,6 +260,7 @@ describe("the duty panel for a Viewer", () => {
       days: [day("2026-11-10", "teacher-1", "as-other"), day("2026-11-11", "teacher-2", "as-own")],
       undecided: [],
       eventValues: [],
+      monthNotes: [],
       conflicts: [
         {
           kind: "absence",
@@ -440,6 +444,7 @@ describe("the duty panel when applying a proposal fails", () => {
       view: structuredClone(DEV_BOOTSTRAP.views[0] as RangeData["view"]),
       from: "2026-11-10",
       to: "2026-11-10",
+      monthNotes: [],
       days: [
         {
           date: "2026-11-10",
@@ -554,6 +559,7 @@ describe("the rotation period follows the displayed range", () => {
       undecided: [],
       eventValues: [],
       conflicts: [],
+      monthNotes: [],
     });
     const { rerender } = render(
       <DutyPanel

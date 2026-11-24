@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { dateStringSchema, type DutyConflict } from "@school-manage/calendar-types";
+import type { ViewMonthNote } from "../db/monthNotes.js";
 import type { DailyValueRow, DutyAssignmentRow, EventValueRow } from "../db/schema.js";
 import type { ViewDefinitionWithColumns } from "../db/views.js";
+
+export type { ViewMonthNote };
 
 /**
  * Payload shapes for the range actions (Issue #33). The cookie is a
@@ -102,4 +105,15 @@ export interface RangeResult {
    * empty, and no absence read is made for it.
    */
   conflicts: DutyConflict[];
+  /**
+   * The view's monthly accompanying notes (Issue #46; DESIGN
+   * schedule 7) for the months this range covers: the student
+   * table's 生活目標・健康目標， carried on the range so the
+   * screen's header and the issued document are drawn from the
+   * same bundle as the days. The notes are the view's own
+   * accompanying information — written for students to read — so
+   * every audience's range carries them, the public bundle
+   * included; a month nobody wrote notes for is absent.
+   */
+  monthNotes: ViewMonthNote[];
 }

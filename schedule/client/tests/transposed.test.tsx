@@ -265,7 +265,7 @@ function makeRange(
       dutyAssignments: [],
     };
   });
-  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [] };
+  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [], monthNotes: [] };
 }
 
 function cell(date: string, targetId: string): HTMLElement {

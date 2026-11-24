@@ -295,7 +295,10 @@ function publicValue<T extends { valuePersonId: string | null }>(value: T): T {
   return body as T;
 }
 
-/** A range bundle with everything staff-shaped taken out of it. */
+/** A range bundle with everything staff-shaped taken out of it.
+ *  The view's month notes (Issue #46) ride along on the spread:
+ *  they are the student table's accompanying information, written
+ *  for its audience to read, so the public bundle keeps them. */
 function publicRange(range: RangeResult, audience: Audience): RangeResult {
   return {
     ...range,

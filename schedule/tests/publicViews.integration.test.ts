@@ -618,6 +618,33 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     expect(text).not.toContain("年休");
   });
 
+  it("the public range carries the view's month notes (Issue #46)", async () => {
+    // A view's monthly accompanying notes are the view's own
+    // metadata, written to be read by the view's audience: the
+    // note saved for the guardian view's month rides the public
+    // range, so the public student / guardian table can head
+    // itself with the month's goals.
+    await actions.setViewMonthNote.run(auth("Editor"), {
+      viewId: "view-guardian",
+      month: "2027-10",
+      lifeGoal: "あいさつを自分からしよう",
+      healthGoal: "早寝・早起き・朝ごはん",
+    });
+    const range = (await publicActions.getPublicRange.run({
+      token: guardianToken,
+      slug: "test",
+      from: FROM,
+      to: TO,
+    })) as unknown as Record_;
+    expect(range["monthNotes"]).toEqual([
+      {
+        month: "2027-10",
+        lifeGoal: "あいさつを自分からしよう",
+        healthGoal: "早寝・早起き・朝ごはん",
+      },
+    ]);
+  });
+
   it("the public actions read through the public-read path and never call /auth/me", async () => {
     // Issue #82: the school's name, the holidays, the grades and
     // the range's platform reads all go to the public-read path,

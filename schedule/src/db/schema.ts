@@ -555,7 +555,7 @@ export const viewDefinitions = pgTable(
     unique("view_definitions_school_name_unique").on(t.schoolId, t.name),
     check(
       "view_definitions_layout_check",
-      sql`${t.layout} in ('month_rows', 'week_rows', 'year_columns', 'calendar_grid', 'week_timeline', 'transposed')`,
+      sql`${t.layout} in ('month_rows', 'week_rows', 'year_columns', 'calendar_grid', 'week_timeline', 'transposed', 'two_column')`,
     ),
     check(
       "view_definitions_audience_check",
@@ -635,6 +635,41 @@ export const viewColumns = pgTable(
 );
 
 export type ViewColumnRow = typeof viewColumns.$inferSelect;
+
+/**
+ * One month's accompanying notes for one view (Issue #46; DESIGN
+ * schedule 7: the student table's 生活目標・健康目標 are monthly
+ * metadata carried as the view's accompanying information). The
+ * notes belong to the view, not to the days: a student view's
+ * November carries November's goals, and another view of the same
+ * month carries none unless they are written for it. One row per
+ * view and month; either goal may stand empty (null) while the
+ * other is written. Deleting the view takes its notes with it —
+ * the notes name nothing outside the view, unlike a publication,
+ * which is the issued record and so restricts the delete.
+ */
+export const viewMonthNotes = pgTable(
+  "view_month_notes",
+  {
+    schoolId: text("school_id").notNull(),
+    viewDefinitionId: text("view_definition_id").notNull(),
+    /** The month the notes accompany, as YYYY-MM. */
+    month: text("month").notNull(),
+    lifeGoal: text("life_goal"),
+    healthGoal: text("health_goal"),
+  },
+  (t) => [
+    primaryKey({ columns: [t.schoolId, t.viewDefinitionId, t.month] }),
+    foreignKey({
+      name: "view_month_notes_view_fk",
+      columns: [t.schoolId, t.viewDefinitionId],
+      foreignColumns: [viewDefinitions.schoolId, viewDefinitions.id],
+    }).onDelete("cascade"),
+    check("view_month_notes_month_check", sql`${t.month} ~ '^[0-9]{4}-[0-9]{2}$'`),
+  ],
+);
+
+export type ViewMonthNoteRow = typeof viewMonthNotes.$inferSelect;
 
 /** The effective print settings of one publication (DESIGN
  *  schedule 9.1): paper, orientation, margin and the font-size

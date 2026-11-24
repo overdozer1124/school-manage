@@ -27,8 +27,9 @@ import type { Visibility } from "./codes.js";
  */
 
 /** The standard layouts of DESIGN schedule 4.8.1 plus the extension
- *  layout. Phase 2 values are accepted here; whether a screen can
- *  render one is the screen's concern, not the definition's. */
+ *  layouts (the transposed table and the student two-column table,
+ *  Issue #46). Phase 2 values are accepted here; whether a screen
+ *  can render one is the screen's concern, not the definition's. */
 export const viewLayoutSchema = z.enum([
   "month_rows",
   "week_rows",
@@ -36,6 +37,7 @@ export const viewLayoutSchema = z.enum([
   "calendar_grid",
   "week_timeline",
   "transposed",
+  "two_column",
 ]);
 export type ViewLayout = z.infer<typeof viewLayoutSchema>;
 

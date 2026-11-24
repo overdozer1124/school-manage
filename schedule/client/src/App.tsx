@@ -10,11 +10,13 @@ import { CalendarGrid } from "./CalendarGrid";
 import type { CellEditorContext } from "./cells";
 import { DutyPanel } from "./DutyPanel";
 import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
+import { MonthNotesHeader } from "./MonthNotes";
 import { PendingPanel } from "./PendingPanel";
 import { PublishPanel } from "./PublishPanel";
 import { RowsTable, UndecidedSection } from "./RowsTable";
 import { SettingsPanel } from "./SettingsPanel";
 import { TransposedTable } from "./TransposedTable";
+import { TwoColumnTable } from "./TwoColumnTable";
 import { WeekTimeline } from "./WeekTimeline";
 import { YearTable } from "./YearTable";
 import type { BootstrapData, RangeData } from "./types";
@@ -24,8 +26,9 @@ import type { BootstrapData, RangeData } from "./types";
  * months or weeks, and read the L1 / L2 rows table. The L3 year
  * table (year_columns) is drawn too, since Issue #42, the
  * L4 calendar grid (calendar_grid) since Issue #43, the
- * L5 week timeline (week_timeline) since Issue #44, and the
- * transposed table since Issue #45; a view
+ * L5 week timeline (week_timeline) since Issue #44, the
+ * transposed table since Issue #45, and the two-column
+ * student table (two_column) since Issue #46; a view
  * naming a layout still to come can be selected but shows a
  * notice instead of a table (those layouts arrive with their
  * own issues). Cells take direct input (Issue #35): a saved
@@ -121,7 +124,8 @@ export function App({
       view.layout !== "year_columns" &&
       view.layout !== "calendar_grid" &&
       view.layout !== "week_timeline" &&
-      view.layout !== "transposed"
+      view.layout !== "transposed" &&
+      view.layout !== "two_column"
     ) {
       setRange(null);
       return;
@@ -209,7 +213,8 @@ export function App({
     view.layout === "year_columns" ||
     view.layout === "calendar_grid" ||
     view.layout === "week_timeline" ||
-    view.layout === "transposed";
+    view.layout === "transposed" ||
+    view.layout === "two_column";
   // A transposed view's days are its columns, so a week-scoped
   // one is labelled by its range, like the week layouts; a
   // month- or year-scoped one takes the month / year label.
@@ -286,8 +291,10 @@ export function App({
               it again on the action. */}
           {/* Issuing is the month / week tables' for now: the
               year table's print is a later issue's work (Issue
-              #42 keeps L3 to the screen). */}
-          {rowsLayout && (
+              #42 keeps L3 to the screen). The two-column student
+              table issues too (Issue #46): the printed sheet is
+              the layout's reason to exist. */}
+          {(rowsLayout || view.layout === "two_column") && (
             <button type="button" onClick={() => setPublishOpen(true)}>
               発行・印刷
             </button>
@@ -313,6 +320,19 @@ export function App({
       {rowsLayout && range && (
         <>
           <RowsTable bootstrap={bootstrap} range={range} editor={editor} />
+          <UndecidedSection events={undecidedForMonth(range, anchor)} />
+        </>
+      )}
+      {supported && range && view.layout === "two_column" && (
+        <>
+          <MonthNotesHeader
+            range={range}
+            anchor={anchor}
+            api={api}
+            canEdit={bootstrap.permissions.includes("daily.write")}
+            onSaved={editor.onSaved}
+          />
+          <TwoColumnTable bootstrap={bootstrap} range={range} editor={editor} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />
         </>
       )}

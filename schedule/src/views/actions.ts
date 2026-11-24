@@ -1,11 +1,13 @@
 import { defineActions } from "@school-manage/platform-client";
 import * as store from "../db/views.js";
+import * as monthNotesStore from "../db/monthNotes.js";
 import { itemDefinitions, targetGroups } from "../db/schema.js";
 import { assertOwned, tenantDb } from "../db/tenant.js";
 import { scheduleAction } from "../permissions.js";
 import {
   deleteViewInputSchema,
   setViewArchivedInputSchema,
+  setViewMonthNoteInputSchema,
   updateColumnWidthInputSchema,
   viewDefinitionInputSchema,
 } from "./types.js";
@@ -73,6 +75,22 @@ export function createViewActions(db: Db) {
         throw new Error(`view column not found: ${input.viewId}/${input.columnId}`);
       }
       return column;
+    }),
+
+    // A view's monthly accompanying notes (Issue #46): the
+    // student table's 生活目標・健康目標， written month by
+    // month by the people who run the schedule. The notes are
+    // content of the table, not part of its definition, so the
+    // write is daily.write (Admin and Editor) rather than
+    // definition.write; reading them rides on getRange
+    // (view.read, and the public bundle for a public view).
+    setViewMonthNote: scheduleAction("daily.write", async ({ auth, request }) => {
+      const input = setViewMonthNoteInputSchema.parse(request);
+      const view = (await store.getViews(db, auth.schoolId)).find((v) => v.id === input.viewId);
+      if (!view) {
+        throw new Error(`view definition not found: ${input.viewId}`);
+      }
+      return monthNotesStore.setViewMonthNote(db, auth.schoolId, input);
     }),
   });
 }

@@ -367,6 +367,16 @@ export interface PublicationDocumentData extends PublicationData {
   documentHtml: string;
 }
 
+/** One month of a view's accompanying notes (Issue #46), as
+ *  getRange returns them on the range: the student table's
+ *  生活目標・健康目標 for that month. Either goal may be unset
+ *  (null) while the other stands written. */
+export interface ViewMonthNoteData {
+  month: string;
+  lifeGoal: string | null;
+  healthGoal: string | null;
+}
+
 export interface RangeData {
   view: ViewDefinitionData;
   from: string;
@@ -375,6 +385,9 @@ export interface RangeData {
   undecided: { month: string | null; events: Record<string, unknown>[] }[];
   eventValues: unknown[];
   conflicts: DutyConflictData[];
+  /** The view's month notes for the months this range covers
+   *  (Issue #46): a month nobody wrote notes for is absent. */
+  monthNotes: ViewMonthNoteData[];
 }
 
 // ---- public viewing (Issue #41) -----------------------------------

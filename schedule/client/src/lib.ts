@@ -251,6 +251,12 @@ export function rangeFor(view: ViewDefinitionData, anchor: string): { from: stri
     const year = schoolYearOf(anchor);
     return { from: `${year}-04-01`, to: `${year + 1}-03-31` };
   }
+  if (view.layout === "two_column") {
+    // The two-column student table (Issue #46) covers one
+    // month, like month_rows: the two columns are the month's
+    // two halves, not two periods.
+    return { from: monthStartOf(anchor), to: monthEndOf(anchor) };
+  }
   // month_rows (and any other layout shown as rows for now)
   return { from: monthStartOf(anchor), to: monthEndOf(anchor) };
 }
@@ -268,7 +274,7 @@ export function stepAnchor(view: ViewDefinitionData, anchor: string, dir: 1 | -1
     if (view.periodScope === "year") return addMonths(anchor, dir * 12);
     return addMonths(anchor, dir);
   }
-  // month_rows and calendar_grid both step by months.
+  // month_rows, calendar_grid and two_column all step by months.
   return addMonths(anchor, dir);
 }
 

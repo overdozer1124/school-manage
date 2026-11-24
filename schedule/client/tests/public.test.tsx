@@ -115,6 +115,7 @@ const RANGE: RangeData = {
   undecided: [],
   eventValues: [],
   conflicts: [],
+  monthNotes: [],
 };
 
 function fakeApi(overrides: Partial<PublicApi> = {}): PublicApi {

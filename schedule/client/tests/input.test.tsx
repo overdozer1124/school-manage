@@ -287,6 +287,7 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
         undecided: [],
         eventValues: [],
         conflicts: [],
+        monthNotes: [],
       };
     },
     createEvent: async (input) => {
@@ -464,6 +465,9 @@ function makeFakeApi(bootstrap: BootstrapData, seedEvents: Record<string, unknow
       throw new Error("not used");
     },
     setViewArchived: async (): Promise<never> => {
+      throw new Error("not used");
+    },
+    setViewMonthNote: async (): Promise<never> => {
       throw new Error("not used");
     },
     deleteViewDefinition: async (): Promise<never> => {

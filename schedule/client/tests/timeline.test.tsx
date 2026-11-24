@@ -261,7 +261,7 @@ function makeRange(
     dailyValues: [],
     dutyAssignments: [],
   }));
-  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [] };
+  return { view, from, to, days, undecided: [], eventValues: [], conflicts: [], monthNotes: [] };
 }
 
 function bandCell(date: string): HTMLElement {
