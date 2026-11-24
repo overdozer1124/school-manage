@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef } from "react";
 import type { CellEditorContext } from "./cells";
+import type { EventDragContext } from "./drag";
 import { columnLabel, dayLabel, dayMark, weekdayLabel } from "./lib";
 import { TableBodyCell, useCellActivation } from "./RowsTable";
 import { useDialogFocus } from "./useDialogFocus";
@@ -24,12 +25,16 @@ export function DayDetail({
   range,
   day,
   editor,
+  drag,
   onClose,
 }: {
   bootstrap: BootstrapData;
   range: RangeData;
   day: RangeDayData;
   editor?: CellEditorContext | undefined;
+  /** Drag & drop moving (Issue #50), carried into the shared
+   *  cells as in the tables. */
+  drag?: EventDragContext | undefined;
   onClose(): void;
 }) {
   const dialogRef = useDialogFocus<HTMLDivElement>(onClose);
@@ -111,6 +116,7 @@ export function DayDetail({
                     bootstrap={bootstrap}
                     conflicts={range.conflicts}
                     editor={editor}
+                    drag={drag}
                     {...activation.cellProps(day, column)}
                   />
                 ))}

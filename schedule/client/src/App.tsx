@@ -8,6 +8,7 @@ import {
 } from "./api";
 import { CalendarGrid } from "./CalendarGrid";
 import type { CellEditorContext } from "./cells";
+import { useEventDrag } from "./drag";
 import { DutyPanel } from "./DutyPanel";
 import {
   monthLabel,
@@ -223,6 +224,12 @@ export function App({
     [api, handleError],
   );
 
+  // Drag & drop moving of events (Issue #50): one drag context
+  // for the whole screen, shared by every layout — a move is an
+  // event update through the editor's relay, and its failure
+  // notice stands under the header.
+  const drag = useEventDrag(editor);
+
   if (forbidden) {
     return (
       <main className="schedule-app">
@@ -375,27 +382,38 @@ export function App({
         </div>
       </header>
 
+      {drag.notice && (
+        <p className="move-notice" role="alert">
+          {drag.notice}
+        </p>
+      )}
       {!supported && (
         <p className="unsupported">このレイアウト（{view.layout}）は今後の Issue で対応します。</p>
       )}
       {supported && range && view.layout === "year_columns" && (
-        <YearTable bootstrap={bootstrap} range={range} editor={editor} />
+        <YearTable bootstrap={bootstrap} range={range} editor={editor} drag={drag} />
       )}
       {supported && range && view.layout === "year_columns" && summary && (
         <SummaryTable summary={summary} />
       )}
       {supported && range && view.layout === "calendar_grid" && (
-        <CalendarGrid bootstrap={bootstrap} range={range} anchor={anchor} editor={editor} />
+        <CalendarGrid
+          bootstrap={bootstrap}
+          range={range}
+          anchor={anchor}
+          editor={editor}
+          drag={drag}
+        />
       )}
       {supported && range && view.layout === "week_timeline" && (
-        <WeekTimeline bootstrap={bootstrap} range={range} editor={editor} />
+        <WeekTimeline bootstrap={bootstrap} range={range} editor={editor} drag={drag} />
       )}
       {supported && range && view.layout === "transposed" && (
         <TransposedTable bootstrap={bootstrap} range={range} editor={editor} />
       )}
       {rowsLayout && range && (
         <>
-          <RowsTable bootstrap={bootstrap} range={range} editor={editor} />
+          <RowsTable bootstrap={bootstrap} range={range} editor={editor} drag={drag} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />
           {view.layout === "month_rows" && summary && (
             <SummarySection period={summary.months[0] ?? summary.total} />
@@ -412,7 +430,7 @@ export function App({
             canEdit={bootstrap.permissions.includes("daily.write")}
             onSaved={editor.onSaved}
           />
-          <TwoColumnTable bootstrap={bootstrap} range={range} editor={editor} />
+          <TwoColumnTable bootstrap={bootstrap} range={range} editor={editor} drag={drag} />
           <UndecidedSection events={undecidedForMonth(range, anchor)} />
           {summary && <SummarySection period={summary.months[0] ?? summary.total} />}
         </>
@@ -462,6 +480,15 @@ export function App({
             setReloadTick((t) => t + 1);
           }}
         />
+      )}
+      {drag.ghost && (
+        <div
+          className="drag-ghost"
+          style={{ left: drag.ghost.x, top: drag.ghost.y }}
+          aria-hidden="true"
+        >
+          {drag.ghost.label}
+        </div>
       )}
     </main>
   );

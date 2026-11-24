@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DailyCell, EntryCell, isImeKeyEvent, type CellEditorContext } from "./cells";
+import type { EventDragContext } from "./drag";
 import {
   columnLabel,
   dailyCellText,
@@ -44,10 +45,14 @@ export function RowsTable({
   bootstrap,
   range,
   editor,
+  drag,
 }: {
   bootstrap: BootstrapData;
   range: RangeData;
   editor?: CellEditorContext;
+  /** Drag & drop moving (Issue #50): the day rows are drop
+   *  targets, and their event lines are grabbable. */
+  drag?: EventDragContext;
 }) {
   const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
   const activation = useCellActivation();
@@ -78,6 +83,7 @@ export function RowsTable({
               <tr
                 key={day.date}
                 data-date={day.date}
+                {...(drag ? drag.dropTargetProps(day.date) : {})}
                 className={mark.closed ? "closed" : undefined}
               >
                 <th scope="row" className={`date-cell kind-${mark.kind || "plain"}`}>
@@ -93,6 +99,7 @@ export function RowsTable({
                     bootstrap={bootstrap}
                     conflicts={range.conflicts}
                     editor={editor}
+                    drag={drag}
                     {...activation.cellProps(day, column)}
                   />
                 ))}
@@ -146,6 +153,7 @@ export function TableBodyCell({
   bootstrap,
   conflicts,
   editor,
+  drag,
   active,
   seedText,
   onActivate,
@@ -159,6 +167,9 @@ export function TableBodyCell({
    *  table (declared as a plain union, not an optional prop:
    *  the tables always pass it, undefined included). */
   editor: CellEditorContext | undefined;
+  /** The table's drag context (Issue #50), or undefined when
+   *  the table does not carry drag & drop moving. */
+  drag: EventDragContext | undefined;
   active: boolean;
   seedText: string | null;
   onActivate(): void;
@@ -202,6 +213,7 @@ export function TableBodyCell({
       column,
       bootstrap,
       editor,
+      drag,
       active,
       seedText,
       onActivate,
@@ -222,9 +234,18 @@ export function TableBodyCell({
   const editable =
     editor !== undefined &&
     (column.sourceKind === "event_category" || column.sourceKind === "daily_item");
+  // A drag & drop drop target (Issue #50): the cell names its
+  // day for the drag's hit-testing, and highlights while a drag
+  // hovers its day — every cell of the day lights together, so
+  // the target reads as the day, not as one column.
+  const dropTarget = drag !== undefined && drag.dropDate === day.date;
+  const classNames = [editable && active ? "cell-active" : "", dropTarget ? "drop-target" : ""]
+    .filter(Boolean)
+    .join(" ");
   return (
     <td
-      className={editable && active ? "cell-active" : undefined}
+      className={classNames === "" ? undefined : classNames}
+      {...(drag ? drag.dropTargetProps(day.date) : {})}
       tabIndex={editable ? 0 : undefined}
       onClick={editable ? onActivate : undefined}
       onKeyDown={

@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 import type { CellEditorContext } from "./cells";
+import type { EventDragContext } from "./drag";
 import { columnLabel, dayMark, schoolYearMonths, schoolYearOf, weekdayLabel } from "./lib";
 import { TableBodyCell, useCellActivation } from "./RowsTable";
 import type { BootstrapData, RangeData } from "./types";
@@ -33,10 +34,14 @@ export function YearTable({
   bootstrap,
   range,
   editor,
+  drag,
 }: {
   bootstrap: BootstrapData;
   range: RangeData;
   editor?: CellEditorContext;
+  /** Drag & drop moving (Issue #50): the shared cells carry
+   *  it, so the year table moves events the rows tables' way. */
+  drag?: EventDragContext;
 }) {
   const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
   const activation = useCellActivation();
@@ -104,6 +109,7 @@ export function YearTable({
                     <th
                       scope="row"
                       data-date={date}
+                      {...(drag ? drag.dropTargetProps(date) : {})}
                       className={`date-cell kind-${mark.kind || "plain"}${mark.closed ? " closed" : ""}`}
                     >
                       <span className="date-num">{dayNum}</span>
@@ -118,6 +124,7 @@ export function YearTable({
                         bootstrap={bootstrap}
                         conflicts={range.conflicts}
                         editor={editor}
+                        drag={drag}
                         {...activation.cellProps(day, column)}
                       />
                     ))}

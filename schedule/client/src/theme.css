@@ -1822,6 +1822,66 @@ span.timeline-block {
   text-decoration: underline;
 }
 
+/* Drag & drop moving (Issue #50; DESIGN schedule 6.2-4.1): a
+   grabbable entry takes the grab cursor and gives up touch
+   scrolling, so a touch drag moves the entry instead of the
+   page. The day under the drag highlights as one day — the
+   inset accent frame — and the landed entry flashes once, so
+   the move is noticed where it landed. */
+.drag-grabbable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.drag-grabbable:active {
+  cursor: grabbing;
+}
+
+.dragging-source {
+  opacity: 0.4;
+}
+
+.drop-target {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.just-moved {
+  animation: moved-flash 2s ease-out;
+}
+
+@keyframes moved-flash {
+  0% {
+    background: color-mix(in srgb, var(--warn) 45%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 80;
+  transform: translate(-50%, -150%);
+  max-width: 240px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
+}
+
+.move-notice {
+  margin: 8px 0;
+  font-size: 13px;
+  color: var(--sun);
+}
+
 /* The publishing panel (Issue #40): the duty panel's shell, a
    plain form grid for the issue fields, the version list, and
    the stored document's preview frame. */

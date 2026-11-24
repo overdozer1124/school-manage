@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from "r
 import { isValidTimeString, timeToMinutes } from "@school-manage/calendar-types";
 import { ForbiddenError, UnauthorizedError, type ScheduleApi } from "./api";
 import { DetailModal, type DetailTarget } from "./DetailModal";
+import type { EventDragContext } from "./drag";
 import { QuickPopover, type QuickPopoverTarget } from "./QuickPopover";
 import {
   absenceLineText,
@@ -79,6 +80,9 @@ interface CellProps {
   column: ViewColumnData;
   bootstrap: BootstrapData;
   editor: CellEditorContext;
+  /** The tables' drag & drop moving (Issue #50), when the
+   *  table carries it: event lines become grabbable. */
+  drag?: EventDragContext | undefined;
   active: boolean;
   /** The character typed on the cell itself, seeding the draft. */
   seedText: string | null;
@@ -340,7 +344,7 @@ export function buildTitleOnlyEntry(
   };
 }
 
-export function EntryCell({ day, column, bootstrap, editor, active, seedText }: CellProps) {
+export function EntryCell({ day, column, bootstrap, editor, drag, active, seedText }: CellProps) {
   const plan = entryPlan(day, column, bootstrap);
   const isViewer = bootstrap.role === "Viewer";
   // A Viewer starts input only for their own trips and leave
@@ -701,6 +705,15 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
         </li>
       );
     }
+    // Drag & drop moving (Issue #50; DESIGN schedule 6.2-4.1):
+    // an event this caller may change is grabbable — the press
+    // records a drag candidate in the table's drag context, and
+    // the drag begins only once the pointer travels (drag.tsx).
+    // Absences keep their own editors and are not grabbed, and
+    // neither is an entry the caller may not change. The click
+    // that trails a real drag is suppressed, so a drop never
+    // also opens the modal.
+    const grabbable = subjectKind === "event" && changeable && drag !== undefined;
     return (
       <li key={id} className="entry-line">
         {editable ? (
@@ -709,9 +722,13 @@ export function EntryCell({ day, column, bootstrap, editor, active, seedText }: 
           // behind it, so no new-entry input starts.
           <button
             type="button"
-            className="entry-text entry-open"
+            className={`entry-text entry-open${grabbable ? " drag-grabbable" : ""}${
+              drag?.draggingId === id ? " dragging-source" : ""
+            }${drag?.justMovedId === id ? " just-moved" : ""}`}
+            onPointerDown={grabbable ? (e) => drag.startDrag(record, day.date, text, e) : undefined}
             onClick={(e) => {
               e.stopPropagation();
+              if (drag?.shouldSuppressClick()) return;
               openDetail(subjectKind, record);
             }}
           >
