@@ -733,6 +733,35 @@ export function eventSpan(event: Record<string, unknown>): { start: string; end:
   return { start, end };
 }
 
+/** Whole days from one date to another (negative when the
+ *  second date is the earlier one). Dates are YYYY-MM-DD text,
+ *  so the count is a plain UTC day difference. */
+export function dayDiff(from: string, to: string): number {
+  return Math.round((Date.parse(to) - Date.parse(from)) / 86_400_000);
+}
+
+/**
+ * The record of an event moved by drag & drop (Issue #50;
+ * DESIGN schedule 6.2-4.1): the same record with its span
+ * shifted so the grabbed day lands on the drop day. The whole
+ * span moves — a multi-day event keeps its length — and every
+ * other field (time, assignees, and the revision the update is
+ * offered against) is the record's own, untouched. Null when
+ * there is nothing to move: the record carries no usable span,
+ * or the drop day is the grabbed day itself.
+ */
+export function movedEventRecord(
+  event: Record<string, unknown>,
+  grabDate: string,
+  dropDate: string,
+): Record<string, unknown> | null {
+  const span = eventSpan(event);
+  if (!span) return null;
+  const delta = dayDiff(grabDate, dropDate);
+  if (delta === 0) return null;
+  return { ...event, startsOn: addDays(span.start, delta), endsOn: addDays(span.end, delta) };
+}
+
 /** The span of one absence record, from its fromDate / toDate. */
 export function absenceSpan(
   absence: Record<string, unknown>,

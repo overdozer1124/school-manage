@@ -1,4 +1,5 @@
 import type { CellEditorContext } from "./cells";
+import type { EventDragContext } from "./drag";
 import { RowsTable } from "./RowsTable";
 import type { BootstrapData, RangeData } from "./types";
 
@@ -20,24 +21,30 @@ export function TwoColumnTable({
   bootstrap,
   range,
   editor,
+  drag,
 }: {
   bootstrap: BootstrapData;
   range: RangeData;
   editor?: CellEditorContext;
+  /** Drag & drop moving (Issue #50), shared by both halves. */
+  drag?: EventDragContext;
 }) {
   const half = Math.ceil(range.days.length / 2);
   const editorProps = editor ? { editor } : {};
+  const dragProps = drag ? { drag } : {};
   return (
     <div className="two-column">
       <RowsTable
         bootstrap={bootstrap}
         range={{ ...range, days: range.days.slice(0, half) }}
         {...editorProps}
+        {...dragProps}
       />
       <RowsTable
         bootstrap={bootstrap}
         range={{ ...range, days: range.days.slice(half) }}
         {...editorProps}
+        {...dragProps}
       />
     </div>
   );

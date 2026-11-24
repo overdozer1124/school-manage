@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { CellEditorContext } from "./cells";
 import { DayDetail } from "./DayDetail";
+import type { EventDragContext } from "./drag";
 import { DetailModal, type DetailTarget } from "./DetailModal";
 import {
   absenceLineText,
@@ -151,6 +152,7 @@ export function CalendarGrid({
   range,
   anchor,
   editor,
+  drag,
 }: {
   bootstrap: BootstrapData;
   range: RangeData;
@@ -158,6 +160,10 @@ export function CalendarGrid({
    *  the neighbouring months and are drawn dimmed). */
   anchor: string;
   editor?: CellEditorContext;
+  /** Drag & drop moving (Issue #50): the day cells are drop
+   *  targets, and changeable event lines and bars are
+   *  grabbable. */
+  drag?: EventDragContext;
 }) {
   const [detailDate, setDetailDate] = useState<string | null>(null);
   const [detail, setDetail] = useState<DetailTarget | null>(null);
@@ -187,6 +193,29 @@ export function CalendarGrid({
       return entry.subjectKind === "absence" && entry.record["staffId"] === bootstrap.teacherId;
     }
     return entry.subjectKind === "event" || "purpose" in entry.record;
+  };
+
+  /** Whether an entry is grabbable for drag & drop moving
+   *  (Issue #50): an event the caller may change, under the
+   *  same rule that opens its modal — absences are not grabbed
+   *  (they keep their own editors), and a Viewer changes no
+   *  events at all. */
+  const grabbable = (entry: GridEntry): boolean =>
+    drag !== undefined && entry.subjectKind === "event" && canOpen(entry);
+
+  /** The day a press on a period bar grabs: the bar is one
+   *  element across its days, so the grabbed day is the week
+   *  column under the pointer — the lane is a seven-column
+   *  grid — falling back to the bar's rendered start where the
+   *  geometry is unavailable. The drop then lands that day on
+   *  the target day, as a rows-table line does. */
+  const barGrabDate = (e: ReactPointerEvent, bar: GridEntry, week: string[]): string => {
+    const renderedStart = bar.start < (week[0] as string) ? (week[0] as string) : bar.start;
+    const lane = (e.currentTarget as HTMLElement).parentElement;
+    const rect = lane?.getBoundingClientRect();
+    if (!rect || rect.width <= 0) return renderedStart;
+    const col = Math.min(6, Math.max(0, Math.floor(((e.clientX - rect.left) / rect.width) * 7)));
+    return week[col] ?? renderedStart;
   };
 
   /** Opens the detail modal on one entry, framed by its kind
@@ -261,10 +290,14 @@ export function CalendarGrid({
                     const startCol = week.indexOf(bar.start < weekStart ? weekStart : bar.start);
                     const endCol = week.indexOf(bar.end > weekEnd ? weekEnd : bar.end);
                     const day = byDate.get(bar.start < weekStart ? weekStart : bar.start);
+                    const barId = stringField(bar.record, "id");
                     const classes = [
                       "grid-bar",
                       bar.start >= weekStart ? "bar-start" : "",
                       bar.end <= weekEnd ? "bar-end" : "",
+                      grabbable(bar) ? "drag-grabbable" : "",
+                      drag?.draggingId === barId && barId !== null ? "dragging-source" : "",
+                      drag?.justMovedId === barId && barId !== null ? "just-moved" : "",
                     ]
                       .filter(Boolean)
                       .join(" ");
@@ -279,8 +312,15 @@ export function CalendarGrid({
                         style={style}
                         data-start={bar.start}
                         data-end={bar.end}
+                        onPointerDown={
+                          grabbable(bar)
+                            ? (e) =>
+                                drag?.startDrag(bar.record, barGrabDate(e, bar, week), bar.text, e)
+                            : undefined
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (drag?.shouldSuppressClick()) return;
                           openDetail(bar, day);
                         }}
                       >
@@ -315,12 +355,18 @@ export function CalendarGrid({
                   return (
                     <div
                       key={date}
-                      className={`grid-cell kind-${mark.kind || "plain"}${mark.closed ? " closed" : ""}${date.slice(0, 7) !== month ? " outside" : ""}`}
+                      className={`grid-cell kind-${mark.kind || "plain"}${mark.closed ? " closed" : ""}${date.slice(0, 7) !== month ? " outside" : ""}${drag?.dropDate === date ? " drop-target" : ""}`}
                       data-date={date}
+                      {...(drag ? drag.dropTargetProps(date) : {})}
                       role="button"
                       tabIndex={0}
                       aria-label={`${Number(date.slice(5, 7))}月${Number(date.slice(8, 10))}日の詳細`}
-                      onClick={() => setDetailDate(date)}
+                      onClick={() => {
+                        // The click that trails a drag dropped
+                        // here is the drop, not a day selection.
+                        if (drag?.shouldSuppressClick()) return;
+                        setDetailDate(date);
+                      }}
                       onKeyDown={(e) => {
                         if (e.target !== e.currentTarget) return;
                         if (e.key === "Enter" || e.key === " ") {
@@ -342,9 +388,25 @@ export function CalendarGrid({
                           <button
                             key={stringField(line.record, "id") ?? line.text}
                             type="button"
-                            className="grid-entry"
+                            className={`grid-entry${grabbable(line) ? " drag-grabbable" : ""}${
+                              drag?.draggingId === stringField(line.record, "id") &&
+                              stringField(line.record, "id") !== null
+                                ? " dragging-source"
+                                : ""
+                            }${
+                              drag?.justMovedId === stringField(line.record, "id") &&
+                              stringField(line.record, "id") !== null
+                                ? " just-moved"
+                                : ""
+                            }`}
+                            onPointerDown={
+                              grabbable(line)
+                                ? (e) => drag?.startDrag(line.record, date, line.text, e)
+                                : undefined
+                            }
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (drag?.shouldSuppressClick()) return;
                               openDetail(line, day);
                             }}
                           >
@@ -379,6 +441,7 @@ export function CalendarGrid({
           range={range}
           day={detailDay}
           editor={editor}
+          drag={drag}
           onClose={() => setDetailDate(null)}
         />
       )}

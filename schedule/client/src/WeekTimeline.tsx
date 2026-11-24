@@ -2,6 +2,7 @@ import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "rea
 import { UnauthorizedError } from "./api";
 import { buildEventRecord, type CellEditorContext } from "./cells";
 import { DetailModal, type DetailTarget } from "./DetailModal";
+import type { EventDragContext } from "./drag";
 import { QuickPopover, type QuickPopoverTarget } from "./QuickPopover";
 import {
   absenceLineText,
@@ -128,10 +129,15 @@ export function WeekTimeline({
   bootstrap,
   range,
   editor,
+  drag,
 }: {
   bootstrap: BootstrapData;
   range: RangeData;
   editor?: CellEditorContext;
+  /** Drag & drop moving (Issue #50): the day columns are drop
+   *  targets, and changeable event entries are grabbable —
+   *  the move changes the day and keeps the entry's time. */
+  drag?: EventDragContext;
 }) {
   const [detail, setDetail] = useState<DetailTarget | null>(null);
   const [popover, setPopover] = useState<QuickPopoverTarget | null>(null);
@@ -264,14 +270,31 @@ export function WeekTimeline({
       return span === null || span.end <= config.startMinutes || span.start >= config.endMinutes;
     });
 
+  /** Whether an entry is grabbable for drag & drop moving
+   *  (Issue #50): an event the caller may change, under the
+   *  same rule that opens its modal — absences are not grabbed,
+   *  and a Viewer changes no events at all. A spanning entry
+   *  stands in every day of its span, and the grabbed day is
+   *  the day whose column it was pressed in. */
+  const grabbable = (entry: TlEntry): boolean =>
+    drag !== undefined && entry.subjectKind === "event" && canOpen(entry);
+
   const renderEntryLine = (entry: TlEntry, day: RangeDayData, className: string) =>
     canOpen(entry) ? (
       <button
         key={entry.id}
         type="button"
-        className={className}
+        className={`${className}${grabbable(entry) ? " drag-grabbable" : ""}${
+          drag?.draggingId === entry.id ? " dragging-source" : ""
+        }${drag?.justMovedId === entry.id ? " just-moved" : ""}`}
+        onPointerDown={
+          grabbable(entry)
+            ? (e) => drag?.startDrag(entry.record, day.date, entry.text, e)
+            : undefined
+        }
         onClick={(e) => {
           e.stopPropagation();
+          if (drag?.shouldSuppressClick()) return;
           openDetail(entry, day);
         }}
       >
@@ -380,7 +403,12 @@ export function WeekTimeline({
         {range.days.map((day) => {
           const bands = dayPeriodBands(bootstrap, day);
           return (
-            <div key={`band-${day.date}`} className="timeline-band-cell" data-date={day.date}>
+            <div
+              key={`band-${day.date}`}
+              className={`timeline-band-cell${drag?.dropDate === day.date ? " drop-target" : ""}`}
+              data-date={day.date}
+              {...(drag ? drag.dropTargetProps(day.date) : {})}
+            >
               {bandEntriesOf(day, bands).map((entry) =>
                 renderEntryLine(entry, day, "timeline-band-entry"),
               )}
@@ -435,8 +463,9 @@ export function WeekTimeline({
             return (
               <div
                 key={day.date}
-                className={`timeline-day-column${mark.closed ? " closed" : ""}`}
+                className={`timeline-day-column${mark.closed ? " closed" : ""}${drag?.dropDate === day.date ? " drop-target" : ""}`}
                 data-date={day.date}
+                {...(drag ? drag.dropTargetProps(day.date) : {})}
                 style={{
                   height: axisHeight,
                   backgroundSize: `100% ${config.intervalMinutes * PX_PER_MINUTE}px`,
@@ -459,7 +488,10 @@ export function WeekTimeline({
                           top: (start - config.startMinutes) * PX_PER_MINUTE,
                           height: config.intervalMinutes * PX_PER_MINUTE,
                         }}
-                        onClick={() =>
+                        onClick={() => {
+                          // A drag dropped here is a move,
+                          // not a slot selection.
+                          if (drag?.shouldSuppressClick()) return;
                           openSlot({
                             date: day.date,
                             label,
@@ -468,8 +500,8 @@ export function WeekTimeline({
                               startsAt: minutesToTimeText(start),
                               endsAt: minutesToTimeText(end),
                             },
-                          })
-                        }
+                          });
+                        }}
                       />
                     );
                   })}
@@ -491,13 +523,21 @@ export function WeekTimeline({
                     <button
                       key={entry.id}
                       type="button"
-                      className="timeline-block"
+                      className={`timeline-block${grabbable(entry) ? " drag-grabbable" : ""}${
+                        drag?.draggingId === entry.id ? " dragging-source" : ""
+                      }${drag?.justMovedId === entry.id ? " just-moved" : ""}`}
                       style={style}
                       data-start={minutesToTimeText(span.start)}
                       data-end={minutesToTimeText(span.end)}
                       data-lane={lane}
+                      onPointerDown={
+                        grabbable(entry)
+                          ? (e) => drag?.startDrag(entry.record, day.date, label, e)
+                          : undefined
+                      }
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (drag?.shouldSuppressClick()) return;
                         openDetail(entry, day);
                       }}
                     >
@@ -559,15 +599,21 @@ export function WeekTimeline({
                 return (
                   <div
                     key={day.date}
-                    className="timeline-period-cell"
+                    className={`timeline-period-cell${drag?.dropDate === day.date ? " drop-target" : ""}`}
                     data-date={day.date}
                     data-period={row.period}
+                    {...(drag ? drag.dropTargetProps(day.date) : {})}
                     {...(editor
                       ? {
                           role: "button" as const,
                           tabIndex: 0,
                           "aria-label": `${selection.label}に予定を追加`,
-                          onClick: () => openSlot(selection),
+                          onClick: () => {
+                            // A drag dropped here is a move,
+                            // not a slot selection.
+                            if (drag?.shouldSuppressClick()) return;
+                            openSlot(selection);
+                          },
                           onKeyDown: (e: ReactKeyboardEvent) => {
                             if (e.target !== e.currentTarget) return;
                             if (e.key === "Enter" || e.key === " ") {
