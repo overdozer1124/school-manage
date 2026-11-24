@@ -9,10 +9,11 @@ afterEach(cleanup);
 
 // The confirmation queue (Issue #39, DESIGN-AUTH-TENANCY 4.6):
 // tentative absences and events are settled by confirming or
-// deleting — nothing else. The fixture school carries one
-// tentative trip and Issue #35's two provisional entries (a
-// placeholder name and a title-only trip), so both halves of
-// the queue are exercised, provisionals included.
+// deleting — nothing else. The fixture school carries two
+// tentative absences (a trip and 田中先生's leave) and Issue
+// #35's two provisional entries (a placeholder name and a
+// title-only trip), so both halves of the queue are exercised,
+// provisionals included.
 
 describe("confirmation queue (Issue #39)", () => {
   it("lists tentative absences and provisional events, and settles them by confirm or delete", async () => {
@@ -24,15 +25,23 @@ describe("confirmation queue (Issue #39)", () => {
     const dialog = await screen.findByRole("dialog", { name: "確認待ちの一覧" });
     const inDialog = within(dialog);
 
-    // The tentative trip (absence) and the two provisionals.
+    // The tentative absences (the trip and the leave) and the
+    // two provisionals.
     expect(await inDialog.findByText(/市教研研修会/)).toBeInTheDocument();
     expect(inDialog.getByText(/生徒指導担当者部会/)).toBeInTheDocument();
     expect(inDialog.getAllByText(/仮の予定：出張の担当が未確定です/)).toHaveLength(2);
 
-    // Confirm the absence: it leaves the queue, confirmed.
+    // Confirm the trip: it leaves the queue, confirmed; the
+    // leave still waits.
     const absenceRow = inDialog.getByText(/市教研研修会/).closest("li") as HTMLElement;
     fireEvent.click(within(absenceRow).getByRole("button", { name: "確定" }));
     await waitFor(() => expect(inDialog.queryByText(/市教研研修会/)).not.toBeInTheDocument());
+    expect((await api.getPendingAbsences()).items).toHaveLength(1);
+
+    // Confirm the leave as well: the absence queue empties.
+    const leaveRow = inDialog.getByText(/田中先生/).closest("li") as HTMLElement;
+    fireEvent.click(within(leaveRow).getByRole("button", { name: "確定" }));
+    await waitFor(() => expect(inDialog.queryByText(/田中先生/)).not.toBeInTheDocument());
     expect((await api.getPendingAbsences()).items).toHaveLength(0);
 
     // Delete one provisional event: it leaves the queue, gone.

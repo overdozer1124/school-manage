@@ -899,4 +899,437 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
     })) as Record<string, unknown>;
     expect(diff).toEqual({ comparable: false, fromId: "pub-legacy", toId: fresh["id"] });
   });
+
+  // ---- Issue #49: the week, year and calendar layouts issue ----
+
+  it("a week publication covers exactly its span, headed by the span", async () => {
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-week-staff",
+      name: "職員用週表",
+      layout: "week_rows",
+      audience: "staff",
+      periodScope: "week",
+      layoutParams: { days: 7 },
+      columns: [
+        { id: "col-week-events", sourceKind: "event_category" },
+        { id: "col-week-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+        { id: "col-week-note", sourceKind: "daily_item", itemDefinitionId: "item-staff-note" },
+      ],
+    });
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-week-guardian",
+      name: "保護者用週表",
+      layout: "week_rows",
+      audience: "guardian",
+      periodScope: "week",
+      columns: [
+        { id: "col-week-g-events", sourceKind: "event_category" },
+        { id: "col-week-g-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+        {
+          id: "col-week-g-dismissal",
+          sourceKind: "daily_item",
+          itemDefinitionId: "item-dismissal",
+        },
+      ],
+    });
+    // An event on the day after the span (Monday the 4th): the
+    // week's document must not reach it.
+    await actions.createEvent.run(auth("Editor"), {
+      cookie: COOKIE,
+      event: eventPayload({
+        id: "ev-outside-week",
+        title: "週外の行事",
+        startsOn: "2027-10-04",
+        endsOn: "2027-10-04",
+      }),
+    });
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-week-staff",
+      targetMonth: "2027-09",
+      from: "2027-09-27",
+      to: "2027-10-03",
+      versionLabel: "週版",
+    })) as Record<string, unknown>;
+    // The span is recorded on the version; the target month is
+    // the month the span starts in.
+    expect(meta["rangeFrom"]).toBe("2027-09-27");
+    expect(meta["rangeTo"]).toBe("2027-10-03");
+    expect(meta["targetMonth"]).toBe("2027-09");
+
+    const doc = (await actions.getPublication.run(auth("Viewer"), {
+      id: meta["id"] as string,
+    })) as Record<string, unknown>;
+    const html = doc["documentHtml"] as string;
+    // The header names the span, not a month.
+    expect(html).toContain("2027年9月27日〜10月3日 行事予定表");
+    // Exactly the span's seven days stand as rows.
+    const tbody = (html.split("<tbody>")[1] ?? "").split("</tbody>")[0] as string;
+    expect(tbody.match(/<tr/g)).toHaveLength(7);
+    expect(html).toContain("運動会");
+    expect(html).toContain("職員だけのメモ");
+    expect(html).not.toContain("週外の行事");
+    // The week table's default paper (Issue #49): A4 landscape.
+    expect(html).toContain("size: A4 landscape");
+
+    // The guardian week: the audience rule holds as on paper
+    // months — the guardian view's own range holds no
+    // staff-only anything.
+    const gMeta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-week-guardian",
+      targetMonth: "2027-09",
+      from: "2027-09-27",
+      to: "2027-10-03",
+      versionLabel: "保護者週版",
+    })) as Record<string, unknown>;
+    const gDoc = (await actions.getPublication.run(auth("Viewer"), {
+      id: gMeta["id"] as string,
+    })) as Record<string, unknown>;
+    const gHtml = gDoc["documentHtml"] as string;
+    expect(gHtml).toContain("運動会");
+    expect(gHtml).toContain("1～3年 14:30");
+    expect(gHtml).not.toContain("職員会議");
+    expect(gHtml).not.toContain("職員だけのメモ");
+    expect(gHtml).not.toContain("先生A");
+  });
+
+  it("a 14-day week span issues too, and reaches its second week", async () => {
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-week-staff",
+      targetMonth: "2027-09",
+      from: "2027-09-27",
+      to: "2027-10-10",
+      versionLabel: "2週間版",
+    })) as Record<string, unknown>;
+    const doc = (await actions.getPublication.run(auth("Viewer"), {
+      id: meta["id"] as string,
+    })) as Record<string, unknown>;
+    const html = doc["documentHtml"] as string;
+    const tbody = (html.split("<tbody>")[1] ?? "").split("</tbody>")[0] as string;
+    expect(tbody.match(/<tr/g)).toHaveLength(14);
+    expect(html).toContain("週外の行事");
+  });
+
+  it("week versions diff against the previous issue of the same week", async () => {
+    const v1 = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-week-staff",
+      targetMonth: "2027-10",
+      from: "2027-10-11",
+      to: "2027-10-17",
+      versionLabel: "週第1版",
+    })) as Record<string, unknown>;
+    await actions.setDailyValue.run(auth("Editor"), {
+      date: "2027-10-13",
+      itemDefinitionId: "item-lunch",
+      value: "yes",
+    });
+    const v2 = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-week-staff",
+      targetMonth: "2027-10",
+      from: "2027-10-11",
+      to: "2027-10-17",
+      versionLabel: "週第2版",
+    })) as Record<string, unknown>;
+    const diff = (await actions.getPublicationDiff.run(auth("Viewer"), {
+      id: v2["id"] as string,
+    })) as Record<string, unknown>;
+    expect(diff["comparable"]).toBe(true);
+    expect(diff["fromId"]).toBe(v1["id"]);
+    // Only the changed day is listed — the period grouping
+    // reaches beyond months.
+    expect(diff["changes"]).toEqual([
+      {
+        date: "2027-10-13",
+        cells: [{ columnId: "col-week-lunch", label: "給食", before: "", after: "○" }],
+      },
+    ]);
+  });
+
+  it("a year publication spans the school year with all twelve months", async () => {
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-year-staff",
+      name: "職員用年間表",
+      layout: "year_columns",
+      audience: "staff",
+      periodScope: "year",
+      columns: [
+        { id: "col-year-events", sourceKind: "event_category" },
+        { id: "col-year-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+        { id: "col-year-note", sourceKind: "daily_item", itemDefinitionId: "item-staff-note" },
+      ],
+    });
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-year-guardian",
+      name: "保護者用年間表",
+      layout: "year_columns",
+      audience: "guardian",
+      periodScope: "year",
+      columns: [
+        { id: "col-year-g-events", sourceKind: "event_category" },
+        { id: "col-year-g-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+      ],
+    });
+    // A known entry in the year's last month (March).
+    await actions.createEvent.run(auth("Editor"), {
+      cookie: COOKIE,
+      event: eventPayload({
+        id: "ev-graduation",
+        title: "卒業式",
+        startsOn: "2028-03-15",
+        endsOn: "2028-03-15",
+      }),
+    });
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-year-staff",
+      targetMonth: "2027-04",
+      from: "2027-04-01",
+      to: "2028-03-31",
+      versionLabel: "年度版",
+    })) as Record<string, unknown>;
+    expect(meta["rangeFrom"]).toBe("2027-04-01");
+    expect(meta["rangeTo"]).toBe("2028-03-31");
+    expect((meta["printSettings"] as Record<string, unknown>)["paper"]).toBe("A3");
+
+    const doc = (await actions.getPublication.run(auth("Viewer"), {
+      id: meta["id"] as string,
+    })) as Record<string, unknown>;
+    const html = doc["documentHtml"] as string;
+    expect(html).toContain("2027年度 行事予定表");
+    // All twelve month blocks, April through March.
+    for (const m of [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]) {
+      expect(html).toContain(`>${m}月</th>`);
+    }
+    expect(html).toContain("卒業式");
+    expect(html).toContain("運動会");
+    expect(html).toContain("職員だけのメモ");
+    // The year table's default paper (Issue #49): A3 landscape.
+    expect(html).toContain("size: A3 landscape");
+
+    const gMeta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-year-guardian",
+      targetMonth: "2027-04",
+      from: "2027-04-01",
+      to: "2028-03-31",
+      versionLabel: "保護者年度版",
+    })) as Record<string, unknown>;
+    const gDoc = (await actions.getPublication.run(auth("Viewer"), {
+      id: gMeta["id"] as string,
+    })) as Record<string, unknown>;
+    const gHtml = gDoc["documentHtml"] as string;
+    expect(gHtml).toContain("卒業式");
+    expect(gHtml).not.toContain("職員会議");
+    expect(gHtml).not.toContain("職員だけのメモ");
+    expect(gHtml).not.toContain("先生A");
+  });
+
+  it("a calendar publication prints every entry of a crowded day, uncapped", async () => {
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-calendar-staff",
+      name: "職員用カレンダー",
+      layout: "calendar_grid",
+      audience: "staff",
+      periodScope: "month",
+      columns: [
+        { id: "col-cal-events", sourceKind: "event_category" },
+        { id: "col-cal-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+        { id: "col-cal-note", sourceKind: "daily_item", itemDefinitionId: "item-staff-note" },
+      ],
+    });
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-calendar-guardian",
+      name: "保護者用カレンダー",
+      layout: "calendar_grid",
+      audience: "guardian",
+      periodScope: "month",
+      columns: [
+        { id: "col-cal-g-events", sourceKind: "event_category" },
+        { id: "col-cal-g-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+      ],
+    });
+    // Four events and an absence on one day: five entries,
+    // two more than the screen grid's cell cap of three. The
+    // absence is the entry a column-shaped reading of the
+    // calendar would lose — the view's columns carry no
+    // absence of their own, yet the grid's cells count the
+    // day's absences among their lines.
+    const crowded = ["校内研修", "避難訓練", "委員会活動", "PTA総会"];
+    for (const [i, title] of crowded.entries()) {
+      await actions.createEvent.run(auth("Editor"), {
+        cookie: COOKIE,
+        event: eventPayload({
+          id: `ev-cal-${i + 1}`,
+          title,
+          startsOn: "2027-10-05",
+          endsOn: "2027-10-05",
+        }),
+      });
+    }
+    await actions.createAbsence.run(auth("Editor"), {
+      cookie: COOKIE,
+      absence: {
+        id: "abs-cal-crowded",
+        staffId: "teacher-a2",
+        fromDate: "2027-10-05",
+        toDate: "2027-10-05",
+        time: { kind: "all_day" },
+        kind: "leave",
+        certainty: "confirmed",
+        purpose: null,
+        note: null,
+        subdivisionKey: "annual",
+      },
+    });
+    const meta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-calendar-staff",
+      targetMonth: MONTH,
+      versionLabel: "カレンダー版",
+    })) as Record<string, unknown>;
+    // No span named: the span defaults to the target month, and
+    // is recorded like any other.
+    expect(meta["rangeFrom"]).toBe("2027-10-01");
+    expect(meta["rangeTo"]).toBe("2027-10-31");
+    expect((meta["printSettings"] as Record<string, unknown>)["orientation"]).toBe("portrait");
+
+    const doc = (await actions.getPublication.run(auth("Viewer"), {
+      id: meta["id"] as string,
+    })) as Record<string, unknown>;
+    const html = doc["documentHtml"] as string;
+    // The calendar's default paper (Issue #49): A4 portrait.
+    expect(html).toContain("size: A4 portrait");
+    // Every entry of the crowded day prints — including the
+    // ones the screen cell caps away — and no overflow count
+    // appears anywhere.
+    for (const title of crowded) expect(html).toContain(title);
+    // The crowded day's absence prints as its own line too:
+    // the day's lines run events-then-absences, so the leave
+    // stands past the cap, with the fourth event.
+    expect(html).toContain("先生B（年休）");
+    expect(html).not.toMatch(/他\d+件/);
+    // The month's staff content stands in its cells — the
+    // staff-only event, the leave, and the compact lunch line
+    // the grid shows (「給食：○」, the item's name ahead of its
+    // symbol).
+    expect(html).toContain("職員会議");
+    expect(html).toContain("先生A（年休）");
+    expect(html).toContain("給食：○");
+    // The staff note is a text daily value: the grid reads
+    // those in the day detail, not the cell, so the calendar
+    // document does not print it either.
+    expect(html).not.toContain("職員だけのメモ");
+
+    const gMeta = (await actions.createPublication.run(auth("Editor"), {
+      cookie: COOKIE,
+      viewId: "view-calendar-guardian",
+      targetMonth: MONTH,
+      versionLabel: "保護者カレンダー版",
+    })) as Record<string, unknown>;
+    const gDoc = (await actions.getPublication.run(auth("Viewer"), {
+      id: gMeta["id"] as string,
+    })) as Record<string, unknown>;
+    const gHtml = gDoc["documentHtml"] as string;
+    expect(gHtml).toContain("PTA総会");
+    expect(gHtml).not.toContain("職員会議");
+    expect(gHtml).not.toContain("職員だけのメモ");
+    expect(gHtml).not.toContain("先生A");
+    expect(gHtml).not.toMatch(/他\d+件/);
+  });
+
+  it("spans that break their layout's rule are refused", async () => {
+    // A month table with a span that is not its month.
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-staff",
+        targetMonth: MONTH,
+        from: "2027-10-04",
+        to: "2027-10-10",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/月表の発行期間は/);
+    // A year table with a month's span.
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-year-staff",
+        targetMonth: MONTH,
+        from: "2027-10-01",
+        to: "2027-10-31",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/年間表の発行期間は/);
+    // A week table with five days.
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-week-staff",
+        targetMonth: MONTH,
+        from: "2027-10-11",
+        to: "2027-10-15",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/週表の発行期間は/);
+    // A full week that does not start on Monday (the rows
+    // layouts keep Monday weeks).
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-week-staff",
+        targetMonth: MONTH,
+        from: "2027-10-12",
+        to: "2027-10-18",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/月曜日から/);
+    // A target month that is not the span's first month.
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-week-staff",
+        targetMonth: MONTH,
+        from: "2027-09-27",
+        to: "2027-10-03",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/対象月は発行期間の開始月/);
+    // The screen-only layouts do not issue at all.
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-timeline-staff",
+      name: "職員用タイムライン",
+      layout: "week_timeline",
+      audience: "staff",
+      periodScope: "week",
+      columns: [{ id: "col-tl-events", sourceKind: "event_category" }],
+    });
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-transposed-staff",
+      name: "職員用転置表",
+      layout: "transposed",
+      audience: "staff",
+      periodScope: "month",
+      columns: [{ id: "col-tr-events", sourceKind: "event_category" }],
+    });
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-timeline-staff",
+        targetMonth: MONTH,
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/発行の対象外/);
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-transposed-staff",
+        targetMonth: MONTH,
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/発行の対象外/);
+  });
 });

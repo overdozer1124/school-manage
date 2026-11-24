@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { dateStringSchema } from "@school-manage/calendar-types";
 import type { PublicationPrintSettings } from "../db/schema.js";
 
 /**
@@ -22,16 +23,30 @@ export const printSettingsInputSchema = z.object({
 });
 export type PrintSettingsInput = z.infer<typeof printSettingsInputSchema>;
 
-export const createPublicationInputSchema = z.object({
-  viewId: nonEmptyString,
-  /** The issued month, "YYYY-MM" (DESIGN schedule 4.8's
-   *  target_month; Phase 1 issues month tables, §9.1). */
-  targetMonth: targetMonthSchema,
-  versionLabel: nonEmptyString,
-  note: z.string().nullable().optional(),
-  printSettings: printSettingsInputSchema.optional(),
-  cookie: nonEmptyString,
-});
+export const createPublicationInputSchema = z
+  .object({
+    viewId: nonEmptyString,
+    /** The issued month, "YYYY-MM" (DESIGN schedule 4.8's
+     *  target_month; Phase 1 issues month tables, §9.1). Issue
+     *  #49 keeps it as the month the issued span starts in. */
+    targetMonth: targetMonthSchema,
+    /** The issued span (Issue #49): the first and last days of
+     *  the period the document covers — a week of a week table,
+     *  the school year of a year table. Both or neither: omitted,
+     *  the span is the target month, as it was before spans. */
+    from: dateStringSchema.optional(),
+    to: dateStringSchema.optional(),
+    versionLabel: nonEmptyString,
+    note: z.string().nullable().optional(),
+    printSettings: printSettingsInputSchema.optional(),
+    cookie: nonEmptyString,
+  })
+  .refine((v) => (v.from === undefined) === (v.to === undefined), {
+    message: "from and to must be named together",
+  })
+  .refine((v) => v.from === undefined || v.to === undefined || v.from <= v.to, {
+    message: "from must be on or before to",
+  });
 export type CreatePublicationInput = z.infer<typeof createPublicationInputSchema>;
 
 export const getPublicationsInputSchema = z.object({
@@ -88,18 +103,35 @@ export const DEFAULT_PRINT_SETTINGS: PublicationPrintSettings = {
 };
 
 /**
- * The settings one publication is generated with: the defaults,
- * then the view definition's own print_settings (DESIGN schedule
- * 9.1 keeps them on the view), then the publisher's choices at
- * publish time. The view's JSON is read field by field — it is
- * school-edited data, so a value of the wrong shape is ignored
- * rather than trusted.
+ * The print defaults of each layout (Issue #49; DESIGN
+ * schedule 4.8.1, 9.1): the rows tables (L1 month, L2 week) and
+ * the two-column student table are A4 landscape; the year table
+ * (L3) is the wide paper it is drawn for, A3 landscape; the
+ * month calendar (L4) is one A4 page, portrait. A layout not
+ * listed keeps the month table's defaults.
+ */
+export const LAYOUT_PRINT_DEFAULTS: Record<string, Partial<PublicationPrintSettings>> = {
+  year_columns: { paper: "A3", orientation: "landscape" },
+  calendar_grid: { paper: "A4", orientation: "portrait" },
+};
+
+/**
+ * The settings one publication is generated with: the layout's
+ * defaults, then the view definition's own print_settings
+ * (DESIGN schedule 9.1 keeps them on the view), then the
+ * publisher's choices at publish time. The view's JSON is read
+ * field by field — it is school-edited data, so a value of the
+ * wrong shape is ignored rather than trusted.
  */
 export function resolvePrintSettings(
   viewSettings: Record<string, unknown> | null,
   override?: PrintSettingsInput,
+  layout?: string,
 ): PublicationPrintSettings {
   const resolved: PublicationPrintSettings = { ...DEFAULT_PRINT_SETTINGS };
+  if (layout && LAYOUT_PRINT_DEFAULTS[layout]) {
+    Object.assign(resolved, LAYOUT_PRINT_DEFAULTS[layout]);
+  }
   const fromView = printSettingsInputSchema.safeParse(viewSettings ?? {});
   if (fromView.success) Object.assign(resolved, fromView.data);
   if (override) Object.assign(resolved, override);

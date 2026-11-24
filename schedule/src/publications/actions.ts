@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { defineActions } from "@school-manage/platform-client";
-import { addDays } from "@school-manage/calendar-types";
+import { addDays, weekStartOf } from "@school-manage/calendar-types";
 import * as definitionsStore from "../db/definitions.js";
 import * as dutiesStore from "../db/duties.js";
 import * as templatesStore from "../db/kindTemplates.js";
@@ -49,6 +49,70 @@ function monthEndOf(month: string): string {
   return addDays(next, -1);
 }
 
+/** The layouts a publication can issue (Issue #49): the rows
+ *  tables (L1 month / L2 week), the two-column student table,
+ *  the year table (L3) and the month calendar (L4). The week
+ *  timeline (L5) and the transposed table are screen forms;
+ *  issuing them is out of scope. */
+const PUBLISHABLE_LAYOUTS = new Set([
+  "month_rows",
+  "week_rows",
+  "two_column",
+  "year_columns",
+  "calendar_grid",
+]);
+
+/**
+ * The span one publication covers, validated against the
+ * view's layout (Issue #49): with no from/to named, the span
+ * is the target month, as it was before spans were named. A
+ * month-shaped layout (month_rows / two_column / calendar_grid)
+ * issues exactly one calendar month and the target month must
+ * be it; a week table issues a span of 7 or 14 days; a year
+ * table issues its school year, April 1 to the following
+ * March 31. A span that breaks its layout's rule is refused
+ * with the rule it broke.
+ */
+function publicationSpanOf(
+  layout: string,
+  input: { targetMonth: string; from?: string | undefined; to?: string | undefined },
+): { from: string; to: string } {
+  if (!PUBLISHABLE_LAYOUTS.has(layout)) {
+    throw new Error("このレイアウトは発行の対象外です（週タイムライン・転置表は画面表示のみです）");
+  }
+  const from = input.from ?? `${input.targetMonth}-01`;
+  const to = input.to ?? monthEndOf(input.targetMonth);
+  if (input.from !== undefined && input.from.slice(0, 7) !== input.targetMonth) {
+    throw new Error("対象月は発行期間の開始月と一致させてください");
+  }
+  if (layout === "week_rows") {
+    const days = (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1;
+    if (days !== 7 && days !== 14) {
+      throw new Error("週表の発行期間は7日または14日にしてください");
+    }
+    // The rows layouts keep Monday weeks (the client's rangeFor
+    // starts a week view on Monday), so a span the screen could
+    // show always starts on one; anything else is a span no week
+    // table ever displayed.
+    if (weekStartOf(from) !== from) {
+      throw new Error("週表の発行期間は月曜日から始めてください");
+    }
+    return { from, to };
+  }
+  if (layout === "year_columns") {
+    const year = Number(from.slice(0, 4));
+    const schoolYear = Number(from.slice(5, 7)) >= 4 ? year : year - 1;
+    if (from !== `${schoolYear}-04-01` || to !== `${schoolYear + 1}-03-31`) {
+      throw new Error("年間表の発行期間は年度（4月1日〜翌年3月31日）にしてください");
+    }
+    return { from, to };
+  }
+  if (from !== `${input.targetMonth}-01` || to !== monthEndOf(input.targetMonth)) {
+    throw new Error("月表の発行期間は対象月の1か月分にしてください");
+  }
+  return { from, to };
+}
+
 /**
  * The publication actions (Issue #40), declared with the
  * permissions of DESIGN-AUTH-TENANCY 4.4: issuing is `publish`
@@ -73,6 +137,14 @@ function monthEndOf(month: string): string {
  * cancelled version — a withdrawn version's record stands as
  * it was left); and a version may be cancelled, which stamps
  * the record and keeps it in the history.
+ *
+ * Issue #49 issues the other table layouts: createPublication
+ * names the span it covers (from/to, defaulting to the target
+ * month), validated per layout by publicationSpanOf, renders
+ * the layout's paper form from the span's range, and stores
+ * the span on the row — the period the diff's previous-version
+ * lookup and the public range's latest-version lookup read
+ * (db/publications.ts periodOf).
  */
 export function createPublicationActions(
   db: Db,
@@ -92,9 +164,10 @@ export function createPublicationActions(
       if (!view) {
         throw new Error(`view definition not found: ${input.viewId}`);
       }
+      const span = publicationSpanOf(view.layout, input);
       const range = await computeRange(db, platformClient, dutyPlatform, auth.schoolId, {
-        from: `${input.targetMonth}-01`,
-        to: monthEndOf(input.targetMonth),
+        from: span.from,
+        to: span.to,
         viewId: view.id,
         cookie: input.cookie,
       });
@@ -128,7 +201,11 @@ export function createPublicationActions(
         grades,
         dayPatterns,
       };
-      const printSettings = resolvePrintSettings(view.printSettings, input.printSettings);
+      const printSettings = resolvePrintSettings(
+        view.printSettings,
+        input.printSettings,
+        view.layout,
+      );
       const publishedAt = new Date();
       const renderInput = {
         schoolName: typeof school?.name === "string" ? school.name : null,
@@ -156,6 +233,8 @@ export function createPublicationActions(
         documentFormat: "html",
         documentHtml,
         snapshotJson,
+        rangeFrom: span.from,
+        rangeTo: span.to,
       });
       return publicationsStore.toPublicationMeta(row);
     }),
@@ -236,7 +315,7 @@ export function createPublicationActions(
       }
       const previous = await publicationsStore.getPreviousPublication(db, auth.schoolId, row);
       if (!previous) {
-        // The first version of its view and month: nothing
+        // The first version of its view and period: nothing
         // before it, so nothing changed from anything.
         return { comparable: true, fromId: null, toId: row.id, changes: [] };
       }

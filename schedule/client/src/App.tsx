@@ -9,7 +9,15 @@ import {
 import { CalendarGrid } from "./CalendarGrid";
 import type { CellEditorContext } from "./cells";
 import { DutyPanel } from "./DutyPanel";
-import { monthLabel, rangeFor, stepAnchor, undecidedForMonth, yearLabel } from "./lib";
+import {
+  monthLabel,
+  publicationPeriodFor,
+  publicationPeriodLabel,
+  rangeFor,
+  stepAnchor,
+  undecidedForMonth,
+  yearLabel,
+} from "./lib";
 import { MonthNotesHeader } from "./MonthNotes";
 import { PendingPanel } from "./PendingPanel";
 import { PublishPanel } from "./PublishPanel";
@@ -350,12 +358,16 @@ export function App({
               the publish form inside is offered only to holders
               of the publish permission, and the server checks
               it again on the action. */}
-          {/* Issuing is the month / week tables' for now: the
-              year table's print is a later issue's work (Issue
-              #42 keeps L3 to the screen). The two-column student
-              table issues too (Issue #46): the printed sheet is
-              the layout's reason to exist. */}
-          {(rowsLayout || view.layout === "two_column") && (
+          {/* Issuing covers the paper layouts: the month / week
+              rows tables, the two-column student table (Issue
+              #46: the printed sheet is the layout's reason to
+              exist), and — Issue #49 — the year table and the
+              month calendar. The week timeline and the transposed
+              table stay screen forms and are not issued. */}
+          {(rowsLayout ||
+            view.layout === "two_column" ||
+            view.layout === "year_columns" ||
+            view.layout === "calendar_grid") && (
             <button type="button" onClick={() => setPublishOpen(true)}>
               発行・印刷
             </button>
@@ -435,7 +447,8 @@ export function App({
           bootstrap={bootstrap}
           api={api}
           view={view}
-          anchor={anchor}
+          period={publicationPeriodFor(view, anchor)}
+          periodLabel={publicationPeriodLabel(view, publicationPeriodFor(view, anchor))}
           onClose={() => setPublishOpen(false)}
         />
       )}

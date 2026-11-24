@@ -19,6 +19,7 @@ import {
 } from "./api";
 import {
   absenceLineText,
+  calendarWeeks,
   columnLabel,
   dailyCellText,
   dayAttributeText,
@@ -27,10 +28,13 @@ import {
   eventTimeText,
   eventTitle,
   monthEndOf,
-  monthStartOf,
   provisionalLineText,
   provisionalTemplateOf,
+  publicationPeriodOf,
+  schoolYearMonths,
+  schoolYearOf,
   weekdayLabel,
+  weekStartOf,
 } from "./lib";
 import type {
   AbsenceSubdivisionData,
@@ -767,6 +771,24 @@ function fixtureAbsences(): Record<string, unknown>[] {
       subdivisionKey: "annual",
       time: { kind: "clock", startsAt: "10:00", endsAt: "11:00" },
     },
+    {
+      // 田中先生's tentative leave on 2026-11-16 — the same
+      // leave the rotation fixture (ABSENCES above) pits
+      // against that day's duty. The day's three timed events
+      // fill the calendar grid's cell cap, so this leave is
+      // the entry the screen counts as 他1件 — and the one a
+      // calendar publication must print (Issue #49).
+      ...base,
+      id: "abs-5",
+      staffId: "teacher-1",
+      fromDate: "2026-11-16",
+      toDate: "2026-11-16",
+      kind: "leave",
+      purpose: null,
+      subdivisionKey: "annual",
+      certainty: "tentative",
+      confirmedBy: null,
+    },
   ];
 }
 
@@ -908,6 +930,62 @@ function devCellLines(input: {
 }
 
 /**
+ * One day's lines in a dev calendar document (Issue #49): the
+ * screen grid's cell composition (CalendarGrid.tsx), without
+ * its cap — the day's events as their lines (a provisional
+ * entry by its placeholder text), then the day's absences by
+ * theirs, then one compact line for each symbol / boolean
+ * daily item among the view's columns (「給食：○」). The
+ * composition is the day's, not the columns': an absence
+ * prints whatever columns the view carries, and what the
+ * grid leaves to the day detail — the longer daily values,
+ * the duties, the day attributes — stays out, as on the
+ * server (calendarDayText in the print renderer). The range
+ * the adapter hands over is already audience-shaped, as the
+ * grid's bundle is: a non-staff view's days hold no absences
+ * and no staff-only events. Shared by the document builder
+ * and the snapshot builder, so the dev snapshot's calendar
+ * cell is the dev document's cell.
+ */
+function devCalendarLines(input: {
+  bootstrap: BootstrapData;
+  day: RangeDayData;
+  columns: ViewDefinitionData["columns"];
+}): string[] {
+  const { bootstrap, day, columns } = input;
+  const lines: string[] = [];
+  for (const event of day.events) {
+    lines.push(
+      provisionalTemplateOf(event, bootstrap)
+        ? provisionalLineText(event)
+        : `${eventTimeText(event)}${eventTitle(event)}`,
+    );
+  }
+  for (const absence of day.absences) {
+    lines.push(absenceLineText(absence, bootstrap));
+  }
+  for (const column of columns) {
+    if (column.sourceKind !== "daily_item") continue;
+    const item = bootstrap.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
+    if (!item || (item.valueType !== "symbol" && item.valueType !== "boolean")) continue;
+    const text = dailyCellText(day, column, bootstrap);
+    if (text) lines.push(`${item.name}：${text}`);
+  }
+  return lines;
+}
+
+/** A span as a document header names it (Issue #49): the first
+ *  day in full, the last day shortened while it stays in the
+ *  same year — the server renderer's spanText, mirrored. */
+function devSpanText(from: string, to: string): string {
+  const fromText = `${from.slice(0, 4)}年${Number(from.slice(5, 7))}月${Number(from.slice(8, 10))}日`;
+  if (from.slice(0, 4) === to.slice(0, 4)) {
+    return `${fromText}〜${Number(to.slice(5, 7))}月${Number(to.slice(8, 10))}日`;
+  }
+  return `${fromText}〜${to.slice(0, 4)}年${Number(to.slice(5, 7))}月${Number(to.slice(8, 10))}日`;
+}
+
+/**
  * The issued document of the dev adapter (Issue #40): a mirror
  * of the server's print renderer over the adapter's own range,
  * so the publishing panel can be exercised by hand exactly as
@@ -917,6 +995,12 @@ function devCellLines(input: {
  * names. The document is built once, at publish time, and the
  * stored string is what later reads return — later edits to the
  * fixture state do not reach it, as on the server.
+ *
+ * Issue #49 mirrors the other layouts' paper forms as well:
+ * the week table headed by its span, the year table as the
+ * twelve month blocks side by side, and the month calendar
+ * printing ALL of each day's entries (no 「他○件」 — paper
+ * cannot be clicked).
  */
 function buildDevDocument(input: {
   bootstrap: BootstrapData;
@@ -941,6 +1025,15 @@ function buildDevDocument(input: {
       column,
     });
   const monthText = `${input.targetMonth.slice(0, 4)}年${Number(input.targetMonth.slice(5, 7))}月`;
+  // The period the header names (Issue #49): a week table its
+  // span, a year table its school year, the month-shaped
+  // layouts their month.
+  const periodText =
+    view.layout === "week_rows"
+      ? devSpanText(range.from, range.to)
+      : view.layout === "year_columns"
+        ? `${schoolYearOf(range.from)}年度`
+        : monthText;
   const publishedText = input.publishedAt.toLocaleString("ja-JP");
   const head = columns
     .map((column) => `<th scope="col">${escHtml(columnLabel(column, bootstrap))}</th>`)
@@ -971,16 +1064,96 @@ ${days.map(rowFor).join("\n")}
     view.layout === "two_column" && note && (note.lifeGoal !== null || note.healthGoal !== null)
       ? `<section class="month-notes">${note.lifeGoal !== null ? `<div><span class="goal-label">生活目標</span> ${escHtml(note.lifeGoal)}</div>` : ""}${note.healthGoal !== null ? `<div><span class="goal-label">健康目標</span> ${escHtml(note.healthGoal)}</div>` : ""}</section>`
       : "";
+  // The year table (Issue #49), the server renderer's shape:
+  // one wide table, the school year's twelve month blocks side
+  // by side, rows aligned on the day of the month, a date that
+  // does not exist standing blank.
+  const yearTableFor = (): string => {
+    const byDate = new Map(range.days.map((day) => [day.date, day]));
+    const blocks = schoolYearMonths(schoolYearOf(range.from));
+    const headRow1 = blocks
+      .map(
+        (block) =>
+          `<th colspan="${columns.length + 1}" class="year-month-head">${block.month}月</th>`,
+      )
+      .join("");
+    const headRow2 = blocks.map(() => `<th scope="col" class="date-cell">日</th>${head}`).join("");
+    const bodyRows = Array.from({ length: 31 }, (_, r) => {
+      const dayNum = r + 1;
+      const cells = blocks
+        .map((block) => {
+          const date = `${block.year}-${String(block.month).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
+          const day = byDate.get(date);
+          if (!day) {
+            return `<th scope="row" class="date-cell no-date"></th>${columns.map(() => `<td class="no-date"></td>`).join("")}`;
+          }
+          const mark = dayMark(day, bootstrap.masters.dayPatterns);
+          const dateCell = `<th scope="row" class="date-cell kind-${mark.kind}${mark.closed ? " closed" : ""}"><span class="date-num">${dayNum}</span> <span class="date-weekday">（${weekdayLabel(day.date)}）</span>${mark.sub ? `<span class="date-sub">${escHtml(mark.sub)}</span>` : ""}</th>`;
+          return (
+            dateCell +
+            columns
+              .map(
+                (column) =>
+                  `<td>${cellLines(day, column)
+                    .map((line) => `<div>${escHtml(line)}</div>`)
+                    .join("")}</td>`,
+              )
+              .join("")
+          );
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    }).join("\n");
+    return `<table class="year-table">\n<thead><tr>${headRow1}</tr><tr>${headRow2}</tr></thead>\n<tbody>\n${bodyRows}\n</tbody>\n</table>`;
+  };
+  // The month calendar (Issue #49), the server renderer's
+  // shape: week rows × weekday columns from the view's week
+  // start; each cell prints ALL of its day's lines — no
+  // 「他○件」, paper cannot be clicked. Padding days of the
+  // neighbouring months stand blank but for their number.
+  const calendarGridFor = (): string => {
+    const byDate = new Map(range.days.map((day) => [day.date, day]));
+    const weeks = calendarWeeks(view, range.from);
+    const headCells = (weeks[0] ?? [])
+      .map((date) => {
+        const weekday = weekdayOf(date);
+        return `<th scope="col" class="cal-weekday${weekday === "sat" ? " wd-sat" : weekday === "sun" ? " wd-sun" : ""}">${weekdayLabel(date)}</th>`;
+      })
+      .join("");
+    const weekRows = weeks
+      .map((week) => {
+        const cells = week
+          .map((date) => {
+            const day = byDate.get(date);
+            if (!day) {
+              return `<td class="cal-cell outside"><div class="cal-date">${Number(date.slice(8, 10))}</div></td>`;
+            }
+            const mark = dayMark(day, bootstrap.masters.dayPatterns);
+            const lines = devCalendarLines({ bootstrap, day, columns });
+            return `<td class="cal-cell kind-${mark.kind}${mark.closed ? " closed" : ""}"><div class="cal-date">${Number(day.date.slice(8, 10))}</div>${mark.sub ? `<div class="cal-sub">${escHtml(mark.sub)}</div>` : ""}${lines.map((line) => `<div class="cal-entry">${escHtml(line)}</div>`).join("")}</td>`;
+          })
+          .join("");
+        return `<tr>${cells}</tr>`;
+      })
+      .join("\n");
+    return `<table class="calendar-grid">\n<thead><tr>${headCells}</tr></thead>\n<tbody>\n${weekRows}\n</tbody>\n</table>`;
+  };
   const tableSection =
     view.layout === "two_column"
       ? `<div class="two-column">${tableFor(range.days.slice(0, Math.ceil(range.days.length / 2)))}${tableFor(range.days.slice(Math.ceil(range.days.length / 2)))}</div>`
-      : tableFor(range.days);
+      : view.layout === "year_columns"
+        ? yearTableFor()
+        : view.layout === "calendar_grid"
+          ? calendarGridFor()
+          : tableFor(range.days);
+  const fromMonth = range.from.slice(0, 7);
+  const toMonth = range.to.slice(0, 7);
   const undecided = range.undecided.filter(
-    (group) => group.month === input.targetMonth || group.month === null,
+    (group) => group.month === null || (group.month >= fromMonth && group.month <= toMonth),
   );
   const undecidedHtml =
     undecided.length > 0
-      ? `<section class="undecided"><h2>その月の未定</h2><ul>${undecided
+      ? `<section class="undecided"><h2>${fromMonth === toMonth ? "その月の未定" : "未定の行事"}</h2><ul>${undecided
           .flatMap((group) =>
             group.events.map(
               (event) =>
@@ -993,7 +1166,7 @@ ${days.map(rowFor).join("\n")}
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>${escHtml(bootstrap.school.name ?? "行事予定")} ${escHtml(monthText)} 行事予定表（${escHtml(input.versionLabel)}）</title>
+<title>${escHtml(bootstrap.school.name ?? "行事予定")} ${escHtml(periodText)} 行事予定表（${escHtml(input.versionLabel)}）</title>
 <style>
 @page {
   size: ${settings.paper} ${settings.orientation};
@@ -1018,13 +1191,27 @@ section.undecided h2 { font-size: 1.1em; margin: 0 0 4px; }
 section.undecided ul { margin: 0; padding-left: 18px; }
 .two-column { display: flex; gap: 12px; align-items: flex-start; }
 .two-column table { flex: 1; }
+th.year-month-head { text-align: center; font-size: 1.15em; }
+.date-cell.closed { background: #f3f4f6; }
+th.no-date, td.no-date { background: #fafafa; }
+table.calendar-grid { table-layout: fixed; }
+td.cal-cell { height: 68px; }
+td.cal-cell.closed { background: #f3f4f6; }
+td.cal-cell.outside { background: #fafafa; }
+.cal-date { font-weight: 600; }
+td.cal-cell.outside .cal-date { color: #aaa; font-weight: 400; }
+.kind-sat .cal-date { color: #2563eb; }
+.kind-holiday .cal-date { color: #b91c1c; }
+.cal-sub { font-size: 0.85em; color: #555; }
+.cal-weekday.wd-sat { color: #2563eb; }
+.cal-weekday.wd-sun { color: #b91c1c; }
 section.month-notes { border: 1px solid #999; padding: 4px 8px; margin-bottom: 6px; }
 section.month-notes .goal-label { font-weight: 600; margin-right: 8px; }
 </style>
 </head>
 <body>
 <header class="print-head">
-<h1>${escHtml(bootstrap.school.name ?? "行事予定")} ${escHtml(monthText)} 行事予定表</h1>
+<h1>${escHtml(bootstrap.school.name ?? "行事予定")} ${escHtml(periodText)} 行事予定表</h1>
 <div class="meta"><div>${escHtml(view.name)}</div><div>版：${escHtml(input.versionLabel)}</div><div>発行：${escHtml(publishedText)}</div></div>
 </header>
 ${monthNotesHtml}
@@ -1041,7 +1228,8 @@ ${undecidedHtml}
  * of the range in order, its day type, and every column's cell
  * text, composed by the same devCellLines the dev document
  * prints, so the dev diff compares what the dev document
- * shows.
+ * shows. A calendar version's days carry the one calendar
+ * cell instead (Issue #49), as on the server.
  */
 interface DevPublicationSnapshot {
   version: 1;
@@ -1061,23 +1249,31 @@ function buildDevSnapshot(input: {
   const staffView = view.audience === "staff";
   const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
   const hasMovement = viewHasMovement(bootstrap, columns);
+  const linesFor = (day: RangeDayData, column: (typeof columns)[number]): string[] =>
+    devCellLines({ bootstrap, staffView, hasMovement, conflicts: range.conflicts, day, column });
   return {
     version: 1,
     days: range.days.map((day) => ({
       date: day.date,
       dayType: typeof day.day["dayType"] === "string" ? (day.day["dayType"] as string) : "",
-      cells: columns.map((column) => ({
-        columnId: column.id,
-        label: columnLabel(column, bootstrap),
-        text: devCellLines({
-          bootstrap,
-          staffView,
-          hasMovement,
-          conflicts: range.conflicts,
-          day,
-          column,
-        }).join("\n"),
-      })),
+      // The month calendar (Issue #49) carries the one cell it
+      // prints — the day's full entry text, composed by
+      // devCalendarLines as the document composes it — as on
+      // the server.
+      cells:
+        view.layout === "calendar_grid"
+          ? [
+              {
+                columnId: "calendar",
+                label: "予定",
+                text: devCalendarLines({ bootstrap, day, columns }).join("\n"),
+              },
+            ]
+          : columns.map((column) => ({
+              columnId: column.id,
+              label: columnLabel(column, bootstrap),
+              text: linesFor(day, column).join("\n"),
+            })),
     })),
   };
 }
@@ -1297,6 +1493,8 @@ export function createDevApi(): ScheduleApi {
         printSettings: { paper: "A4", orientation: "landscape", marginMm: 10, fontScale: "medium" },
         documentFormat: "html",
         cancelledAt: null,
+        rangeFrom: null,
+        rangeTo: null,
       },
       snapshot: seedSnapshot("×"),
     },
@@ -1312,6 +1510,8 @@ export function createDevApi(): ScheduleApi {
         printSettings: { paper: "A4", orientation: "landscape", marginMm: 10, fontScale: "medium" },
         documentFormat: "html",
         cancelledAt: null,
+        rangeFrom: null,
+        rangeTo: null,
       },
       snapshot: seedSnapshot("○"),
     },
@@ -1327,6 +1527,8 @@ export function createDevApi(): ScheduleApi {
         printSettings: { paper: "A4", orientation: "landscape", marginMm: 10, fontScale: "medium" },
         documentFormat: "html",
         cancelledAt: "2026-10-06T09:00:00.000Z",
+        rangeFrom: null,
+        rangeTo: null,
       },
       snapshot: null,
     },
@@ -2558,11 +2760,17 @@ export function createDevApi(): ScheduleApi {
     async createPublication(input) {
       const view = boot.views.find((v) => v.id === input.viewId);
       if (!view) throw new Error(`view definition not found: ${input.viewId}`);
-      const settings = resolveDevPrintSettings(view.printSettings, input.printSettings);
-      const anchor = `${input.targetMonth}-15`;
+      // The issued span, validated per layout as on the server
+      // (Issue #49); the document renders the span's range.
+      const span = devPublicationSpanOf(view, input);
+      const settings = resolveDevPrintSettings(
+        view.printSettings,
+        input.printSettings,
+        view.layout,
+      );
       const range = await devRange({
-        from: monthStartOf(anchor),
-        to: monthEndOf(anchor),
+        from: span.from,
+        to: span.to,
         viewId: view.id,
       });
       const publishedAt = new Date();
@@ -2587,6 +2795,8 @@ export function createDevApi(): ScheduleApi {
         printSettings: settings,
         documentFormat: "html",
         cancelledAt: null,
+        rangeFrom: span.from,
+        rangeTo: span.to,
       };
       publications.unshift(publication);
       publicationDocuments.set(publication.id, documentHtml);
@@ -2651,15 +2861,17 @@ export function createDevApi(): ScheduleApi {
       const publication = publications.find((p) => p.id === input.id);
       if (!publication) throw new Error(`publication not found: ${input.id}`);
       // The version issued immediately before this one, of the
-      // same view and month, in the list's own order (newest
-      // first, then id) — cancelled versions count, as on the
-      // server.
+      // same view and the same period (Issue #49: the derived
+      // period — a month version's month, a week version's
+      // week), in the list's own order (newest first, then id)
+      // — cancelled versions count, as on the server.
+      const period = publicationPeriodOf(publication);
       const siblings = publications
-        .filter(
-          (p) =>
-            p.viewDefinitionId === publication.viewDefinitionId &&
-            p.targetMonth === publication.targetMonth,
-        )
+        .filter((p) => {
+          if (p.viewDefinitionId !== publication.viewDefinitionId) return false;
+          const other = publicationPeriodOf(p);
+          return other.from === period.from && other.to === period.to;
+        })
         .sort((a, b) =>
           a.publishedAt !== b.publishedAt
             ? a.publishedAt < b.publishedAt
@@ -2862,14 +3074,17 @@ export function createDevPublicApi(tokenValue: string): PublicApi {
       );
       const visible = (e: Record<string, unknown>) => e["visibility"] !== "staff_only";
       // The latest-version notice (Issue #48): the newest
-      // non-cancelled version of the range's first month, from
-      // this adapter's own version list (newest first), as the
-      // server reads its publications store.
-      const monthPublications = await inner.getPublications({
-        viewId: view.id,
-        targetMonth: input.from.slice(0, 7),
-      });
-      const latest = monthPublications.find((p) => !p.cancelledAt) ?? null;
+      // non-cancelled version whose period contains the range's
+      // first day (Issue #49's period rule), from this adapter's
+      // own version list (newest first), as the server reads
+      // its publications store.
+      const viewPublications = await inner.getPublications({ viewId: view.id });
+      const latest =
+        viewPublications.find((p) => {
+          if (p.cancelledAt) return false;
+          const period = publicationPeriodOf(p);
+          return period.from <= input.from && input.from <= period.to;
+        }) ?? null;
       return {
         ...range,
         days: range.days.map((day) => ({
@@ -2895,12 +3110,58 @@ export function createDevPublicApi(tokenValue: string): PublicApi {
   };
 }
 
-/** The dev adapter's print-settings resolution: the DESIGN
- *  9.1 defaults, the view's own print_settings over them, then
- *  the publisher's choices — the server's order. */
+/**
+ * The span one dev publication covers, validated against the
+ * view's layout (Issue #49): the mirror of the server's
+ * publicationSpanOf (schedule/src/publications/actions.ts),
+ * same rules, same refusals. With no from/to named, the span
+ * is the target month.
+ */
+function devPublicationSpanOf(
+  view: ViewDefinitionData,
+  input: { targetMonth: string; from?: string; to?: string },
+): { from: string; to: string } {
+  const publishable = ["month_rows", "week_rows", "two_column", "year_columns", "calendar_grid"];
+  if (!publishable.includes(view.layout)) {
+    throw new Error("このレイアウトは発行の対象外です（週タイムライン・転置表は画面表示のみです）");
+  }
+  const from = input.from ?? `${input.targetMonth}-01`;
+  const to = input.to ?? monthEndOf(`${input.targetMonth}-01`);
+  if (input.from !== undefined && input.from.slice(0, 7) !== input.targetMonth) {
+    throw new Error("対象月は発行期間の開始月と一致させてください");
+  }
+  if (view.layout === "week_rows") {
+    const days = (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1;
+    if (days !== 7 && days !== 14) {
+      throw new Error("週表の発行期間は7日または14日にしてください");
+    }
+    // Monday weeks, as the server requires (publicationSpanOf).
+    if (weekStartOf(from) !== from) {
+      throw new Error("週表の発行期間は月曜日から始めてください");
+    }
+    return { from, to };
+  }
+  if (view.layout === "year_columns") {
+    const schoolYear = schoolYearOf(from);
+    if (from !== `${schoolYear}-04-01` || to !== `${schoolYear + 1}-03-31`) {
+      throw new Error("年間表の発行期間は年度（4月1日〜翌年3月31日）にしてください");
+    }
+    return { from, to };
+  }
+  if (from !== `${input.targetMonth}-01` || to !== monthEndOf(from)) {
+    throw new Error("月表の発行期間は対象月の1か月分にしてください");
+  }
+  return { from, to };
+}
+
+/** The dev adapter's print-settings resolution: the layout's
+ *  defaults (Issue #49: the year table A3 landscape, the month
+ *  calendar A4 portrait), the view's own print_settings over
+ *  them, then the publisher's choices — the server's order. */
 function resolveDevPrintSettings(
   viewSettings: Record<string, unknown> | null,
   override?: Partial<PrintSettingsData>,
+  layout?: string,
 ): PrintSettingsData {
   const resolved: PrintSettingsData = {
     paper: "A4",
@@ -2908,6 +3169,14 @@ function resolveDevPrintSettings(
     marginMm: 10,
     fontScale: "medium",
   };
+  if (layout === "year_columns") {
+    resolved.paper = "A3";
+    resolved.orientation = "landscape";
+  }
+  if (layout === "calendar_grid") {
+    resolved.paper = "A4";
+    resolved.orientation = "portrait";
+  }
   if (viewSettings) {
     if (viewSettings["paper"] === "A4" || viewSettings["paper"] === "A3") {
       resolved.paper = viewSettings["paper"];

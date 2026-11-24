@@ -2,6 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/App";
+import type { ScheduleApi } from "../src/api";
 import { createDevApi, DEV_BOOTSTRAP } from "../src/devAdapter";
 import { PublishPanel } from "../src/PublishPanel";
 import type { BootstrapData } from "../src/types";
@@ -69,7 +70,8 @@ describe("publishing panel (Issue #40)", () => {
         bootstrap={viewerBootstrap}
         api={api}
         view={viewerBootstrap.views[0] as BootstrapData["views"][number]}
-        anchor="2026-11-15"
+        period={{ from: "2026-11-01", to: "2026-11-30" }}
+        periodLabel="2026年11月"
         onClose={() => undefined}
       />,
     );
@@ -180,7 +182,8 @@ function renderPanel(api: ReturnType<typeof createDevApi>) {
       bootstrap={bootstrap}
       api={api}
       view={bootstrap.views[0] as BootstrapData["views"][number]}
-      anchor="2026-11-15"
+      period={{ from: "2026-11-01", to: "2026-11-30" }}
+      periodLabel="2026年11月"
       onClose={() => undefined}
     />,
   );
@@ -328,5 +331,210 @@ describe("dev adapter version history (Issue #48)", () => {
     const diff = await api.getPublicationDiff({ id: created.id });
     expect(diff.comparable).toBe(true);
     expect(diff.fromId).toBe("pub-seed-nov-2");
+  });
+});
+
+// The other layouts issue (Issue #49): the panel is handed the
+// period the screen shows — a year table's school year, a
+// calendar's month — sends it with the publish, and the dev
+// adapter renders each layout's paper form: the week table
+// headed by its span, the year table as twelve month blocks,
+// the calendar printing every entry of a crowded day (the
+// screen cell caps at three and counts the rest as 「他○件」;
+// paper cannot be clicked, so nothing is capped).
+
+describe("publishing panel for the other layouts (Issue #49)", () => {
+  it("publishes a year view with the school-year span", async () => {
+    const base = createDevApi();
+    const calls: Record<string, unknown>[] = [];
+    const api: ScheduleApi = {
+      ...base,
+      createPublication: async (input) => {
+        calls.push(input);
+        return base.createPublication(input);
+      },
+    };
+    const bootstrap = structuredClone(DEV_BOOTSTRAP);
+    const view = bootstrap.views.find(
+      (v) => v.id === "view-year-staff",
+    ) as BootstrapData["views"][number];
+    render(
+      <PublishPanel
+        bootstrap={bootstrap}
+        api={api}
+        view={view}
+        period={{ from: "2026-04-01", to: "2027-03-31" }}
+        periodLabel="2026年度"
+        onClose={() => undefined}
+      />,
+    );
+    expect(await screen.findByText("2026年度の新しい版を発行")).toBeInTheDocument();
+    // The year table's default paper stands in the form (A3,
+    // the layout default of Issue #49).
+    expect(screen.getByLabelText("用紙")).toHaveValue("A3");
+    expect(screen.getByLabelText("向き")).toHaveValue("landscape");
+
+    fireEvent.change(screen.getByLabelText("版ラベル"), { target: { value: "年度版" } });
+    fireEvent.click(screen.getByRole("button", { name: "発行する" }));
+    expect(await screen.findByText("「年度版」を発行しました")).toBeInTheDocument();
+    expect(calls).toEqual([
+      expect.objectContaining({
+        viewId: "view-year-staff",
+        targetMonth: "2026-04",
+        from: "2026-04-01",
+        to: "2027-03-31",
+      }),
+    ]);
+    const pubs = await base.getPublications({ viewId: "view-year-staff" });
+    expect(pubs[0]).toMatchObject({ rangeFrom: "2026-04-01", rangeTo: "2027-03-31" });
+    // The history row names the school year, not a month.
+    const row = screen.getByText("年度版").closest("li") as HTMLElement;
+    expect(within(row).getByText(/2026年度・/)).toBeInTheDocument();
+  });
+
+  it("publishes a calendar view with the month span and portrait defaults", async () => {
+    const base = createDevApi();
+    const calls: Record<string, unknown>[] = [];
+    const api: ScheduleApi = {
+      ...base,
+      createPublication: async (input) => {
+        calls.push(input);
+        return base.createPublication(input);
+      },
+    };
+    const bootstrap = structuredClone(DEV_BOOTSTRAP);
+    const view = bootstrap.views.find(
+      (v) => v.id === "view-calendar-staff",
+    ) as BootstrapData["views"][number];
+    render(
+      <PublishPanel
+        bootstrap={bootstrap}
+        api={api}
+        view={view}
+        period={{ from: "2026-11-01", to: "2026-11-30" }}
+        periodLabel="2026年11月"
+        onClose={() => undefined}
+      />,
+    );
+    expect(await screen.findByText("2026年11月の新しい版を発行")).toBeInTheDocument();
+    // The calendar's default paper: A4 portrait (Issue #49).
+    expect(screen.getByLabelText("用紙")).toHaveValue("A4");
+    expect(screen.getByLabelText("向き")).toHaveValue("portrait");
+
+    fireEvent.change(screen.getByLabelText("版ラベル"), { target: { value: "カレンダー版" } });
+    fireEvent.click(screen.getByRole("button", { name: "発行する" }));
+    expect(await screen.findByText("「カレンダー版」を発行しました")).toBeInTheDocument();
+    expect(calls).toEqual([
+      expect.objectContaining({
+        viewId: "view-calendar-staff",
+        targetMonth: "2026-11",
+        from: "2026-11-01",
+        to: "2026-11-30",
+      }),
+    ]);
+  });
+});
+
+describe("dev adapter documents for the other layouts (Issue #49)", () => {
+  it("renders the week, year and calendar paper forms", async () => {
+    const api = createDevApi();
+
+    // The week table (a 14-day span): headed by the span, with
+    // the span's fourteen rows.
+    const week = await api.createPublication({
+      viewId: "view-week-staff",
+      targetMonth: "2026-11",
+      from: "2026-11-09",
+      to: "2026-11-22",
+      versionLabel: "2週間版",
+    });
+    expect(week).toMatchObject({ rangeFrom: "2026-11-09", rangeTo: "2026-11-22" });
+    const weekDoc = await api.getPublication({ id: week.id });
+    expect(weekDoc.documentHtml).toContain("2026年11月9日〜11月22日 行事予定表");
+    const weekBody = (weekDoc.documentHtml.split("<tbody>")[1] ?? "").split(
+      "</tbody>",
+    )[0] as string;
+    expect(weekBody.match(/<tr/g)).toHaveLength(14);
+    expect(weekDoc.documentHtml).toContain("マラソン大会");
+
+    // The year table: twelve month blocks and the year's
+    // entries, on A3 landscape.
+    const year = await api.createPublication({
+      viewId: "view-year-staff",
+      targetMonth: "2026-04",
+      from: "2026-04-01",
+      to: "2027-03-31",
+      versionLabel: "年度版",
+    });
+    const yearDoc = await api.getPublication({ id: year.id });
+    expect(yearDoc.documentHtml).toContain("2026年度 行事予定表");
+    for (const m of [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]) {
+      expect(yearDoc.documentHtml).toContain(`>${m}月</th>`);
+    }
+    expect(yearDoc.documentHtml).toContain("音楽発表会");
+    expect(yearDoc.documentHtml).toContain("size: A3 landscape");
+
+    // The month calendar: 2026-11-16 holds more entries than
+    // the screen cell's cap of three (朝会・打ち合わせ・職員
+    // 会議 and 田中先生's leave) — the document prints them
+    // all, and no overflow count appears.
+    const cal = await api.createPublication({
+      viewId: "view-calendar-staff",
+      targetMonth: "2026-11",
+      versionLabel: "カレンダー版",
+    });
+    expect(cal).toMatchObject({ rangeFrom: "2026-11-01", rangeTo: "2026-11-30" });
+    const calDoc = await api.getPublication({ id: cal.id });
+    expect(calDoc.documentHtml).toContain("朝会");
+    expect(calDoc.documentHtml).toContain("打ち合わせ");
+    expect(calDoc.documentHtml).toContain("職員会議");
+    // The leave's own line — 田中先生（年休）, the absence line
+    // of 2026-11-16 — not just the name, which the 20th's trip
+    // （田中先生 県教研大会） would satisfy on its own, and not
+    // just 年休, which 佐藤先生's leaves would satisfy.
+    expect(calDoc.documentHtml).toContain("田中先生（年休）");
+    expect(calDoc.documentHtml).not.toMatch(/他\d+件/);
+    expect(calDoc.documentHtml).toContain("size: A4 portrait");
+    // The 16th's own cell carries all four of its entries —
+    // the three timed events and the leave the screen cell
+    // caps away — plus the compact lunch line the grid shows.
+    const cell16 =
+      calDoc.documentHtml
+        .split('<td class="cal-cell')
+        .find((cell) => cell.includes('cal-date">16<')) ?? "";
+    for (const line of ["朝会", "打ち合わせ", "職員会議", "田中先生（年休）", "給食：○"]) {
+      expect(cell16).toContain(line);
+    }
+  });
+
+  it("refuses the screen-only layouts and broken spans, as the server does", async () => {
+    const api = createDevApi();
+    await expect(
+      api.createPublication({
+        viewId: "view-year-staff",
+        targetMonth: "2026-11",
+        from: "2026-11-01",
+        to: "2026-11-30",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/年間表の発行期間は/);
+    await expect(
+      api.createPublication({
+        viewId: "view-week-staff",
+        targetMonth: "2026-11",
+        from: "2026-11-09",
+        to: "2026-11-13",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/週表の発行期間は/);
+    await expect(
+      api.createPublication({
+        viewId: "view-week-staff",
+        targetMonth: "2026-11",
+        from: "2026-11-10",
+        to: "2026-11-16",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/月曜日から/);
   });
 });

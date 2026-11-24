@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useState } from "react";
 import type { ScheduleApi } from "./api";
-import { monthLabel } from "./lib";
+import { monthEndOf, publicationPeriodLabel, publicationPeriodOf } from "./lib";
 import { useDialogFocus } from "./useDialogFocus";
 import type {
   BootstrapData,
@@ -13,7 +13,7 @@ import type {
 
 /**
  * The publishing panel (Issue #40, DESIGN schedule 9.1): issue
- * the displayed view's displayed month as a versioned document,
+ * the displayed view's displayed period as a versioned document,
  * list the versions issued so far, preview one, and print it.
  *
  * Issuing renders the document on the server and stores it with
@@ -35,20 +35,31 @@ import type {
  * cancelled, which keeps its row, badged 取り消し； and each
  * version can be read against the one issued before it — the
  * days and items that changed, and only those.
+ *
+ * Issue #49 issues the other paper layouts from this panel:
+ * the caller hands over the period the screen is showing (a
+ * month, a week table's span, a year table's school year), the
+ * form heads itself with it and sends it with the publish, and
+ * a history row names its version's period whenever it is not
+ * a plain month. The month filter stays: every version's
+ * target month is the month its period starts in.
  */
 export function PublishPanel({
   bootstrap,
   api,
   view,
-  anchor,
+  period,
+  periodLabel,
   onClose,
 }: {
   bootstrap: BootstrapData;
   api: ScheduleApi;
   /** The view the table behind the panel is showing. */
   view: ViewDefinitionData;
-  /** A date in the displayed month: the issued month. */
-  anchor: string;
+  /** The period the screen is showing: the issued span. */
+  period: { from: string; to: string };
+  /** The period as the form names it （月／週の範囲／年度）. */
+  periodLabel: string;
   onClose: () => void;
 }) {
   // The shared dialog discipline (Issue #89): initial focus,
@@ -56,13 +67,13 @@ export function PublishPanel({
   // live in useDialogFocus.
   const dialogRef = useDialogFocus<HTMLDivElement>(onClose);
   const headingId = useId();
-  const targetMonth = anchor.slice(0, 7);
+  const targetMonth = period.from.slice(0, 7);
   const canPublish = bootstrap.permissions.includes("publish");
   const [publications, setPublications] = useState<PublicationData[] | null>(null);
   const [versionLabel, setVersionLabel] = useState("");
   const [note, setNote] = useState("");
   const [settings, setSettings] = useState<PrintSettingsData>(() =>
-    initialSettings(view.printSettings),
+    initialSettings(view.printSettings, view.layout),
   );
   const [preview, setPreview] = useState<PublicationDocumentData | null>(null);
   const [busy, setBusy] = useState(false);
@@ -111,6 +122,8 @@ export function PublishPanel({
       const created = await api.createPublication({
         viewId: view.id,
         targetMonth,
+        from: period.from,
+        to: period.to,
         versionLabel: label,
         note: note.trim() === "" ? null : note.trim(),
         printSettings: settings,
@@ -245,7 +258,7 @@ export function PublishPanel({
 
         {canPublish && (
           <section aria-label="新しい版を発行">
-            <h3>{monthLabel(anchor)}の新しい版を発行</h3>
+            <h3>{periodLabel}の新しい版を発行</h3>
             <div className="publish-form">
               <label>
                 版ラベル{" "}
@@ -371,8 +384,7 @@ export function PublishPanel({
                     <span className="publication-cancelled-badge">取り消し</span>
                   )}
                   <span className="dim">
-                    {publication.targetMonth.slice(0, 4)}年
-                    {Number(publication.targetMonth.slice(5, 7))}月・
+                    {periodRowText(view, publication)}
                     {new Date(publication.publishedAt).toLocaleString("ja-JP")} 発行
                     {publication.snapshotNote ? `・${publication.snapshotNote}` : ""}
                   </span>
@@ -511,17 +523,44 @@ export function PublishPanel({
   );
 }
 
-/** The form's starting settings: the defaults of DESIGN
- *  schedule 9.1, with the view definition's own print_settings
- *  over them — the same resolution the server applies, so what
- *  the form shows is what an unchanged publish would use. */
-function initialSettings(viewSettings: Record<string, unknown> | null): PrintSettingsData {
+/** One history row's period words (Issue #49): a plain month
+ *  reads as the month it has always read as; any other period
+ *  — a week span, a school year — is named as the panel names
+ *  periods, so a week version is not mistaken for its month. */
+function periodRowText(view: ViewDefinitionData, publication: PublicationData): string {
+  const period = publicationPeriodOf(publication);
+  const plainMonth =
+    period.from === `${publication.targetMonth}-01` && period.to === monthEndOf(period.from);
+  if (plainMonth) {
+    return `${publication.targetMonth.slice(0, 4)}年${Number(publication.targetMonth.slice(5, 7))}月・`;
+  }
+  return `${publicationPeriodLabel(view, period)}・`;
+}
+
+/** The form's starting settings: the layout's defaults (DESIGN
+ *  schedule 9.1; Issue #49: the year table is A3 landscape, the
+ *  month calendar A4 portrait), with the view definition's own
+ *  print_settings over them — the same resolution the server
+ *  applies, so what the form shows is what an unchanged publish
+ *  would use. */
+function initialSettings(
+  viewSettings: Record<string, unknown> | null,
+  layout: string,
+): PrintSettingsData {
   const resolved: PrintSettingsData = {
     paper: "A4",
     orientation: "landscape",
     marginMm: 10,
     fontScale: "medium",
   };
+  if (layout === "year_columns") {
+    resolved.paper = "A3";
+    resolved.orientation = "landscape";
+  }
+  if (layout === "calendar_grid") {
+    resolved.paper = "A4";
+    resolved.orientation = "portrait";
+  }
   if (!viewSettings) return resolved;
   if (viewSettings["paper"] === "A4" || viewSettings["paper"] === "A3") {
     resolved.paper = viewSettings["paper"];

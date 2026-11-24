@@ -1,4 +1,10 @@
-import { formatGroupedValues, weekdayOf } from "@school-manage/calendar-types";
+import {
+  addDays,
+  formatGroupedValues,
+  weekStartOf,
+  weekdayOf,
+  type Weekday,
+} from "@school-manage/calendar-types";
 import type { DefinitionSet } from "../db/definitions.js";
 import type { DutyDefinitionWithRule } from "../db/duties.js";
 import type {
@@ -41,6 +47,18 @@ import type { RangeDay, RangeResult } from "../range/types.js";
  * document (Issue #48, snapshot.ts) is built from this same
  * input through cellText below, so the version diffs compare
  * exactly the texts this renderer prints.
+ *
+ * Issue #49 issues the other table layouts from the same
+ * parts: the week table (L2, week_rows) is this rows table
+ * over its span, headed by the span instead of a month; the
+ * year table (L3, year_columns) is one wide table of the
+ * twelve month blocks, day-of-month rows aligned, mirroring
+ * the screen's YearTable; the month calendar (L4,
+ * calendar_grid) is the month as week rows × weekday columns,
+ * mirroring the screen's CalendarGrid — except that paper
+ * cannot be clicked, so a cell prints ALL of its day's
+ * entries: the screen's 「他○件」 cap has no print form,
+ * nothing is hidden.
  */
 
 type Record_ = Record<string, unknown>;
@@ -486,6 +504,102 @@ export function cellText(
   return dayAttributeText(day);
 }
 
+/**
+ * One day's full printed text for the month calendar (Issue
+ * #49): the screen grid's cell, composed the way CalendarGrid
+ * composes it (client/src/CalendarGrid.tsx) — the day's events
+ * as their lines (a provisional entry by its placeholder text,
+ * as the grid reads it), then the day's absences by theirs,
+ * then one compact line for each symbol / boolean daily item
+ * among the view's columns (「給食：○」). The composition is
+ * the day's, not the columns': an absence prints whatever
+ * columns the view carries, and what the grid leaves to the
+ * day detail — the longer daily values, the duties, the day
+ * attributes — the calendar document leaves out too. ALL of
+ * the lines print: paper cannot be clicked open, so the
+ * grid's entry cap (「他○件」) has no print form and nothing
+ * is hidden. A spanning entry stands on every day it covers,
+ * as the rows tables list it — print has no spanning bars.
+ * The snapshot's calendar cell (snapshot.ts) carries this
+ * same text, so the version diffs compare what the calendar
+ * printed.
+ */
+export function calendarDayText(
+  day: RangeDay,
+  columns: ViewColumnRow[],
+  ctx: PrintContext,
+): string {
+  const lines: string[] = [];
+  for (const event of day.events) {
+    lines.push(
+      provisionalTemplateOf(event, ctx)
+        ? provisionalLineText(event)
+        : `${eventTimeText(event)}${eventTitle(event)}`,
+    );
+  }
+  for (const absence of day.absences) {
+    lines.push(absenceLineText(absence, ctx));
+  }
+  for (const column of columns) {
+    if (column.sourceKind !== "daily_item") continue;
+    const item = ctx.itemDefinitions.find((i) => i.id === column.itemDefinitionId);
+    if (!item || (item.valueType !== "symbol" && item.valueType !== "boolean")) continue;
+    const text = dailyCellText(day, column, ctx);
+    if (text) lines.push(`${item.name}：${text}`);
+  }
+  return lines.join("\n");
+}
+
+/** The school year (April start) a date belongs to. */
+function schoolYearOf(date: string): number {
+  const year = Number(date.slice(0, 4));
+  return Number(date.slice(5, 7)) >= 4 ? year : year - 1;
+}
+
+/** "2026-11-16" → 「2026年11月16日」. */
+function dateText(date: string): string {
+  return `${date.slice(0, 4)}年${Number(date.slice(5, 7))}月${Number(date.slice(8, 10))}日`;
+}
+
+/** A span as the week table's header names it: the first day
+ *  in full, the last day shortened while it stays in the same
+ *  year （例：2026年11月16日〜11月22日）. */
+function spanText(from: string, to: string): string {
+  if (from.slice(0, 4) === to.slice(0, 4)) {
+    return `${dateText(from)}〜${Number(to.slice(5, 7))}月${Number(to.slice(8, 10))}日`;
+  }
+  return `${dateText(from)}〜${dateText(to)}`;
+}
+
+/**
+ * The period the document's header names (Issue #49): a week
+ * table names its span, a year table its school year, the
+ * month-shaped layouts their month, as before.
+ */
+function periodText(input: RenderPublicationInput): string {
+  const layout = input.range.view.layout;
+  if (layout === "week_rows") return spanText(input.range.from, input.range.to);
+  if (layout === "year_columns") return `${schoolYearOf(input.range.from)}年度`;
+  return `${input.targetMonth.slice(0, 4)}年${Number(input.targetMonth.slice(5, 7))}月`;
+}
+
+const WEEKDAY_ORDER: Weekday[] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+
+/** The weekday the calendar's weeks start on, read from the
+ *  view's layout params the way the screen grid reads them
+ *  (client/src/lib.ts gridWeekStart): a weekday code, or a
+ *  JavaScript day number; Monday when nothing usable is said. */
+function gridWeekStartOf(view: RangeResult["view"]): Weekday {
+  const raw = view.layoutParams?.["weekStart"];
+  if (typeof raw === "string" && (WEEKDAY_ORDER as string[]).includes(raw)) {
+    return raw as Weekday;
+  }
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw <= 7) {
+    return WEEKDAY_ORDER[raw % 7] as Weekday;
+  }
+  return "mon";
+}
+
 const FONT_SIZES: Record<PublicationPrintSettings["fontScale"], string> = {
   small: "9px",
   medium: "10.5px",
@@ -496,13 +610,13 @@ const FONT_SIZES: Record<PublicationPrintSettings["fontScale"], string> = {
  * Renders the issued document. The @page rule carries the print
  * settings (paper, orientation, margins) and the page-number
  * footer (DESIGN schedule 9.1); the header block carries the
- * school name, the month and the version label, so any printed
- * copy names the version it belongs to.
+ * school name, the issued period and the version label, so any
+ * printed copy names the version it belongs to.
  */
 export function renderPublicationDocument(input: RenderPublicationInput): string {
   const { range, printSettings, context: ctx } = input;
   const columns = [...range.view.columns].sort((a, b) => a.sort - b.sort);
-  const monthText = `${input.targetMonth.slice(0, 4)}年${Number(input.targetMonth.slice(5, 7))}月`;
+  const periodLabel = periodText(input);
   const publishedText = new Intl.DateTimeFormat("ja-JP", {
     timeZone: "Asia/Tokyo",
     year: "numeric",
@@ -537,6 +651,95 @@ ${rows}
 </table>`;
   };
 
+  // The year table (L3, Issue #49): one wide table — the
+  // twelve month blocks of the school year side by side, rows
+  // aligned on the day of the month, each block carrying its
+  // month heading and the view's columns; a date that does not
+  // exist (February 30th) stands blank. The screen's YearTable
+  // drawn for paper.
+  const yearTableHtml = (): string => {
+    const byDate = new Map(range.days.map((day) => [day.date, day]));
+    const year = schoolYearOf(range.from);
+    const blocks = Array.from({ length: 12 }, (_, i) => {
+      const month = ((3 + i) % 12) + 1;
+      return { year: month >= 4 ? year : year + 1, month };
+    });
+    const headRow1 = blocks
+      .map(
+        (block) =>
+          `<th colspan="${columns.length + 1}" class="year-month-head">${block.month}月</th>`,
+      )
+      .join("");
+    const headRow2 = blocks.map(() => `<th scope="col" class="date-cell">日</th>${head}`).join("");
+    const bodyRows = Array.from({ length: 31 }, (_, r) => {
+      const dayNum = r + 1;
+      const cells = blocks
+        .map((block) => {
+          const date = `${block.year}-${String(block.month).padStart(2, "0")}-${String(dayNum).padStart(2, "0")}`;
+          const day = byDate.get(date);
+          if (!day) {
+            return `<th scope="row" class="date-cell no-date"></th>${columns.map(() => `<td class="no-date"></td>`).join("")}`;
+          }
+          const mark = dayMark(day, ctx);
+          const dateCell = `<th scope="row" class="date-cell kind-${mark.kind}${mark.closed ? " closed" : ""}"><span class="date-num">${dayNum}</span> <span class="date-weekday">（${weekdayLabel(day.date)}）</span>${mark.sub ? `<span class="date-sub">${esc(mark.sub)}</span>` : ""}</th>`;
+          return (
+            dateCell +
+            columns.map((column) => `<td>${cellHtml(day, column, columns, ctx)}</td>`).join("")
+          );
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    }).join("\n");
+    return `<table class="year-table">\n<thead><tr>${headRow1}</tr><tr>${headRow2}</tr></thead>\n<tbody>\n${bodyRows}\n</tbody>\n</table>`;
+  };
+
+  // The month calendar (L4, Issue #49): week rows × weekday
+  // columns, the week starting where the view's layout params
+  // start it, as the screen grid does. Each cell carries the
+  // day number, the day's mark words, and ALL of the day's
+  // entry lines (calendarDayText) — no 「他○件」: paper
+  // cannot be clicked, so nothing is capped away. The cells
+  // padding the first and last weeks belong to the neighbouring
+  // months, outside the issued period: they stand blank but
+  // for their day number.
+  const calendarGridHtml = (): string => {
+    const start = gridWeekStartOf(range.view);
+    const byDate = new Map(range.days.map((day) => [day.date, day]));
+    const firstCell = weekStartOf(range.from, start);
+    const lastCell = addDays(weekStartOf(range.to, start), 6);
+    const startIndex = WEEKDAY_ORDER.indexOf(start);
+    const order = [...WEEKDAY_ORDER.slice(startIndex), ...WEEKDAY_ORDER.slice(0, startIndex)];
+    const headCells = order
+      .map(
+        (weekday) =>
+          `<th scope="col" class="cal-weekday${weekday === "sat" ? " wd-sat" : weekday === "sun" ? " wd-sun" : ""}">${WEEKDAY_LABELS[weekday]}</th>`,
+      )
+      .join("");
+    const weeks: string[] = [];
+    for (let cursor = firstCell; cursor <= lastCell; cursor = addDays(cursor, 7)) {
+      const cells: string[] = [];
+      for (let i = 0; i < 7; i++) {
+        const date = addDays(cursor, i);
+        const day = byDate.get(date);
+        if (!day) {
+          cells.push(
+            `<td class="cal-cell outside"><div class="cal-date">${Number(date.slice(8, 10))}</div></td>`,
+          );
+          continue;
+        }
+        const mark = dayMark(day, ctx);
+        const lines = calendarDayText(day, columns, ctx)
+          .split("\n")
+          .filter((line) => line !== "");
+        cells.push(
+          `<td class="cal-cell kind-${mark.kind}${mark.closed ? " closed" : ""}"><div class="cal-date">${Number(day.date.slice(8, 10))}</div>${mark.sub ? `<div class="cal-sub">${esc(mark.sub)}</div>` : ""}${lines.map((line) => `<div class="cal-entry">${esc(line)}</div>`).join("")}</td>`,
+        );
+      }
+      weeks.push(`<tr>${cells.join("")}</tr>`);
+    }
+    return `<table class="calendar-grid">\n<thead><tr>${headCells}</tr></thead>\n<tbody>\n${weeks.join("\n")}\n</tbody>\n</table>`;
+  };
+
   // The two-column layout (Issue #46): the month stands as two
   // half-month tables side by side — the paper form of the
   // student table — and the month's accompanying notes （生活
@@ -544,10 +747,10 @@ ${rows}
   // Every other layout keeps the single table it has always had,
   // and the notes stay a two-column header: they are the student
   // table's accompanying information.
-  const twoColumn = range.view.layout === "two_column";
+  const layout = range.view.layout;
   let monthNotesHtml = "";
   let tableSection: string;
-  if (twoColumn) {
+  if (layout === "two_column") {
     const note = range.monthNotes.find((n) => n.month === input.targetMonth) ?? null;
     const goals: string[] = [];
     if (note?.lifeGoal)
@@ -558,16 +761,26 @@ ${rows}
       goals.length > 0 ? `<section class="month-notes">${goals.join("")}</section>` : "";
     const half = Math.ceil(range.days.length / 2);
     tableSection = `<div class="two-column">${tableHtml(range.days.slice(0, half))}${tableHtml(range.days.slice(half))}</div>`;
+  } else if (layout === "year_columns") {
+    tableSection = yearTableHtml();
+  } else if (layout === "calendar_grid") {
+    tableSection = calendarGridHtml();
   } else {
     tableSection = tableHtml(range.days);
   }
 
+  // The undecided section names the issued period's own
+  // undecided events: a month version's month, a week version's
+  // spanned months, a year version's whole year — plus the
+  // ones that name no month at all, as before.
+  const fromMonth = range.from.slice(0, 7);
+  const toMonth = range.to.slice(0, 7);
   const undecided = range.undecided.filter(
-    (group) => group.month === input.targetMonth || group.month === null,
+    (group) => group.month === null || (group.month >= fromMonth && group.month <= toMonth),
   );
   const undecidedHtml =
     undecided.length > 0
-      ? `<section class="undecided"><h2>その月の未定</h2><ul>${undecided
+      ? `<section class="undecided"><h2>${fromMonth === toMonth ? "その月の未定" : "未定の行事"}</h2><ul>${undecided
           .flatMap((group) =>
             group.events.map(
               (event) =>
@@ -581,7 +794,7 @@ ${rows}
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>${esc(schoolName)} ${esc(monthText)} 行事予定表（${esc(input.versionLabel)}）</title>
+<title>${esc(schoolName)} ${esc(periodLabel)} 行事予定表（${esc(input.versionLabel)}）</title>
 <style>
 @page {
   size: ${printSettings.paper} ${printSettings.orientation};
@@ -605,6 +818,20 @@ tr.closed { background: #f3f4f6; }
 .kind-sat .date-num, .kind-sat .date-weekday { color: #2563eb; }
 .kind-holiday .date-num, .kind-holiday .date-weekday { color: #b91c1c; }
 .date-sub { display: block; font-size: 0.85em; color: #555; white-space: normal; }
+th.year-month-head { text-align: center; font-size: 1.15em; }
+.date-cell.closed { background: #f3f4f6; }
+th.no-date, td.no-date { background: #fafafa; }
+table.calendar-grid { table-layout: fixed; }
+td.cal-cell { height: 68px; }
+td.cal-cell.closed { background: #f3f4f6; }
+td.cal-cell.outside { background: #fafafa; }
+.cal-date { font-weight: 600; }
+td.cal-cell.outside .cal-date { color: #aaa; font-weight: 400; }
+.kind-sat .cal-date { color: #2563eb; }
+.kind-holiday .cal-date { color: #b91c1c; }
+.cal-sub { font-size: 0.85em; color: #555; }
+.cal-weekday.wd-sat { color: #2563eb; }
+.cal-weekday.wd-sun { color: #b91c1c; }
 section.undecided { margin-top: 10px; }
 section.undecided h2 { font-size: 1.1em; margin: 0 0 4px; }
 section.undecided ul { margin: 0; padding-left: 18px; }
@@ -612,7 +839,7 @@ section.undecided ul { margin: 0; padding-left: 18px; }
 </head>
 <body>
 <header class="print-head">
-<h1>${esc(schoolName)} ${esc(monthText)} 行事予定表</h1>
+<h1>${esc(schoolName)} ${esc(periodLabel)} 行事予定表</h1>
 <div class="meta"><div>${esc(input.viewName)}</div><div>版：${esc(input.versionLabel)}</div><div>発行：${esc(publishedText)}</div></div>
 </header>
 ${monthNotesHtml}

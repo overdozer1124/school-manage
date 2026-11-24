@@ -735,6 +735,14 @@ export interface PublicationSnapshot {
  * day-by-day cell texts the version diffs read) are written
  * once at publish time and never rewritten, like the document
  * they accompany.
+ *
+ * Issue #49 issues the other table layouts as well (the week
+ * table, the year table, the month calendar), so a version
+ * names the period it covers: range_from / range_to are the
+ * issued span's first and last days. Rows issued before this
+ * carry null for both, and their period is their target month
+ * — target_month stays on every row as the month the span
+ * starts in, the key the version list's month filter reads.
  */
 export const publications = pgTable(
   "publications",
@@ -752,6 +760,8 @@ export const publications = pgTable(
     documentHtml: text("document_html").notNull(),
     cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
     snapshotJson: jsonb("snapshot_json").$type<PublicationSnapshot>(),
+    rangeFrom: date("range_from"),
+    rangeTo: date("range_to"),
   },
   (t) => [
     primaryKey({ columns: [t.schoolId, t.id] }),
