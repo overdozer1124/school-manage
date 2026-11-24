@@ -685,6 +685,26 @@ export interface PublicationPrintSettings {
 }
 
 /**
+ * The structured snapshot of one publication (Issue #48): the
+ * month as it was issued, day by day — each date's day type and
+ * each view column's cell text, exactly as the stored document
+ * prints them. The version list's diffs are computed from these
+ * snapshots (the document itself is HTML for handing out, not a
+ * thing to compare), so a later version can say which days and
+ * items changed since the previous one. Publications issued
+ * before Issue #48 carry no snapshot (null): they can be listed
+ * and re-read, but not diffed.
+ */
+export interface PublicationSnapshot {
+  version: 1;
+  days: Array<{
+    date: string;
+    dayType: string;
+    cells: Array<{ columnId: string; label: string; text: string }>;
+  }>;
+}
+
+/**
  * One issued version of a view's month table (DESIGN schedule
  * 4.8 `publications`, 9.1): who issued which view's which month,
  * under what version label, and the document that was handed out.
@@ -704,6 +724,17 @@ export interface PublicationPrintSettings {
  * Japanese font. The view foreign key is a plain restrict: a
  * view that has publications cannot be deleted, so the issue
  * history cannot vanish with its definition.
+ *
+ * Issue #48 grows the record around the document, never the
+ * document itself: the version label and the note may be edited
+ * afterwards (a label is corrected, a distribution is noted),
+ * and an issue may be cancelled — cancelled_at is stamped and
+ * the row stays in the history as a cancelled version, so what
+ * was handed out, and later withdrawn, stays traceable. The
+ * document and the structured snapshot (snapshot_json, the
+ * day-by-day cell texts the version diffs read) are written
+ * once at publish time and never rewritten, like the document
+ * they accompany.
  */
 export const publications = pgTable(
   "publications",
@@ -719,6 +750,8 @@ export const publications = pgTable(
     printSettings: jsonb("print_settings").$type<PublicationPrintSettings>().notNull(),
     documentFormat: text("document_format").default("html").notNull(),
     documentHtml: text("document_html").notNull(),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    snapshotJson: jsonb("snapshot_json").$type<PublicationSnapshot>(),
   },
   (t) => [
     primaryKey({ columns: [t.schoolId, t.id] }),

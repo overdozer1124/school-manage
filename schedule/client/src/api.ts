@@ -15,8 +15,10 @@ import type {
   PendingRecord,
   PrintSettingsData,
   PublicationData,
+  PublicationDiffData,
   PublicationDocumentData,
   PublicBootstrapData,
+  PublicRangeData,
   PublicTokenCreatedData,
   PublicViewTokenData,
   RangeData,
@@ -228,8 +230,20 @@ export interface ScheduleApi {
     note?: string | null;
     printSettings?: Partial<PrintSettingsData>;
   }): Promise<PublicationData>;
-  getPublications(input?: { viewId?: string }): Promise<PublicationData[]>;
+  getPublications(input?: { viewId?: string; targetMonth?: string }): Promise<PublicationData[]>;
   getPublication(input: { id: string }): Promise<PublicationDocumentData>;
+  // Issue #48: the record keeping around an issued version —
+  // correcting its label and note, cancelling it, and reading
+  // how it differs from the version before it. Edits and
+  // cancellation are the publish permission's (the server
+  // checks); the diff is view.read.
+  updatePublication(input: {
+    id: string;
+    versionLabel?: string;
+    note?: string | null;
+  }): Promise<PublicationData>;
+  cancelPublication(input: { id: string }): Promise<PublicationData>;
+  getPublicationDiff(input: { id: string }): Promise<PublicationDiffData>;
   // Issue #41: public-view tokens (school.admin's; the server is
   // the judge). The create answer carries the token's value,
   // shown once.
@@ -360,6 +374,9 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
     createPublication: (input) => call<PublicationData>("createPublication", input),
     getPublications: (input) => call<PublicationData[]>("getPublications", input ?? {}),
     getPublication: (input) => call<PublicationDocumentData>("getPublication", input),
+    updatePublication: (input) => call<PublicationData>("updatePublication", input),
+    cancelPublication: (input) => call<PublicationData>("cancelPublication", input),
+    getPublicationDiff: (input) => call<PublicationDiffData>("getPublicationDiff", input),
     createPublicViewToken: (input) => call<PublicTokenCreatedData>("createPublicViewToken", input),
     getPublicViewTokens: (input) => call<PublicViewTokenData[]>("getPublicViewTokens", input ?? {}),
     revokePublicViewToken: (input) => call<PublicViewTokenData>("revokePublicViewToken", input),
@@ -386,7 +403,7 @@ export function platformLoginUrl(): string {
  *  request body is the whole credential. */
 export interface PublicApi {
   getPublicBootstrap(): Promise<PublicBootstrapData>;
-  getPublicRange(input: { from: string; to: string }): Promise<RangeData>;
+  getPublicRange(input: { from: string; to: string }): Promise<PublicRangeData>;
 }
 
 /** The public route's base: the app is served at
@@ -422,6 +439,6 @@ export function createPublicApi(
 
   return {
     getPublicBootstrap: () => call<PublicBootstrapData>("getPublicBootstrap", {}),
-    getPublicRange: (input) => call<RangeData>("getPublicRange", input),
+    getPublicRange: (input) => call<PublicRangeData>("getPublicRange", input),
   };
 }

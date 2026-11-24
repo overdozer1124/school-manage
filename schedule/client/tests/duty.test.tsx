@@ -22,6 +22,15 @@ const unusedWrites = {
   getPublication: async (): Promise<never> => {
     throw new Error("not used");
   },
+  updatePublication: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  cancelPublication: async (): Promise<never> => {
+    throw new Error("not used");
+  },
+  getPublicationDiff: async (): Promise<never> => {
+    throw new Error("not used");
+  },
   createPublicViewToken: async (): Promise<never> => {
     throw new Error("not used");
   },

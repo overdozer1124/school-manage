@@ -10,6 +10,7 @@ import {
   type AudienceItem,
 } from "@school-manage/calendar-types";
 import * as definitionsStore from "../db/definitions.js";
+import * as publicationsStore from "../db/publications.js";
 import * as tokensStore from "../db/publicTokens.js";
 import * as schoolCacheStore from "../db/schoolCache.js";
 import * as viewsStore from "../db/views.js";
@@ -432,7 +433,24 @@ export function createPublicActions(db: Db, publicClient: PublicPlatformClient) 
           cookie: "",
         },
       );
-      return publicRange(range, audience);
+      // The latest issued version of the range's first month
+      // (Issue #48): the public screen announces it, so a reader
+      // holding a printed copy can tell whether it is the newest
+      // one. Only the label and the issue date ride along — the
+      // version record's own public face, the same two facts the
+      // printed document itself carries — never the publisher.
+      const latest = await publicationsStore.getLatestPublicationForMonth(
+        db,
+        schoolId,
+        view.id,
+        input.from.slice(0, 7),
+      );
+      return {
+        ...publicRange(range, audience),
+        latestPublication: latest
+          ? { versionLabel: latest.versionLabel, publishedAt: latest.publishedAt.toISOString() }
+          : null,
+      };
     }),
   });
 }

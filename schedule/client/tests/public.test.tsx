@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PublicApp } from "../src/PublicApp";
 import { ApiError, UnauthorizedError, type PublicApi } from "../src/api";
 import { createDevPublicApi } from "../src/devAdapter";
-import type { PublicBootstrapData, RangeData } from "../src/types";
+import type { PublicBootstrapData, PublicRangeData } from "../src/types";
 
 afterEach(cleanup);
 
@@ -75,7 +75,7 @@ const BOOT: PublicBootstrapData = {
   holidays: [],
 };
 
-const RANGE: RangeData = {
+const RANGE: PublicRangeData = {
   view: VIEW,
   from: "2026-11-01",
   to: "2026-11-30",
@@ -116,6 +116,7 @@ const RANGE: RangeData = {
   eventValues: [],
   conflicts: [],
   monthNotes: [],
+  latestPublication: null,
 };
 
 function fakeApi(overrides: Partial<PublicApi> = {}): PublicApi {
@@ -171,6 +172,31 @@ describe("public viewing screen (Issue #41)", () => {
     expect(screen.queryByText("この公開URLは使えません")).not.toBeInTheDocument();
   });
 
+  it("announces the month's latest version when the range carries one (Issue #48)", async () => {
+    render(
+      <PublicApp
+        api={fakeApi({
+          getPublicRange: async () => ({
+            ...structuredClone(RANGE),
+            latestPublication: {
+              versionLabel: "11月18日修正",
+              publishedAt: "2026-11-18T09:00:00.000Z",
+            },
+          }),
+        })}
+      />,
+    );
+    expect(
+      await screen.findByText(/この月の最新版は 11月18日修正（2026年11月18日 発行）です/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no latest-version notice when the month has none (Issue #48)", async () => {
+    render(<PublicApp api={fakeApi()} />);
+    expect(await screen.findByText("運動会")).toBeInTheDocument();
+    expect(screen.queryByText(/この月の最新版は/)).not.toBeInTheDocument();
+  });
+
   it("the dev public adapter answers the fixture token with a staff-free bundle", async () => {
     const api = createDevPublicApi("dev-public-token");
     const boot = await api.getPublicBootstrap();
@@ -184,6 +210,9 @@ describe("public viewing screen (Issue #41)", () => {
       expect(day.dutyAssignments).toEqual([]);
     }
     expect(range.conflicts).toEqual([]);
+    // The guardian view has no issued versions in the fixture:
+    // the latest-version notice (Issue #48) is null, not absent.
+    expect(range.latestPublication).toBeNull();
   });
 
   it("the dev public adapter refuses an unknown token", async () => {
