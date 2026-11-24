@@ -543,7 +543,7 @@ describe("CalendarGrid: the day detail and input", () => {
 });
 
 describe("the schedule screen with a calendar view", () => {
-  it("reads the padded month, labels it by month, and offers no publish button", async () => {
+  it("reads the padded month, labels it by month, and offers the publish button (Issue #49)", async () => {
     const bootstrap = makeBootstrap();
     const rangeCalls: { from: string; to: string; viewId: string }[] = [];
     const api: ScheduleApi = {
@@ -567,9 +567,10 @@ describe("the schedule screen with a calendar view", () => {
       }),
     );
     await waitFor(() => expect(document.querySelectorAll(".grid-cell")).toHaveLength(42));
-    // Issuing is the rows layouts' for now, as with the year
-    // table: no publish button on the grid.
-    expect(screen.queryByRole("button", { name: "発行・印刷" })).not.toBeInTheDocument();
+    // Issue #49 issues the calendar too: the publish button
+    // stands on the grid (its document prints the whole month,
+    // uncapped).
+    expect(screen.getByRole("button", { name: "発行・印刷" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "次へ" }));
     expect(await screen.findByText("2026年12月")).toBeInTheDocument();

@@ -261,6 +261,59 @@ export function rangeFor(view: ViewDefinitionData, anchor: string): { from: stri
   return { from: monthStartOf(anchor), to: monthEndOf(anchor) };
 }
 
+/**
+ * The period one publication of this view covers (Issue #49):
+ * the span the 発行・印刷 panel issues for the anchor the
+ * screen is showing. For the rows tables, the two-column table
+ * and the month calendar it is exactly one calendar month —
+ * the calendar's screen range is padded out to whole weeks,
+ * but a publication covers the month itself, its document
+ * drawing the padding days blank. For a week table it is the
+ * displayed week span; for a year table the whole school year.
+ * The server validates the same rules per layout.
+ */
+export function publicationPeriodFor(
+  view: ViewDefinitionData,
+  anchor: string,
+): { from: string; to: string } {
+  if (view.layout === "week_rows" || view.layout === "year_columns") {
+    return rangeFor(view, anchor);
+  }
+  return { from: monthStartOf(anchor), to: monthEndOf(anchor) };
+}
+
+/** The issued period as the panel names it (Issue #49): a week
+ *  table's span of days (the last day shortened while it stays
+ *  in the same year, as the document's header names it), a year
+ *  table's school year, a month-shaped table's month. */
+export function publicationPeriodLabel(
+  view: ViewDefinitionData,
+  period: { from: string; to: string },
+): string {
+  if (view.layout === "week_rows") {
+    const from = `${period.from.slice(0, 4)}年${Number(period.from.slice(5, 7))}月${Number(period.from.slice(8, 10))}日`;
+    const to =
+      period.from.slice(0, 4) === period.to.slice(0, 4)
+        ? `${Number(period.to.slice(5, 7))}月${Number(period.to.slice(8, 10))}日`
+        : `${period.to.slice(0, 4)}年${Number(period.to.slice(5, 7))}月${Number(period.to.slice(8, 10))}日`;
+    return `${from}〜${to}`;
+  }
+  if (view.layout === "year_columns") return yearLabel(period.from);
+  return monthLabel(period.from);
+}
+
+/** The period a stored publication covers (Issue #49): its
+ *  recorded span, or — for a version issued before spans were
+ *  recorded — its target month, first day to last. */
+export function publicationPeriodOf(pub: {
+  targetMonth: string;
+  rangeFrom: string | null;
+  rangeTo: string | null;
+}): { from: string; to: string } {
+  if (pub.rangeFrom && pub.rangeTo) return { from: pub.rangeFrom, to: pub.rangeTo };
+  return { from: `${pub.targetMonth}-01`, to: monthEndOf(`${pub.targetMonth}-01`) };
+}
+
 /** Step the anchor by one period of the view's layout. */
 export function stepAnchor(view: ViewDefinitionData, anchor: string, dir: 1 | -1): string {
   if (view.layout === "week_rows") return addDays(anchor, dir * weekSpanOf(view));

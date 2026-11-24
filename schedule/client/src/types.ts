@@ -357,7 +357,11 @@ export interface PrintSettingsData {
  *  to hand out a corrected table, a new version is issued. The
  *  record around it may move (Issue #48): the label and note
  *  can be corrected, and cancelledAt stamps a version that was
- *  withdrawn — the row stays in the list, marked cancelled. */
+ *  withdrawn — the row stays in the list, marked cancelled.
+ *  Issue #49 issues the other layouts as well, and a version
+ *  names the period it covers: rangeFrom / rangeTo are the
+ *  span's first and last days — null on versions issued before
+ *  spans were recorded, whose period is their target month. */
 export interface PublicationData {
   id: string;
   viewDefinitionId: string;
@@ -369,6 +373,8 @@ export interface PublicationData {
   printSettings: PrintSettingsData;
   documentFormat: string;
   cancelledAt: string | null;
+  rangeFrom: string | null;
+  rangeTo: string | null;
 }
 
 /** One issued publication with its document: the stored,

@@ -1,4 +1,5 @@
-import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm";
+import { addDays } from "@school-manage/calendar-types";
 import type { Db } from "./client.js";
 import { publications, type PublicationSnapshot, type PublicationRow } from "./schema.js";
 
@@ -11,9 +12,12 @@ import { publications, type PublicationSnapshot, type PublicationRow } from "./s
  * keeping around them: the version label and the note may be
  * corrected (updatePublicationMeta), and an issue may be
  * cancelled (cancelPublication stamps cancelled_at; the row
- * stays, as a cancelled version in the history). The list read
- * leaves the two heavy columns behind (the document and the
- * snapshot); the single read returns the whole row.
+ * stays, as a cancelled version in the history). Issue #49
+ * records the issued span on each new row (range_from /
+ * range_to); periodOf derives a row's period from them, or
+ * from its target month for the rows that predate spans. The
+ * list read leaves the two heavy columns behind (the document
+ * and the snapshot); the single read returns the whole row.
  */
 
 /** A publication without its document and snapshot: what the
@@ -32,6 +36,8 @@ const metaColumns = {
   printSettings: publications.printSettings,
   documentFormat: publications.documentFormat,
   cancelledAt: publications.cancelledAt,
+  rangeFrom: publications.rangeFrom,
+  rangeTo: publications.rangeTo,
 };
 
 /** A stored row as the version list shows it: every field but
@@ -49,7 +55,35 @@ export function toPublicationMeta(row: PublicationRow): PublicationMeta {
     printSettings: row.printSettings,
     documentFormat: row.documentFormat,
     cancelledAt: row.cancelledAt,
+    rangeFrom: row.rangeFrom,
+    rangeTo: row.rangeTo,
   };
+}
+
+/** The last day of a "YYYY-MM" month. */
+function monthEndOf(month: string): string {
+  const year = Number(month.slice(0, 4));
+  const mon = Number(month.slice(5, 7));
+  const next = mon === 12 ? `${year + 1}-01-01` : `${year}-${String(mon + 1).padStart(2, "0")}-01`;
+  return addDays(next, -1);
+}
+
+/**
+ * The period one publication covers (Issue #49): the span it
+ * was issued with, or — for a version issued before spans were
+ * recorded, whose range columns are null — its target month,
+ * first day to last. Every period question (the previous
+ * version of a diff, the latest version a public range
+ * announces) is asked through this derivation, so the rows
+ * written before spans existed answer exactly as the month
+ * versions they are.
+ */
+export function periodOf(row: Pick<PublicationRow, "targetMonth" | "rangeFrom" | "rangeTo">): {
+  from: string;
+  to: string;
+} {
+  if (row.rangeFrom && row.rangeTo) return { from: row.rangeFrom, to: row.rangeTo };
+  return { from: `${row.targetMonth}-01`, to: monthEndOf(row.targetMonth) };
 }
 
 export interface NewPublication {
@@ -67,6 +101,11 @@ export interface NewPublication {
    *  none to store (a fixture, a legacy-shaped insert) leaves
    *  it out and the row carries null — an undiffable version. */
   snapshotJson?: PublicationSnapshot | null;
+  /** The issued span (Issue #49); a caller that issues a plain
+   *  month the old way leaves them out and the row carries
+   *  null — its period is then its target month (periodOf). */
+  rangeFrom?: string | null;
+  rangeTo?: string | null;
 }
 
 export async function insertPublication(
@@ -76,7 +115,13 @@ export async function insertPublication(
 ): Promise<PublicationRow> {
   const rows = await db
     .insert(publications)
-    .values({ schoolId, ...input, snapshotJson: input.snapshotJson ?? null })
+    .values({
+      schoolId,
+      ...input,
+      snapshotJson: input.snapshotJson ?? null,
+      rangeFrom: input.rangeFrom ?? null,
+      rangeTo: input.rangeTo ?? null,
+    })
     .returning();
   return rows[0] as PublicationRow;
 }
@@ -116,18 +161,38 @@ export async function getPublication(
 
 /**
  * The version issued immediately before one publication (Issue
- * #48): the same view's same month, the greatest (published_at,
+ * #48): the same view's, covering the same period (Issue #49:
+ * periodOf's derivation, so a month version's predecessor is
+ * the previous version of that month, a week version's the
+ * previous issue of the same week), the greatest (published_at,
  * id) strictly below the given one's — the version ordering the
  * list shows, newest first. Cancelled versions count: a version
  * that was later cancelled was still the previous issue when
  * the next one came out. Null when the given version is the
- * first of its view and month.
+ * first of its view and period.
  */
 export async function getPreviousPublication(
   db: Db,
   schoolId: string,
-  current: Pick<PublicationRow, "viewDefinitionId" | "targetMonth" | "publishedAt" | "id">,
+  current: Pick<
+    PublicationRow,
+    "viewDefinitionId" | "targetMonth" | "rangeFrom" | "rangeTo" | "publishedAt" | "id"
+  >,
 ): Promise<PublicationRow | null> {
+  const period = periodOf(current);
+  // A stored row covers the same period when its span columns
+  // name it, or when it predates spans (null) and its target
+  // month IS the period — which only a plain month period can
+  // be: a week or a year span never equals a month span.
+  const isMonthSpan =
+    period.from === `${period.from.slice(0, 7)}-01` &&
+    period.to === monthEndOf(period.from.slice(0, 7));
+  const samePeriod = isMonthSpan
+    ? or(
+        and(eq(publications.rangeFrom, period.from), eq(publications.rangeTo, period.to)),
+        and(isNull(publications.rangeFrom), eq(publications.targetMonth, period.from.slice(0, 7))),
+      )
+    : and(eq(publications.rangeFrom, period.from), eq(publications.rangeTo, period.to));
   const rows = await db
     .select()
     .from(publications)
@@ -135,7 +200,7 @@ export async function getPreviousPublication(
       and(
         eq(publications.schoolId, schoolId),
         eq(publications.viewDefinitionId, current.viewDefinitionId),
-        eq(publications.targetMonth, current.targetMonth),
+        samePeriod,
         or(
           lt(publications.publishedAt, current.publishedAt),
           and(eq(publications.publishedAt, current.publishedAt), lt(publications.id, current.id)),
@@ -210,16 +275,20 @@ export async function cancelPublication(
 
 /**
  * The latest version a public reader is told about (Issue #48):
- * the newest non-cancelled publication of one view's one month.
- * A cancelled version is withdrawn, so it never names itself
- * the latest; when every version of the month is cancelled —
- * or none was issued — there is no latest version to announce.
+ * the newest non-cancelled publication of the view whose
+ * period contains the given date (Issue #49: periodOf's
+ * derivation — a month version contains the days of its month,
+ * a week version the days of its week, a year version the
+ * whole school year). A cancelled version is withdrawn, so it
+ * never names itself the latest; when every covering version
+ * is cancelled — or none was issued — there is no latest
+ * version to announce.
  */
-export async function getLatestPublicationForMonth(
+export async function getLatestPublicationContaining(
   db: Db,
   schoolId: string,
   viewDefinitionId: string,
-  targetMonth: string,
+  date: string,
 ): Promise<{ versionLabel: string; publishedAt: Date } | null> {
   const rows = await db
     .select({
@@ -231,8 +300,11 @@ export async function getLatestPublicationForMonth(
       and(
         eq(publications.schoolId, schoolId),
         eq(publications.viewDefinitionId, viewDefinitionId),
-        eq(publications.targetMonth, targetMonth),
         isNull(publications.cancelledAt),
+        or(
+          and(lte(publications.rangeFrom, date), gte(publications.rangeTo, date)),
+          and(isNull(publications.rangeFrom), eq(publications.targetMonth, date.slice(0, 7))),
+        ),
       ),
     )
     .orderBy(desc(publications.publishedAt), desc(publications.id))

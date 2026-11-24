@@ -411,9 +411,9 @@ describe("the schedule screen with a year view", () => {
       }),
     );
     await waitFor(() => expect(document.querySelectorAll("tbody tr")).toHaveLength(31));
-    // Issuing is the rows layouts' for now: no publish button on
-    // the year table.
-    expect(screen.queryByRole("button", { name: "発行・印刷" })).not.toBeInTheDocument();
+    // Issue #49 issues the year table too: the publish button
+    // stands on it.
+    expect(screen.getByRole("button", { name: "発行・印刷" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "次へ" }));
     expect(await screen.findByText("2027年度")).toBeInTheDocument();

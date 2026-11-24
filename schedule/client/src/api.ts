@@ -220,12 +220,16 @@ export interface ScheduleApi {
   confirmAbsence(input: { id: string; revision: number }): Promise<PendingRecord>;
   getPendingEvents(input: { from: string; to: string }): Promise<{ items: PendingRecord[] }>;
   confirmEvent(input: { id: string; revision: number }): Promise<PendingRecord>;
-  // Issue #40: issuing a month table as a versioned document.
-  // Issuing is the publish permission's (the server checks);
-  // the list and the document are view.read.
+  // Issue #40: issuing a table as a versioned document. Issue
+  // #49 names the issued span (from/to — a week table's week,
+  // a year table's school year); omitted, the span is the
+  // target month. Issuing is the publish permission's (the
+  // server checks); the list and the document are view.read.
   createPublication(input: {
     viewId: string;
     targetMonth: string;
+    from?: string;
+    to?: string;
     versionLabel: string;
     note?: string | null;
     printSettings?: Partial<PrintSettingsData>;

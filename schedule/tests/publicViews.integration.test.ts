@@ -908,4 +908,51 @@ describe.skipIf(!url)("public viewing (Issue #41)", () => {
     await actions.cancelPublication.run(auth("Admin"), { id: first["id"] as string });
     expect((await rangeNow())["latestPublication"]).toBeNull();
   });
+
+  it("the public range announces a week version covering its first day (Issue #49)", async () => {
+    await actions.upsertViewDefinition.run(auth("Admin"), {
+      id: "view-guardian-week",
+      name: "保護者用週表",
+      layout: "week_rows",
+      audience: "guardian",
+      periodScope: "week",
+      columns: [
+        { id: "col-gw-events", sourceKind: "event_category" },
+        { id: "col-gw-lunch", sourceKind: "daily_item", itemDefinitionId: "item-lunch" },
+      ],
+    });
+    const issued = (await actions.createPublicViewToken.run(auth("Admin"), {
+      viewId: "view-guardian-week",
+      cookie: COOKIE,
+    })) as Record_;
+    const weekToken = issued["token"] as string;
+    const readFrom = async (from: string) =>
+      (await publicActions.getPublicRange.run({
+        token: weekToken,
+        slug: "test",
+        from,
+        to: "2027-10-31",
+      })) as unknown as Record_;
+
+    // Nothing issued for the view yet: nothing to announce.
+    expect((await readFrom("2027-10-06"))["latestPublication"]).toBeNull();
+
+    // A week version covering Mon 2027-10-04 .. Sun 2027-10-10.
+    await actions.createPublication.run(auth("Admin"), {
+      cookie: COOKIE,
+      viewId: "view-guardian-week",
+      targetMonth: "2027-10",
+      from: "2027-10-04",
+      to: "2027-10-10",
+      versionLabel: "週の版",
+    });
+
+    // A range starting inside the week announces the week
+    // version — the containment rule, not the month rule.
+    const inside = await readFrom("2027-10-06");
+    expect((inside["latestPublication"] as Record_)["versionLabel"]).toBe("週の版");
+    // A range starting after the week announces nothing: the
+    // week version does not leak into the rest of its month.
+    expect((await readFrom("2027-10-20"))["latestPublication"]).toBeNull();
+  });
 });

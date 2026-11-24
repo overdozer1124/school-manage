@@ -433,17 +433,20 @@ export function createPublicActions(db: Db, publicClient: PublicPlatformClient) 
           cookie: "",
         },
       );
-      // The latest issued version of the range's first month
-      // (Issue #48): the public screen announces it, so a reader
-      // holding a printed copy can tell whether it is the newest
-      // one. Only the label and the issue date ride along — the
-      // version record's own public face, the same two facts the
-      // printed document itself carries — never the publisher.
-      const latest = await publicationsStore.getLatestPublicationForMonth(
+      // The latest issued version covering the range's first
+      // day (Issue #48; the period rule is Issue #49's: a month
+      // version covers its month, a week version its week, a
+      // year version its school year): the public screen
+      // announces it, so a reader holding a printed copy can
+      // tell whether it is the newest one. Only the label and
+      // the issue date ride along — the version record's own
+      // public face, the same two facts the printed document
+      // itself carries — never the publisher.
+      const latest = await publicationsStore.getLatestPublicationContaining(
         db,
         schoolId,
         view.id,
-        input.from.slice(0, 7),
+        input.from,
       );
       return {
         ...publicRange(range, audience),
