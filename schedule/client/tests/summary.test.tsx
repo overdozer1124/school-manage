@@ -25,13 +25,17 @@ describe("the month table's summary", () => {
     const section = await screen.findByRole("region", { name: "集計" });
     const inSummary = within(section);
     expect(inSummary.getByText("授業日数")).toBeInTheDocument();
-    // The lunch line: 19 days in total, split into the unsplit
-    // days and the per-grade trip days.
+    // The lunch line: 19 days in total, and every grade counts
+    // its real lunch days — the unsplit days fill every grade,
+    // so the first years stand at 19 too, the sixth years at
+    // 17 (the two trip days), and no 全体 line stands beside
+    // the grades.
     const lunchLine = inSummary.getByText("給食").closest("li");
     expect(lunchLine?.textContent).toContain("19日");
-    expect(lunchLine?.textContent).toContain("全体 17日");
-    expect(lunchLine?.textContent).toContain("1年 2日");
-    expect(lunchLine?.textContent).toContain("6年 0日");
+    expect(lunchLine?.textContent).toContain("1年 19日");
+    expect(lunchLine?.textContent).toContain("5年 19日");
+    expect(lunchLine?.textContent).toContain("6年 17日");
+    expect(lunchLine?.textContent).not.toContain("全体");
     // The month's school days stand in the counts as 19日 too.
     const schoolDays = inSummary.getByText("授業日数").closest("div");
     expect(schoolDays?.textContent).toContain("19日");
@@ -50,13 +54,12 @@ describe("the month table's summary", () => {
     const lunch = summary.total.items.find((i) => i.itemId === "item-lunch");
     expect(lunch?.total).toBe(19);
     expect(lunch?.byTarget).toEqual([
-      { targetId: null, targetName: "全体", count: 17 },
-      { targetId: "grade:grade-1", targetName: "1年", count: 2 },
-      { targetId: "grade:grade-2", targetName: "2年", count: 2 },
-      { targetId: "grade:grade-3", targetName: "3年", count: 2 },
-      { targetId: "grade:grade-4", targetName: "4年", count: 2 },
-      { targetId: "grade:grade-5", targetName: "5年", count: 2 },
-      { targetId: "grade:grade-6", targetName: "6年", count: 0 },
+      { targetId: "grade:grade-1", targetName: "1年", count: 19 },
+      { targetId: "grade:grade-2", targetName: "2年", count: 19 },
+      { targetId: "grade:grade-3", targetName: "3年", count: 19 },
+      { targetId: "grade:grade-4", targetName: "4年", count: 19 },
+      { targetId: "grade:grade-5", targetName: "5年", count: 19 },
+      { targetId: "grade:grade-6", targetName: "6年", count: 17 },
     ]);
   });
 });
@@ -91,13 +94,22 @@ describe("the year table's summary", () => {
     // day in the fixture, so the two columns agree).
     const total = inSummary.getByRole("row", { name: /合計/ });
     const monthRows = rows.slice(1, 13);
-    for (const column of [1, 2]) {
-      const sum = monthRows.reduce(
+    const columnSum = (column: number) =>
+      monthRows.reduce(
         (acc, row) => acc + Number((row.children[column]?.textContent ?? "0").replace("日", "")),
         0,
       );
-      expect(total.children[column]?.textContent).toBe(`${sum}日`);
-    }
+    expect(total.children[1]?.textContent).toBe(`${columnSum(1)}日`);
+    // The lunch cell of the total row leads with the year's
+    // total and carries the per-grade breakdown under it: the
+    // first years ate on every lunch day, the sixth years on
+    // two fewer (the school trip), and no 全体 stands there.
+    const lunchSum = columnSum(2);
+    const lunchCell = total.children[2]?.textContent ?? "";
+    expect(lunchCell.startsWith(`${lunchSum}日`)).toBe(true);
+    expect(lunchCell).toContain(`1年 ${lunchSum}日`);
+    expect(lunchCell).toContain(`6年 ${lunchSum - 2}日`);
+    expect(lunchCell).not.toContain("全体");
   });
 
   it("the adapter's year agrees with its months", async () => {
@@ -112,5 +124,16 @@ describe("the year table's summary", () => {
     expect(summary.total.schoolDays).toBe(monthSum);
     const lunch = summary.total.items.find((i) => i.itemId === "item-lunch");
     expect(lunch?.total).toBe(summary.total.schoolDays);
+    // Over the year the breakdown lists the grades alone (no
+    // 全体）: the first years ate on every lunch day, the
+    // sixth years on two fewer — November's trip days.
+    const lunchTotal = lunch?.total ?? 0;
+    expect(lunch?.byTarget).toEqual(
+      [1, 2, 3, 4, 5, 6].map((n) => ({
+        targetId: `grade:grade-${n}`,
+        targetName: `${n}年`,
+        count: n === 6 ? lunchTotal - 2 : lunchTotal,
+      })),
+    );
   });
 });

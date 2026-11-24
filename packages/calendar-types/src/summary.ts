@@ -86,7 +86,16 @@ export interface SummaryItemCount {
    *  value of this item in the period (a target whose values
    *  never count stands at zero — the exception the design
    *  names, e.g. the sixth years' lunch on their trip days).
-   *  The unsplit target (null) stands first. */
+   *
+   *  A day a target has no value of its own falls back to the
+   *  day's unsplit (whole) value: a month that records lunch
+   *  for the whole school on most days and splits it by grade
+   *  only on the trip days counts every grade on the unsplit
+   *  days too, so each grade's count is its real number of
+   *  lunch days. When any target is split out in the period,
+   *  the unsplit target (null) is not listed — its days are
+   *  already inside every target's count. An item no value
+   *  splits stands under the unsplit target alone. */
   byTarget: SummaryTargetCount[];
 }
 
@@ -121,8 +130,7 @@ function summarizePeriod(
   }
   const nameOf = (targetId: string): string =>
     targets.find((t) => t.targetId === targetId)?.name ?? targetId;
-  const orderOf = (targetId: string | null): number => {
-    if (targetId === null) return -1;
+  const orderOf = (targetId: string): number => {
     const index = targets.findIndex((t) => t.targetId === targetId);
     return index === -1 ? targets.length : index;
   };
@@ -133,25 +141,76 @@ function summarizePeriod(
       count: countByType.get(dayType) ?? 0,
     })),
     items: items.map((item) => {
-      const countedDays = new Set<string>();
-      const countedByTarget = new Map<string | null, Set<string>>();
-      const seenTargets = new Set<string | null>();
+      // The item's values grouped by date: the day's unsplit
+      // (whole) value, if it has one, and its per-target values.
+      // Several rows may land on one target of one day (a
+      // morning and an afternoon row); the day counts for the
+      // target when any of them counts.
+      interface DayValues {
+        whole?: boolean;
+        explicit: Map<string, boolean>;
+      }
+      const byDate = new Map<string, DayValues>();
+      const seenTargets = new Set<string>();
+      const listedInOrder: string[] = [];
+      let hasWhole = false;
       for (const value of values) {
         if (value.itemId !== item.itemId) continue;
-        seenTargets.add(value.targetId);
-        if (!value.counts) continue;
-        countedDays.add(value.date);
-        const set = countedByTarget.get(value.targetId) ?? new Set<string>();
-        set.add(value.date);
-        countedByTarget.set(value.targetId, set);
+        let dayValues = byDate.get(value.date);
+        if (!dayValues) {
+          dayValues = { explicit: new Map() };
+          byDate.set(value.date, dayValues);
+        }
+        if (value.targetId === null) {
+          hasWhole = true;
+          dayValues.whole = (dayValues.whole ?? false) || value.counts;
+        } else {
+          if (!seenTargets.has(value.targetId)) {
+            seenTargets.add(value.targetId);
+            listedInOrder.push(value.targetId);
+          }
+          dayValues.explicit.set(
+            value.targetId,
+            (dayValues.explicit.get(value.targetId) ?? false) || value.counts,
+          );
+        }
       }
-      const byTarget = [...seenTargets]
-        .sort((a, b) => orderOf(a) - orderOf(b))
-        .map((targetId) => ({
-          targetId,
-          targetName: targetId === null ? "全体" : nameOf(targetId),
-          count: countedByTarget.get(targetId)?.size ?? 0,
-        }));
+      // The targets the breakdown lists: the ones the period's
+      // values split out, in the targets' own order, with ids
+      // no target list names after them in first-appearance
+      // order (the sort is stable, and orderOf ties them).
+      const listedTargets = listedInOrder.sort((a, b) => orderOf(a) - orderOf(b));
+      const countedDays = new Set<string>();
+      const countedByTarget = new Map<string, Set<string>>();
+      let wholeCountedDays = 0;
+      for (const [date, dayValues] of byDate) {
+        const whole = dayValues.whole ?? false;
+        if (whole) wholeCountedDays += 1;
+        let dayCounts = whole;
+        for (const targetId of listedTargets) {
+          // A target's own value decides its day; a day it has
+          // none falls back to the day's unsplit value.
+          const effective = dayValues.explicit.has(targetId)
+            ? (dayValues.explicit.get(targetId) as boolean)
+            : whole;
+          if (!effective) continue;
+          dayCounts = true;
+          const set = countedByTarget.get(targetId) ?? new Set<string>();
+          set.add(date);
+          countedByTarget.set(targetId, set);
+        }
+        if (dayCounts) countedDays.add(date);
+      }
+      const byTarget: SummaryTargetCount[] =
+        listedTargets.length > 0
+          ? listedTargets.map((targetId) => ({
+              targetId,
+              targetName: nameOf(targetId),
+              count: countedByTarget.get(targetId)?.size ?? 0,
+            }))
+          : hasWhole
+            ? [{ targetId: null, targetName: "全体", count: wholeCountedDays }]
+            : [];
       return { itemId: item.itemId, name: item.name, total: countedDays.size, byTarget };
     }),
   };

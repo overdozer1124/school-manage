@@ -215,6 +215,61 @@ describe.skipIf(!url)("summary (Issue #47)", () => {
       itemDefinitionId: "item-bus-days",
       value: "yes",
     });
+
+    // A staff-only aggregatable item, standing beside lunch in
+    // two views of different audiences: the staff view counts
+    // it, the guardian view must not — the summary counts the
+    // columns the view's audience may see, as the table does.
+    await defs.upsertItemDefinition.run(adminA, {
+      id: "item-staff-days",
+      key: "staff_days",
+      name: "職員確認",
+      valueType: "symbol",
+      granularity: "day",
+      defaultVisibility: "staff_only",
+      isAggregatable: true,
+      options: [
+        { id: "opt-staff-yes", code: "yes", label: "○", sort: 1, countsAs: { staff_day: true } },
+        { id: "opt-staff-no", code: "no", label: "×", sort: 2, countsAs: { staff_day: false } },
+      ],
+    });
+    // Column ids are unique across the school, so each view
+    // names its own pair.
+    const bothColumns = (prefix: string) => [
+      {
+        id: `${prefix}-lunch`,
+        sourceKind: "daily_item" as const,
+        itemDefinitionId: "item-lunch",
+        sort: 1,
+      },
+      {
+        id: `${prefix}-staff`,
+        sourceKind: "daily_item" as const,
+        itemDefinitionId: "item-staff-days",
+        sort: 2,
+      },
+    ];
+    await views.upsertViewDefinition.run(adminA, {
+      id: "view-both-staff",
+      name: "職員用（両方）",
+      layout: "month_rows",
+      audience: "staff",
+      periodScope: "month",
+      columns: bothColumns("col-staff"),
+    });
+    await views.upsertViewDefinition.run(adminA, {
+      id: "view-both-guardian",
+      name: "保護者用（両方）",
+      layout: "month_rows",
+      audience: "guardian",
+      periodScope: "month",
+      columns: bothColumns("col-guardian"),
+    });
+    await daily.setDailyValue.run(editorA, {
+      date: "2027-10-01",
+      itemDefinitionId: "item-staff-days",
+      value: "yes",
+    });
   });
 
   afterAll(async () => {
@@ -257,6 +312,66 @@ describe.skipIf(!url)("summary (Issue #47)", () => {
     // The whole week falls in one month bucket, which agrees.
     expect(result.months.map((m) => m.month)).toEqual(["2027-10"]);
     expect(result.months[0]?.items[0]?.total).toBe(3);
+  });
+
+  it("mixes whole-school and per-grade values: the whole value fills every grade", async () => {
+    // Two more lunch days recorded for the whole school at
+    // once (an unsplit row, target_key "") beside the per-grade
+    // days above. The write actions hold an axis item's values
+    // per target, so the unsplit rows are placed directly —
+    // the read must still count them for every grade: grades
+    // 1–5 eat on all five days, the sixth years on three (of
+    // the split days they ate on one; the unsplit days count
+    // for them too), and the unsplit target is not listed
+    // beside the grades.
+    for (const date of ["2027-10-06", "2027-10-07"]) {
+      await queryClient.unsafe(
+        `insert into daily_values
+           (school_id, id, date, item_definition_id, target_key, value_option_id, created_by, updated_by)
+         values ($1, $2, $3, 'item-lunch', '', 'opt-lunch-yes', 'user-school-a', 'user-school-a')`,
+        [A, `dv-lunch-whole-${date}`, date],
+      );
+    }
+    const result = await summary.getSummary.run(auth("Editor"), {
+      from: FROM,
+      to: TO,
+      viewId: "view-month",
+      cookie: COOKIE,
+    });
+    const lunch = result.total.items[0];
+    expect(lunch?.total).toBe(5);
+    expect(lunch?.byTarget).toEqual([
+      { targetId: "grade:grade-1", targetName: "1年", count: 5 },
+      { targetId: "grade:grade-2", targetName: "2年", count: 5 },
+      { targetId: "grade:grade-3", targetName: "3年", count: 5 },
+      { targetId: "grade:grade-4", targetName: "4年", count: 5 },
+      { targetId: "grade:grade-5", targetName: "5年", count: 5 },
+      { targetId: "grade:grade-6", targetName: "6年", count: 3 },
+    ]);
+    expect(result.months[0]?.items[0]?.total).toBe(5);
+  });
+
+  it("counts the columns the view's audience may see, as the table does", async () => {
+    const staff = await summary.getSummary.run(auth("Editor"), {
+      from: FROM,
+      to: TO,
+      viewId: "view-both-staff",
+      cookie: COOKIE,
+    });
+    expect(staff.total.items.map((i) => i.itemId)).toEqual(["item-lunch", "item-staff-days"]);
+    const staffDays = staff.total.items.find((i) => i.itemId === "item-staff-days");
+    expect(staffDays?.total).toBe(1);
+    expect(staffDays?.byTarget).toEqual([{ targetId: null, targetName: "全体", count: 1 }]);
+
+    const guardian = await summary.getSummary.run(auth("Editor"), {
+      from: FROM,
+      to: TO,
+      viewId: "view-both-guardian",
+      cookie: COOKIE,
+    });
+    // Lunch (guardian visibility) reaches the guardian view;
+    // the staff-only item is not counted under it.
+    expect(guardian.total.items.map((i) => i.itemId)).toEqual(["item-lunch"]);
   });
 
   it("follows a changed day type — the counts are derived, not stored", async () => {

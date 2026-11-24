@@ -90,7 +90,11 @@ function monthItemTotal(month: SummaryMonthData, itemId: string): number {
 
 /** The year's counts under the year table: a row per month —
  *  school days and each counted item's days — and the total
- *  row the server derived over the whole year. */
+ *  row the server derived over the whole year. The total row
+ *  also carries each item's per-target breakdown, so a
+ *  per-grade exception (the sixth years' lunch) stays visible
+ *  in the year as it is in the month; the month rows stay
+ *  totals-only. */
 export function SummaryTable({ summary }: { summary: SummaryData }) {
   const items = summary.total.items;
   return (
@@ -124,7 +128,14 @@ export function SummaryTable({ summary }: { summary: SummaryData }) {
             <th scope="row">合計</th>
             <td>{summary.total.schoolDays}日</td>
             {items.map((item) => (
-              <td key={item.itemId}>{item.total}日</td>
+              <td key={item.itemId}>
+                {item.total}日
+                {showsBreakdown(item) && (
+                  <span className="summary-breakdown">
+                    （{item.byTarget.map((t) => `${t.targetName} ${t.count}日`).join("、")}）
+                  </span>
+                )}
+              </td>
             ))}
           </tr>
         </tfoot>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ApiError,
   ForbiddenError,
@@ -159,6 +159,12 @@ export function App({
   // the table stays up with a note where the counts would be.
   // A 401 / 403 still goes through handleError, as every read's
   // does (the summary is view.read, like the range).
+  //
+  // A change of view or period clears the counts before the
+  // new read starts, so the previous period's summary never
+  // sits under the new table while it loads; a re-read of the
+  // same period (a saved edit) keeps them until they land.
+  const summaryPeriodRef = useRef<string | null>(null);
   useEffect(() => {
     if (!bootstrap || !view) return;
     if (
@@ -166,12 +172,19 @@ export function App({
       view.layout !== "two_column" &&
       view.layout !== "year_columns"
     ) {
+      summaryPeriodRef.current = null;
       setSummary(null);
       setSummaryError(null);
       return;
     }
     let cancelled = false;
     const { from, to } = rangeFor(view, anchor);
+    const periodKey = `${view.id}:${from}:${to}`;
+    if (summaryPeriodRef.current !== periodKey) {
+      summaryPeriodRef.current = periodKey;
+      setSummary(null);
+      setSummaryError(null);
+    }
     api
       .getSummary({ from, to, viewId: view.id })
       .then((result) => {

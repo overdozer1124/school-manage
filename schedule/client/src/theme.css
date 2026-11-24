@@ -1305,6 +1305,14 @@ span.timeline-block {
   color: var(--dim);
 }
 
+/* In the year table's total row the breakdown stands under
+   the item's total, not beside it. */
+.summary-table .summary-breakdown {
+  display: block;
+  margin-left: 0;
+  font-weight: 400;
+}
+
 .summary-table {
   border-collapse: collapse;
 }

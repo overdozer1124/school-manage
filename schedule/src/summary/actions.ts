@@ -1,7 +1,12 @@
 import { defineActions } from "@school-manage/platform-client";
 import {
+  audienceColumns,
   datesInRange,
   summarizeRange,
+  viewAudienceRank,
+  type Audience,
+  type AudienceColumn,
+  type AudienceItem,
   type DayType,
   type SummaryTargetInput,
   type SummaryValueInput,
@@ -72,6 +77,10 @@ function optionCounts(countsAs: unknown): boolean {
  * summary foots the table the view draws, so an item the view
  * does not show is not totalled under it, and an item that is
  * not aggregatable (its days mean nothing as a count) never is.
+ * The columns are the ones the view's audience may see, filtered
+ * exactly as the range read filters them (audienceColumns over
+ * the view audience's rank), so the counts never name an item
+ * the table itself hides from that audience.
  * Days are classified by the range read's own rule (dayTypeFor),
  * and per-target counts key on the daily values' canonical
  * target keys, with names read from the platform's masters for
@@ -98,9 +107,29 @@ export async function computeSummary(
 
   const definitionSet = await definitionsStore.getDefinitionSet(db, schoolId);
   const itemById = new Map(definitionSet.itemDefinitions.map((item) => [item.id, item]));
+  // The view's own filter, the range read's own (Issue #32):
+  // which columns the view's audience sees. The pure function
+  // reads slices, so the full columns are kept by id.
+  const itemSlices = definitionSet.itemDefinitions as unknown as readonly Pick<
+    AudienceItem,
+    "id" | "defaultVisibility"
+  >[];
+  const keptColumnIds = new Set(
+    audienceColumns(
+      view.columns.map((column): AudienceColumn & { id: string } => ({
+        id: column.id,
+        sourceKind: column.sourceKind as AudienceColumn["sourceKind"],
+        itemDefinitionId: column.itemDefinitionId,
+        dutyDefinitionId: column.dutyDefinitionId,
+      })),
+      itemSlices,
+      viewAudienceRank(view.audience as Audience),
+    ).map((column) => column.id),
+  );
   const items: (typeof definitionSet.itemDefinitions)[number][] = [];
   const seenItemIds = new Set<string>();
   for (const column of view.columns) {
+    if (!keptColumnIds.has(column.id)) continue;
     if (column.sourceKind !== "daily_item" || !column.itemDefinitionId) continue;
     if (seenItemIds.has(column.itemDefinitionId)) continue;
     const item = itemById.get(column.itemDefinitionId);

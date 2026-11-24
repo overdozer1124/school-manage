@@ -152,6 +152,68 @@ describe("summarizeRange items", () => {
     ]);
   });
 
+  it("mixes whole-school and per-grade values: the whole value fills the grades without their own", () => {
+    // November's shape: lunch is recorded for the whole school
+    // on five days, and split by grade on two more days, when
+    // the sixth years are away on their trip and do not eat.
+    // Every grade's count is its real number of lunch days —
+    // the unsplit days count for every grade — and the unsplit
+    // target is not listed beside the grades.
+    const wholeDates = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"];
+    const splitDates = ["2026-11-19", "2026-11-20"];
+    const values: SummaryValueInput[] = wholeDates.map((date) => value(date, null, true));
+    for (const date of splitDates) {
+      for (const n of [1, 2, 3, 4, 5]) values.push(value(date, `grade:grade-${n}`, true));
+      values.push(value(date, "grade:grade-6", false));
+    }
+    const result = summarizeRange({
+      days: [...wholeDates, ...splitDates].map((d) => day(d, "class_day")),
+      items: LUNCH,
+      values,
+      targets: GRADES,
+    });
+    const lunch = result.total.items[0];
+    expect(lunch?.total).toBe(7);
+    expect(lunch?.byTarget).toEqual([
+      { targetId: "grade:grade-1", targetName: "1年", count: 7 },
+      { targetId: "grade:grade-2", targetName: "2年", count: 7 },
+      { targetId: "grade:grade-3", targetName: "3年", count: 7 },
+      { targetId: "grade:grade-4", targetName: "4年", count: 7 },
+      { targetId: "grade:grade-5", targetName: "5年", count: 7 },
+      { targetId: "grade:grade-6", targetName: "6年", count: 5 },
+    ]);
+  });
+
+  it("a whole value that does not count still lets one target's own value count the day", () => {
+    // One day the whole school does not eat, but the third
+    // years do (their own value says so); the fourth years'
+    // own value agrees with the whole school's. Another day
+    // nobody eats. A third day the whole school eats, and the
+    // split targets fall back to it.
+    const result = summarizeRange({
+      days: [
+        day("2027-10-01", "class_day"),
+        day("2027-10-02", "class_day"),
+        day("2027-10-03", "class_day"),
+      ],
+      items: LUNCH,
+      values: [
+        value("2027-10-01", null, false),
+        value("2027-10-01", "grade:grade-3", true),
+        value("2027-10-01", "grade:grade-4", false),
+        value("2027-10-02", null, false),
+        value("2027-10-03", null, true),
+      ],
+      targets: GRADES,
+    });
+    const lunch = result.total.items[0];
+    expect(lunch?.total).toBe(2);
+    expect(lunch?.byTarget).toEqual([
+      { targetId: "grade:grade-3", targetName: "3年", count: 2 },
+      { targetId: "grade:grade-4", targetName: "4年", count: 1 },
+    ]);
+  });
+
   it("an unsplit item counts under 全体， first and alone", () => {
     const result = summarizeRange({
       days: [day("2027-10-01", "class_day"), day("2027-10-02", "class_day")],
