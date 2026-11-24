@@ -34,6 +34,7 @@ import {
   schoolYearMonths,
   schoolYearOf,
   weekdayLabel,
+  weekStartOf,
 } from "./lib";
 import type {
   AbsenceSubdivisionData,
@@ -3133,6 +3134,10 @@ function devPublicationSpanOf(
     const days = (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1;
     if (days !== 7 && days !== 14) {
       throw new Error("週表の発行期間は7日または14日にしてください");
+    }
+    // Monday weeks, as the server requires (publicationSpanOf).
+    if (weekStartOf(from) !== from) {
+      throw new Error("週表の発行期間は月曜日から始めてください");
     }
     return { from, to };
   }

@@ -1275,6 +1275,18 @@ describe.skipIf(!url)("publications (Issue #40)", () => {
         versionLabel: "だめな版",
       }),
     ).rejects.toThrow(/週表の発行期間は/);
+    // A full week that does not start on Monday (the rows
+    // layouts keep Monday weeks).
+    await expect(
+      actions.createPublication.run(auth("Editor"), {
+        cookie: COOKIE,
+        viewId: "view-week-staff",
+        targetMonth: MONTH,
+        from: "2027-10-12",
+        to: "2027-10-18",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/月曜日から/);
     // A target month that is not the span's first month.
     await expect(
       actions.createPublication.run(auth("Editor"), {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { defineActions } from "@school-manage/platform-client";
-import { addDays } from "@school-manage/calendar-types";
+import { addDays, weekStartOf } from "@school-manage/calendar-types";
 import * as definitionsStore from "../db/definitions.js";
 import * as dutiesStore from "../db/duties.js";
 import * as templatesStore from "../db/kindTemplates.js";
@@ -89,6 +89,13 @@ function publicationSpanOf(
     const days = (Date.parse(to) - Date.parse(from)) / 86_400_000 + 1;
     if (days !== 7 && days !== 14) {
       throw new Error("週表の発行期間は7日または14日にしてください");
+    }
+    // The rows layouts keep Monday weeks (the client's rangeFor
+    // starts a week view on Monday), so a span the screen could
+    // show always starts on one; anything else is a span no week
+    // table ever displayed.
+    if (weekStartOf(from) !== from) {
+      throw new Error("週表の発行期間は月曜日から始めてください");
     }
     return { from, to };
   }

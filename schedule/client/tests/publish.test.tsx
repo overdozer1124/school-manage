@@ -527,5 +527,14 @@ describe("dev adapter documents for the other layouts (Issue #49)", () => {
         versionLabel: "だめな版",
       }),
     ).rejects.toThrow(/週表の発行期間は/);
+    await expect(
+      api.createPublication({
+        viewId: "view-week-staff",
+        targetMonth: "2026-11",
+        from: "2026-11-10",
+        to: "2026-11-16",
+        versionLabel: "だめな版",
+      }),
+    ).rejects.toThrow(/月曜日から/);
   });
 });
