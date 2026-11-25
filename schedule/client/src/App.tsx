@@ -230,6 +230,15 @@ export function App({
   // notice stands under the header.
   const drag = useEventDrag(editor);
 
+  // A failed move's notice belongs to the view and period it
+  // happened in (Issue #125): switching either clears it, so
+  // it never trails the reader onto an unrelated table. The
+  // reader can also close it where it stands.
+  const clearDragNotice = drag.clearNotice;
+  useEffect(() => {
+    clearDragNotice();
+  }, [clearDragNotice, viewId, anchor]);
+
   if (forbidden) {
     return (
       <main className="schedule-app">
@@ -384,7 +393,10 @@ export function App({
 
       {drag.notice && (
         <p className="move-notice" role="alert">
-          {drag.notice}
+          {drag.notice}{" "}
+          <button type="button" aria-label="お知らせを閉じる" onClick={drag.clearNotice}>
+            閉じる
+          </button>
         </p>
       )}
       {!supported && (
