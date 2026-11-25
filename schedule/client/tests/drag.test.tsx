@@ -273,6 +273,45 @@ describe("drag & drop moving in the rows tables (L1 / L2)", () => {
     expect(within(rowOf("2026-11-18")).queryByText(/ドラッグ会議/)).toBeNull();
   });
 
+  it("the failed move's notice can be closed, and a change of view or period clears it (Issue #125)", async () => {
+    const base = createDevApi();
+    await base.createEvent({ event: eventRecord() });
+    const api: ScheduleApi = {
+      ...base,
+      updateEvent: async () => {
+        throw new ApiError(409, "revision conflict");
+      },
+    };
+    render(<App api={api} initialAnchor="2026-11-15" />);
+    await screen.findByText("開発用小学校");
+    const noticeGone = () =>
+      waitFor(() => expect(screen.queryByText(/最新の内容に戻しました/)).toBeNull());
+
+    // First failure: the notice stands, and its close button
+    // dismisses it where it stands.
+    const button = await waitFor(() => entryButton(rowOf("2026-11-16"), "ドラッグ会議"));
+    dragEntry(button, dropCellOf("2026-11-18"));
+    expect(await screen.findByText(/最新の内容に戻しました/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "お知らせを閉じる" }));
+    await noticeGone();
+
+    // Second failure: switching the view clears the notice.
+    const buttonAgain = await waitFor(() => entryButton(rowOf("2026-11-16"), "ドラッグ会議"));
+    dragEntry(buttonAgain, dropCellOf("2026-11-18"));
+    expect(await screen.findByText(/最新の内容に戻しました/)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "view-week-staff" } });
+    await screen.findByText("2026-11-09 〜 2026-11-22");
+    await noticeGone();
+
+    // Third failure, in the week table: moving to the next
+    // period clears the notice too.
+    const weekButton = await waitFor(() => entryButton(rowOf("2026-11-16"), "ドラッグ会議"));
+    dragEntry(weekButton, dropCellOf("2026-11-13"));
+    expect(await screen.findByText(/最新の内容に戻しました/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "次へ" }));
+    await noticeGone();
+  });
+
   it("does not grab an absence line", async () => {
     const base = createDevApi();
     const calls: UpdateCall[] = [];

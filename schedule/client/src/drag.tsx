@@ -28,7 +28,9 @@ import { movedEventRecord } from "./lib";
  * revision. A stale revision comes back as the platform's 409;
  * any failure re-reads the range — the display returns to what
  * the server holds — and leaves a notice by the table (the
- * app renders it). A landed move marks the entry briefly
+ * app renders it). The notice stands until the reader closes
+ * it, the view or period changes, or a move lands (Issue
+ * #125). A landed move marks the entry briefly
  * (justMovedId), the visual feedback the design asks for.
  *
  * Only event records are draggable: absences and daily values
@@ -47,6 +49,8 @@ export interface EventDragContext {
   ghost: { label: string; x: number; y: number } | null;
   /** The notice the last failed move left, or null. */
   notice: string | null;
+  /** Dismiss the failed move's notice (Issue #125). */
+  clearNotice(): void;
   /** pointerdown on a draggable event element. */
   startDrag(
     record: Record<string, unknown>,
@@ -202,6 +206,8 @@ export function useEventDrag(editor: CellEditorContext): EventDragContext {
 
   const shouldSuppressClick = useCallback(() => Date.now() < suppressUntilRef.current, []);
 
+  const clearNotice = useCallback(() => setNotice(null), []);
+
   const dropTargetProps = useCallback((date: string) => ({ "data-drop-date": date }), []);
 
   return {
@@ -210,6 +216,7 @@ export function useEventDrag(editor: CellEditorContext): EventDragContext {
     justMovedId,
     ghost,
     notice,
+    clearNotice,
     startDrag,
     shouldSuppressClick,
     dropTargetProps,
