@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import type { Server } from "node:http";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
@@ -206,8 +207,8 @@ describe.skipIf(!url)("setup commands (Issue #127)", () => {
   });
 
   it("runs as a CLI on an empty-schema database without printing any secret", async () => {
-    const tsxCli = new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url).pathname;
-    const script = new URL("../src/setup/setupSchool.ts", import.meta.url).pathname;
+    const tsxCli = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
+    const script = fileURLToPath(new URL("../src/setup/setupSchool.ts", import.meta.url));
     const env = { ...process.env, PLATFORM_DATABASE_URL: url as string };
     const args = [
       tsxCli,
