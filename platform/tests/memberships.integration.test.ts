@@ -27,6 +27,8 @@ const TEACHER = "teacher@example.jp";
 const LEAVER = "leaver@example.jp";
 const EDITOR = "editor@example.jp";
 const VIEWER = "viewer@example.jp";
+const DUAL = "dual@example.jp";
+const MOVED = "moved@example.jp";
 
 let fakeProfile: GoogleProfile = {
   googleId: "google-admin-a",
@@ -671,5 +673,117 @@ describe.skipIf(!url)("membership administration (Issue #128)", () => {
       { cookie: adminB },
     );
     expect(byAdminB.status).toBe(404);
+  });
+
+  it("refuses the cross-school takeover: an invited person's password cannot be reset by the inviting school", async () => {
+    const admin = await adminCookieA();
+
+    // Step 1 of the attack the review demonstrated: school A's
+    // administrator invites school B's administrator's address, with
+    // no roles. An unapproved membership at school A now exists for
+    // a person whose real membership is school B's.
+    const invite = await request(
+      "POST",
+      "/platform/api/v1/members/invite",
+      { email: ADMIN_B, roles: [] },
+      { cookie: admin },
+    );
+    expect(invite.status).toBe(201);
+    expect(invite.json.status).toBe("invited");
+    const targetPersonId = invite.json.personId as string;
+
+    // Step 2 is refused: the password belongs to the person, so
+    // setting it here would hand school A's administrator the
+    // password of a school B account.
+    const attack = await request(
+      "POST",
+      "/platform/api/v1/auth/set-password",
+      { personId: targetPersonId, newPassword: "takeover-pass-1" },
+      { cookie: admin },
+    );
+    expect(attack.status).toBe(403);
+
+    // The password was not set: the attempted password cannot sign
+    // in (the person still has no password), so steps 3 and 4 of
+    // the attack never happen.
+    const login = await request("POST", "/platform/api/v1/auth/login", {
+      email: ADMIN_B,
+      password: "takeover-pass-1",
+    });
+    expect(login.status).toBe(401);
+  });
+
+  it("refuses an administrator reset for a person who belongs to two schools", async () => {
+    await db.insert(persons).values({
+      id: "p-dual",
+      email: DUAL,
+      displayName: "兼務者",
+      passwordHash: await hashPassword("dual-pass-1"),
+    });
+    await db.insert(memberships).values([
+      { id: "m-dual-a", schoolId: schoolA, personId: "p-dual", status: "approved" },
+      { id: "m-dual-b", schoolId: schoolB, personId: "p-dual", status: "approved" },
+    ]);
+
+    const admin = await adminCookieA();
+    const reset = await request(
+      "POST",
+      "/platform/api/v1/auth/set-password",
+      { personId: "p-dual", newPassword: "dual-pass-2" },
+      { cookie: admin },
+    );
+    expect(reset.status).toBe(403);
+
+    // The password is unchanged: the attempted one fails, the
+    // original still signs in.
+    const wrong = await request("POST", "/platform/api/v1/auth/login", {
+      email: DUAL,
+      password: "dual-pass-2",
+    });
+    expect(wrong.status).toBe(401);
+    await passwordLogin(DUAL, "dual-pass-1");
+  });
+
+  it("refuses an administrator reset for a person whose other-school membership has ended", async () => {
+    await db.insert(persons).values({
+      id: "p-moved",
+      email: MOVED,
+      displayName: "異動済み",
+      passwordHash: await hashPassword("moved-pass-1"),
+    });
+    await db.insert(memberships).values([
+      {
+        id: "m-moved-b",
+        schoolId: schoolB,
+        personId: "p-moved",
+        status: "approved",
+        startsOn: "2020-04-01",
+        endsOn: "2021-03-31",
+      },
+      { id: "m-moved-a", schoolId: schoolA, personId: "p-moved", status: "approved" },
+    ]);
+
+    const admin = await adminCookieA();
+    const reset = await request(
+      "POST",
+      "/platform/api/v1/auth/set-password",
+      { personId: "p-moved", newPassword: "moved-pass-2" },
+      { cookie: admin },
+    );
+    expect(reset.status).toBe(403);
+
+    const wrong = await request("POST", "/platform/api/v1/auth/login", {
+      email: MOVED,
+      password: "moved-pass-2",
+    });
+    expect(wrong.status).toBe(401);
+    // The original password still signs in, at school A only (the
+    // school B enrolment is out of period).
+    const login = await request("POST", "/platform/api/v1/auth/login", {
+      email: MOVED,
+      password: "moved-pass-1",
+    });
+    expect(login.status).toBe(200);
+    expect(login.json.school?.schoolId).toBe(schoolA);
   });
 });

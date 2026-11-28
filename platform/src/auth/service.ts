@@ -446,9 +446,15 @@ export async function getAuthContext(
  * - A session is required; a person sets their own password.
  * - Another person's password may be reset only by an administrator
  *   of the session's school (Admin in either product) or by a
- *   platform operator, and — for a school administrator — only when
- *   the target belongs to that school (tenant isolation), and never
- *   for a platform operator (the source's SuperAdmin rule).
+ *   platform operator, and never for a platform operator (the
+ *   source's SuperAdmin rule). For a school administrator there is a
+ *   further condition, because the password belongs to the person
+ *   and not to a school row: the reset is allowed only when every
+ *   membership the target holds — approved or not, current or long
+ *   ended — is at the administrator's own school. A person who also
+ *   belongs (or once belonged) to another school is refused,
+ *   otherwise an invitation to this school would hand its
+ *   administrator the person's password at the other school too.
  * - When a password already exists, changing it as its owner needs
  *   the current password; an administrator's reset may omit it (when
  *   one is supplied, it must verify).
@@ -486,6 +492,15 @@ export async function setPassword(
       const targetMemberships = await ctx.store.listMemberships(targetId);
       if (!targetMemberships.some((m) => m.schoolId === claims.schoolId)) {
         throw new AuthError(404, "ユーザーが見つかりません");
+      }
+      // listMemberships returns every membership regardless of
+      // status or period, which is exactly what this judgment needs:
+      // the password is the person's alone (8-2-1), so a membership
+      // anywhere else — an approved second post, an enrolment that
+      // ended years ago, an invitation not yet approved — means a
+      // reset here would reach that other school as well.
+      if (targetMemberships.some((m) => m.schoolId !== claims.schoolId)) {
+        throw new AuthError(403, "他の学校にも所属している人のパスワードは変更できません");
       }
       if (await ctx.store.isPlatformAdmin(targetId)) {
         throw new AuthError(403, "運営者のパスワードは運営者だけが変更できます");
