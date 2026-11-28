@@ -47,7 +47,17 @@ export interface AuthStore {
     today: string,
   ): Promise<ProductEntitlement | undefined>;
   linkGoogleId(personId: string, googleId: string): Promise<void>;
-  setPasswordHash(personId: string, passwordHash: string): Promise<void>;
+  /**
+   * Replaces the person's password hash and the change-required
+   * flag (Issue #140) in one update, so the two can never drift:
+   * a password set by somebody else arrives with the flag on, a
+   * password the person set themselves with it off.
+   */
+  setPasswordHash(
+    personId: string,
+    passwordHash: string,
+    passwordChangeRequired: boolean,
+  ): Promise<void>;
   appendAudit(entry: {
     schoolId?: string | null;
     personId?: string | null;
@@ -137,8 +147,11 @@ export function createAuthStore(db: Db): AuthStore {
       await db.update(persons).set({ googleId }).where(eq(persons.id, personId));
     },
 
-    async setPasswordHash(personId, passwordHash) {
-      await db.update(persons).set({ passwordHash }).where(eq(persons.id, personId));
+    async setPasswordHash(personId, passwordHash, passwordChangeRequired) {
+      await db
+        .update(persons)
+        .set({ passwordHash, passwordChangeRequired })
+        .where(eq(persons.id, personId));
     },
 
     async appendAudit(entry) {

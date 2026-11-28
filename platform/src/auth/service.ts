@@ -12,6 +12,7 @@ import {
 import { createLoginOAuthState, parseLoginOAuthState } from "./oauthState.js";
 import {
   hashPassword,
+  signPasswordChangeToken,
   signSelectionToken,
   signSessionToken,
   verifyPassword,
@@ -56,6 +57,15 @@ export type LoginResult =
       selectionToken: string;
       user: PersonSummary;
       schools: SchoolSummary[];
+    }
+  | {
+      // The credentials were right, but the password was set by an
+      // administrator (Issue #140): no session and no school choice
+      // until the person changes it. The change token is the only
+      // thing this login hands out.
+      kind: "password-change";
+      changeToken: string;
+      user: PersonSummary;
     };
 
 interface Ctx {
@@ -190,6 +200,25 @@ export async function loginWithPassword(
     throw new AuthError(401, "メールアドレスまたはパスワードが正しくありません");
   }
 
+  // A password an administrator chose is a hand-over, not the
+  // person's own credential (Issue #140): it authenticates the
+  // person for exactly one purpose — changing it — and never
+  // reaches a school, whichever school was requested. This is what
+  // keeps it from opening another school the person later joins:
+  // the administrator who set it gets no further than this step.
+  if (person.passwordChangeRequired) {
+    await audit(ctx, {
+      personId: person.id,
+      action: "auth.login.password_change_required",
+      summary: "管理者が設定したパスワードのため、本人の変更が必要",
+    });
+    return {
+      kind: "password-change",
+      changeToken: signPasswordChangeToken(ctx.config, person.id),
+      user: personSummary(person),
+    };
+  }
+
   const candidates = await candidatesFor(ctx, person.id);
   return issueForCandidates(
     ctx,
@@ -321,6 +350,11 @@ export async function loginWithGoogle(
     }
   }
 
+  // The passwordChangeRequired mark (Issue #140) does not gate this
+  // path: it restricts the password credential, and Google login is
+  // the person's own identity proof — the administrator who set the
+  // password holds nothing here. A self-service password change in
+  // the session this login opens clears the mark.
   const candidates = await candidatesFor(ctx, person.id);
   return issueForCandidates(
     ctx,
@@ -458,6 +492,12 @@ export async function getAuthContext(
  * - When a password already exists, changing it as its owner needs
  *   the current password; an administrator's reset may omit it (when
  *   one is supplied, it must verify).
+ * - A reset by somebody else marks the person
+ *   passwordChangeRequired (Issue #140): the password belongs to
+ *   the person, so the copy the administrator knows must not stay
+ *   usable — the next password login may only change it (see
+ *   loginWithPassword). A change by the person themselves clears
+ *   the mark.
  * The password itself is never audited or logged — only the fact.
  */
 export async function setPassword(
@@ -520,12 +560,42 @@ export async function setPassword(
     // the current password (source behaviour).
   }
 
-  await ctx.store.setPasswordHash(targetId, await hashPassword(input.newPassword));
+  await ctx.store.setPasswordHash(targetId, await hashPassword(input.newPassword), !isSelf);
   await audit(ctx, {
     schoolId: claims.schoolId,
     personId: claims.personId,
     action: "auth.password.set",
     summary: isSelf ? "自分のパスワードを設定" : "管理者がパスワードを再設定",
+  });
+  return { success: true };
+}
+
+/**
+ * Completes the forced change (Issue #140): the one call a
+ * password-change token authorizes. The token itself is the proof —
+ * it is issued only by a password login that presented the
+ * administrator-set password — so no current password is asked
+ * again. The change clears the mark; from then on the person signs
+ * in normally, and the password the administrator knew is dead.
+ * A token presented when no change is outstanding (already changed
+ * through a session, say) is refused rather than silently becoming
+ * a password change without the current password.
+ */
+export async function completePasswordChange(
+  ctx: Ctx,
+  personId: string,
+  newPassword: string,
+): Promise<{ success: true }> {
+  const person = await ctx.store.findPersonById(personId);
+  if (!person) throw new AuthError(404, "ユーザーが見つかりません");
+  if (!person.passwordChangeRequired) {
+    throw new AuthError(400, "パスワードの変更は必要ありません");
+  }
+  await ctx.store.setPasswordHash(personId, await hashPassword(newPassword), false);
+  await audit(ctx, {
+    personId,
+    action: "auth.password.set",
+    summary: "変更が必要なパスワードを変更",
   });
   return { success: true };
 }

@@ -8,6 +8,7 @@ import { createGoogleAuthClient, type GoogleAuthClient } from "./google.js";
 import { createRateLimiter } from "./rateLimit.js";
 import {
   buildGoogleAuthUrl,
+  completePasswordChange,
   getAuthContext,
   getMe,
   loginWithGoogle,
@@ -18,6 +19,7 @@ import {
 } from "./service.js";
 import {
   expiresInToSeconds,
+  isPasswordChangeClaims,
   isSelectionClaims,
   verifyAuthToken,
   type TokenClaims,
@@ -38,6 +40,13 @@ export const SESSION_COOKIE = "platform_session";
  */
 export const SELECT_COOKIE = "platform_select";
 const SELECT_COOKIE_PATH = "/platform/api/v1/auth";
+
+/**
+ * The password-change token's cookie (Issue #140), scoped to the
+ * auth API like the selection cookie: it is not a session, and no
+ * other service ever sees it.
+ */
+export const CHANGE_COOKIE = "platform_change";
 
 /**
  * The Google login browser binding (Issue #16): /google/url sets a
@@ -84,6 +93,14 @@ function selectionCookie(token: string): string {
 
 function clearedSelectionCookie(): string {
   return `${SELECT_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=${SELECT_COOKIE_PATH}; Max-Age=0`;
+}
+
+function changeCookie(token: string): string {
+  return `${CHANGE_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Lax; Path=${SELECT_COOKIE_PATH}; Max-Age=${10 * 60}`;
+}
+
+function clearedChangeCookie(): string {
+  return `${CHANGE_COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=${SELECT_COOKIE_PATH}; Max-Age=0`;
 }
 
 function readCookie(req: Request, name: string): string | null {
@@ -137,6 +154,19 @@ function sendLoginResult(
     // The token travels only in the HttpOnly cookie, never in the body:
     // a body token would be readable by any script on the page.
     res.json({ user: result.user, school: result.school });
+    return;
+  }
+  if (result.kind === "password-change") {
+    // No session cookie is issued and no school is named: the only
+    // way forward is the password change the token authorizes. Any
+    // leftover selection cookie is cleared for the same reason as
+    // on a session issue.
+    res.setHeader("Set-Cookie", [
+      changeCookie(result.changeToken),
+      clearedSelectionCookie(),
+      ...extraCookies,
+    ]);
+    res.json({ passwordChangeRequired: true, user: result.user });
     return;
   }
   res.setHeader("Set-Cookie", [selectionCookie(result.selectionToken), ...extraCookies]);
@@ -287,6 +317,10 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   router.post("/select-school", async (req, res) => {
     try {
       const claims = requireClaims(deps, readChoiceToken(req));
+      // A password-change token (Issue #140) names a person but
+      // authorizes nothing but the change itself: it must not be
+      // exchangeable for a school session, wherever it is presented.
+      if (isPasswordChangeClaims(claims)) throw new AuthError(401, "認証が必要です");
       const input = parseBody(selectSchoolSchema, req);
       // Both a selection token and a live session may choose: the first
       // completes the login, the second is switching schools.
@@ -301,17 +335,40 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   // person's first-login flow, ported from school-timetable's
   // setPassword. Needs a session — the first sign-in itself is
   // Google (or an administrator's reset for a member of their school).
+  // The one exception is the forced change (Issue #140): a person
+  // whose password an administrator set holds no session, only the
+  // password-change token the password login issued, and that token
+  // authorizes this call for their own password and nothing else.
   router.post("/set-password", async (req, res) => {
     try {
-      const claims = requireClaims(deps, readSessionToken(req));
-      if (isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
       const input = parseBody(setPasswordSchema, req);
-      const result = await setPassword(ctx, claims, {
-        ...(input.personId !== undefined ? { personId: input.personId } : {}),
-        ...(input.currentPassword !== undefined ? { currentPassword: input.currentPassword } : {}),
-        newPassword: input.newPassword,
-      });
-      res.json(result);
+      const sessionToken = readSessionToken(req);
+      const claims = sessionToken ? verifyAuthToken(deps.config, sessionToken) : null;
+      if (claims && !isSelectionClaims(claims) && !isPasswordChangeClaims(claims)) {
+        const result = await setPassword(ctx, claims, {
+          ...(input.personId !== undefined ? { personId: input.personId } : {}),
+          ...(input.currentPassword !== undefined
+            ? { currentPassword: input.currentPassword }
+            : {}),
+          newPassword: input.newPassword,
+        });
+        res.json(result);
+        return;
+      }
+      const changeToken = readCookie(req, CHANGE_COOKIE);
+      const changeClaims = changeToken ? verifyAuthToken(deps.config, changeToken) : null;
+      if (changeClaims && isPasswordChangeClaims(changeClaims)) {
+        if (input.personId !== undefined && input.personId !== changeClaims.personId) {
+          throw new AuthError(403, "この操作を実行する権限がありません");
+        }
+        const result = await completePasswordChange(ctx, changeClaims.personId, input.newPassword);
+        // The token is spent: clear its cookie so the browser goes
+        // back to the login form for a normal sign-in.
+        res.setHeader("Set-Cookie", clearedChangeCookie());
+        res.json(result);
+        return;
+      }
+      throw new AuthError(401, "認証が必要です");
     } catch (error) {
       handleError(res, error);
     }
@@ -322,14 +379,16 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     // the shared cookie, which is what the browsers of the three
     // services use. The token itself expires on its own schedule.
     void req;
-    res.setHeader("Set-Cookie", [clearedCookie(), clearedSelectionCookie()]);
+    res.setHeader("Set-Cookie", [clearedCookie(), clearedSelectionCookie(), clearedChangeCookie()]);
     res.json({ success: true });
   });
 
   router.get("/me", async (req, res) => {
     try {
       const claims = requireClaims(deps, readSessionToken(req));
-      if (isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
+      if (isSelectionClaims(claims) || isPasswordChangeClaims(claims)) {
+        throw new AuthError(401, "認証が必要です");
+      }
       const me = await getMe(ctx, claims);
       res.json(me);
     } catch (error) {
@@ -343,7 +402,9 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   router.get("/context", async (req, res) => {
     try {
       const claims = requireClaims(deps, readSessionToken(req));
-      if (isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
+      if (isSelectionClaims(claims) || isPasswordChangeClaims(claims)) {
+        throw new AuthError(401, "認証が必要です");
+      }
       const product = typeof req.query.product === "string" ? req.query.product : "";
       const context = await getAuthContext(ctx, claims, product);
       res.json(context);

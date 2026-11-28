@@ -329,6 +329,7 @@ export function createMembershipAdminStore(db: Db): MembershipAdminStore {
             displayName,
             googleId: null,
             passwordHash: null,
+            passwordChangeRequired: false,
             createdAt: new Date(),
           };
         }

@@ -59,6 +59,14 @@ export const persons = pgTable(
     displayName: text("display_name").notNull(),
     googleId: text("google_id").unique(),
     passwordHash: text("password_hash"),
+    // Set when an administrator (a school administrator or a platform
+    // operator) last set this person's password (Issue #140): the
+    // password belongs to the person, not to a school row (8-2-1), so
+    // a password somebody else chose must never by itself open any
+    // school — while this flag is on, a password login may only
+    // complete the person's own password change. Cleared when the
+    // person sets the password themselves.
+    passwordChangeRequired: boolean("password_change_required").notNull().default(false),
     createdAt: createdAt(),
   },
   // Email identity is case-insensitive: uniqueness is on lower(email),

@@ -34,10 +34,26 @@ export interface SelectionClaims {
   purpose: "school-selection";
 }
 
-export type TokenClaims = SessionClaims | SelectionClaims;
+/**
+ * The token a password login hands out when the password was set by
+ * an administrator and the person must change it first (Issue #140).
+ * Like the selection token it names a person and nothing else — no
+ * school, no session — and the only call that accepts it is the
+ * password change itself.
+ */
+export interface PasswordChangeClaims {
+  personId: string;
+  purpose: "password-change";
+}
+
+export type TokenClaims = SessionClaims | SelectionClaims | PasswordChangeClaims;
 
 export function isSelectionClaims(claims: TokenClaims): claims is SelectionClaims {
   return "purpose" in claims && claims.purpose === "school-selection";
+}
+
+export function isPasswordChangeClaims(claims: TokenClaims): claims is PasswordChangeClaims {
+  return "purpose" in claims && claims.purpose === "password-change";
 }
 
 export function signSessionToken(config: AuthConfig, claims: SessionClaims): string {
@@ -50,6 +66,12 @@ export function signSessionToken(config: AuthConfig, claims: SessionClaims): str
 /** Short-lived token that may only be exchanged for a school choice. */
 export function signSelectionToken(config: AuthConfig, personId: string): string {
   const claims: SelectionClaims = { personId, purpose: "school-selection" };
+  return jwt.sign({ ...claims }, config.jwtSecret, { expiresIn: "10m", algorithm: "HS256" });
+}
+
+/** Short-lived token that may only be spent on the password change (Issue #140). */
+export function signPasswordChangeToken(config: AuthConfig, personId: string): string {
+  const claims: PasswordChangeClaims = { personId, purpose: "password-change" };
   return jwt.sign({ ...claims }, config.jwtSecret, { expiresIn: "10m", algorithm: "HS256" });
 }
 
@@ -77,6 +99,9 @@ export function verifyAuthToken(config: AuthConfig, token: string): TokenClaims 
     if (typeof decoded.personId !== "string") return null;
     if (decoded.purpose === "school-selection") {
       return { personId: decoded.personId, purpose: "school-selection" };
+    }
+    if (decoded.purpose === "password-change") {
+      return { personId: decoded.personId, purpose: "password-change" };
     }
     if (typeof decoded.schoolId !== "string" || typeof decoded.email !== "string") {
       return null;
