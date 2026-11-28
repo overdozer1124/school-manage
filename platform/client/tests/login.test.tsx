@@ -119,6 +119,21 @@ describe("password login", () => {
     expect(navigate).not.toHaveBeenCalledWith(expect.stringContaining("evil.example"));
   });
 
+  it("ignores a return path with a hidden tab before a second slash", async () => {
+    // The crafted link's %09 decodes to a tab; a browser strips
+    // it on navigation and would read the value as
+    // "//evil.example". The login must fall back to the school's
+    // own page instead.
+    const api = fakeApi({
+      login: vi.fn(async () => sessionA),
+      me: meAfterLogin(meWithPassword),
+    });
+    const { navigate } = renderApp(api, "/login?return=/%09/evil.example");
+    await fillAndSubmitLogin();
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/school-a/schedule/"));
+    expect(navigate).not.toHaveBeenCalledWith(expect.stringContaining("evil.example"));
+  });
+
   it("shows the server's wording for a wrong password and stays on the form", async () => {
     // The server words a wrong password and an unknown email
     // identically; the screen shows what it was given, as an

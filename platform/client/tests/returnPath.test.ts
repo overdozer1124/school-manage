@@ -26,6 +26,25 @@ describe("safeReturnPath", () => {
     expect(safeReturnPath("javascript:alert(1)")).toBeNull();
   });
 
+  it("ignores a path hiding a tab or newline before a second slash", () => {
+    // Browsers strip tab/CR/LF out of a URL before reading it, so
+    // each of these is read as "//evil.example" on navigation even
+    // though the string starts with a single slash.
+    expect(safeReturnPath("/\t/evil.example")).toBeNull();
+    expect(safeReturnPath("/\n/evil.example")).toBeNull();
+    expect(safeReturnPath("/\r/evil.example")).toBeNull();
+  });
+
+  it("ignores the percent-encoded forms as the login page receives them", () => {
+    // The crafted link carries %09 / %0A / %0D; URLSearchParams
+    // (what App.tsx reads the parameter with) decodes them into
+    // the control characters above before safeReturnPath sees them.
+    for (const encoded of ["/%09/evil.example", "/%0A/evil.example", "/%0D/evil.example"]) {
+      const raw = new URLSearchParams(`return=${encoded}`).get("return");
+      expect(safeReturnPath(raw)).toBeNull();
+    }
+  });
+
   it("ignores an empty value and the login page itself", () => {
     expect(safeReturnPath(null)).toBeNull();
     expect(safeReturnPath(undefined)).toBeNull();

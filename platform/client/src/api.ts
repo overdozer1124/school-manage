@@ -156,17 +156,28 @@ export function createLoginApi(fetchImpl: typeof fetch = fetch): LoginApi {
  * ignored and the caller falls back to the school's own page. The
  * login page itself is never a destination — returning there after
  * a login would loop.
+ *
+ * The judgment is made on the parsed URL, not on the string's
+ * shape: browsers strip tab and newline characters out of a URL
+ * before interpreting it, so a value like "/\t/evil.example" looks
+ * like a same-domain path as a string but is read as
+ * "//evil.example" when navigated to. Parsing the value against
+ * this origin and comparing origins judges the value the way the
+ * browser will read it, whatever characters it hides.
  */
 export function safeReturnPath(raw: string | null | undefined): string | null {
   if (!raw) return null;
   const value = raw.trim();
   if (!value.startsWith("/")) return null;
-  if (value.startsWith("//")) return null;
-  if (value.includes("\\")) return null;
-  if (value === "/login" || value.startsWith("/login?") || value.startsWith("/login/")) {
+  let url: URL;
+  try {
+    url = new URL(value, window.location.origin);
+  } catch {
     return null;
   }
-  return value;
+  if (url.origin !== window.location.origin) return null;
+  if (url.pathname === "/login" || url.pathname.startsWith("/login/")) return null;
+  return url.pathname + url.search + url.hash;
 }
 
 /** Where a completed login lands: the return path when one was
