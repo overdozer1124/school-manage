@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiError, ForbiddenError, UnauthorizedError, createScheduleApi } from "../src/api";
+import {
+  ApiError,
+  ForbiddenError,
+  UnauthorizedError,
+  createScheduleApi,
+  platformLoginUrl,
+} from "../src/api";
 
 // The API口's status handling (Issue #34, DESIGN-AUTH-TENANCY 4.8):
 // 401 and 403 must stay apart — 401 sends the person to the
@@ -66,5 +72,19 @@ describe("schedule api client", () => {
     expect(error).not.toBeInstanceOf(UnauthorizedError);
     expect(error).not.toBeInstanceOf(ForbiddenError);
     expect((error as ApiError).message).toBe("内部エラー");
+  });
+});
+
+describe("platformLoginUrl (Issue #129)", () => {
+  it("attaches the given page as the return path", () => {
+    expect(platformLoginUrl("/school-a/schedule/")).toBe("/login?return=%2Fschool-a%2Fschedule%2F");
+  });
+
+  it("defaults to the current page, query included", () => {
+    window.history.pushState({}, "", "/school-a/schedule/?view=month");
+    expect(platformLoginUrl()).toBe(
+      `/login?return=${encodeURIComponent("/school-a/schedule/?view=month")}`,
+    );
+    window.history.pushState({}, "", "/");
   });
 });

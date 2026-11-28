@@ -62,6 +62,7 @@ describe.skipIf(!url)("auth API", () => {
     state?: string;
     schoolId?: string;
     teacherId?: string | null;
+    hasPassword?: boolean;
     userId?: string;
     product?: string;
     role?: string;
@@ -290,6 +291,9 @@ describe.skipIf(!url)("auth API", () => {
     expect(me.json.user?.id).toBe("p-single");
     expect(me.json.school?.schoolId).toBe(A);
     expect(me.json.teacherId).toBe("t-1");
+    // Issue #129: the login screens read this to offer the first
+    // password setup; a person with a password reports true.
+    expect(me.json.hasPassword).toBe(true);
   });
 
   it("session tokens carry person and school but no role", async () => {
@@ -446,6 +450,15 @@ describe.skipIf(!url)("auth API", () => {
     expect(callback.status).toBe(200);
     expect(callback.json.user?.id).toBe("p-google");
     expect(callback.json.school?.schoolId).toBe(B);
+
+    // The Google person has no password yet (the invited person's
+    // first-login state, Issue #129): /me says so, without the hash
+    // itself ever leaving the server.
+    const me = await get("/platform/api/v1/auth/me", {
+      cookie: cookieOf(callback.setCookie),
+    });
+    expect(me.status).toBe(200);
+    expect(me.json.hasPassword).toBe(false);
   });
 
   it("never matches a Google account by an unverified email", async () => {

@@ -353,6 +353,14 @@ export interface MeResult {
   user: PersonSummary;
   school: SchoolSummary;
   teacherId: string | null;
+  /**
+   * Whether the person has a password at all. The login screens
+   * (Issue #129) use it to place the invited person's first
+   * password setup in the flow: after a Google sign-in, a person
+   * with no password yet is offered the setup before moving on.
+   * The hash itself never leaves the store.
+   */
+  hasPassword: boolean;
 }
 
 /**
@@ -373,6 +381,7 @@ export async function getMe(ctx: Ctx, claims: SessionClaims): Promise<MeResult> 
     user: personSummary(person),
     school: schoolSummary(school),
     teacherId: membership.teacherId,
+    hasPassword: person.passwordHash !== null,
   };
 }
 
