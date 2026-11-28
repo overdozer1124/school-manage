@@ -47,6 +47,7 @@ export interface AuthStore {
     today: string,
   ): Promise<ProductEntitlement | undefined>;
   linkGoogleId(personId: string, googleId: string): Promise<void>;
+  setPasswordHash(personId: string, passwordHash: string): Promise<void>;
   appendAudit(entry: {
     schoolId?: string | null;
     personId?: string | null;
@@ -134,6 +135,10 @@ export function createAuthStore(db: Db): AuthStore {
 
     async linkGoogleId(personId, googleId) {
       await db.update(persons).set({ googleId }).where(eq(persons.id, personId));
+    },
+
+    async setPasswordHash(personId, passwordHash) {
+      await db.update(persons).set({ passwordHash }).where(eq(persons.id, personId));
     },
 
     async appendAudit(entry) {

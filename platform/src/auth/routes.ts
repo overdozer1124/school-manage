@@ -13,6 +13,7 @@ import {
   loginWithGoogle,
   loginWithPassword,
   selectSchool,
+  setPassword,
   type LoginResult,
 } from "./service.js";
 import {
@@ -172,6 +173,12 @@ const selectSchoolSchema = z.object({
   schoolId: z.string().min(1),
 });
 
+const setPasswordSchema = z.object({
+  personId: z.string().min(1).optional(),
+  currentPassword: z.string().min(1).optional(),
+  newPassword: z.string().min(8),
+});
+
 const googleUrlSchema = z.object({
   redirectUri: z.string().url(),
   schoolId: z.string().min(1).optional(),
@@ -285,6 +292,26 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       // completes the login, the second is switching schools.
       const result = await selectSchool(ctx, claims.personId, input.schoolId);
       sendLoginResult(deps, res, result);
+    } catch (error) {
+      handleError(res, error);
+    }
+  });
+
+  // Setting a password (Issue #128): the last step of the invited
+  // person's first-login flow, ported from school-timetable's
+  // setPassword. Needs a session — the first sign-in itself is
+  // Google (or an administrator's reset for a member of their school).
+  router.post("/set-password", async (req, res) => {
+    try {
+      const claims = requireClaims(deps, readSessionToken(req));
+      if (isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
+      const input = parseBody(setPasswordSchema, req);
+      const result = await setPassword(ctx, claims, {
+        ...(input.personId !== undefined ? { personId: input.personId } : {}),
+        ...(input.currentPassword !== undefined ? { currentPassword: input.currentPassword } : {}),
+        newPassword: input.newPassword,
+      });
+      res.json(result);
     } catch (error) {
       handleError(res, error);
     }

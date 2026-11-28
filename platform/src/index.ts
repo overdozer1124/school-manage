@@ -11,6 +11,7 @@ import {
   createEventStoreFromEnv,
   createHolidayStoreFromEnv,
   createMasterStoreFromEnv,
+  createMembershipAdminStoreFromEnv,
   createWebhookStoreFromEnv,
 } from "./db/runtime.js";
 import { createWebhookDispatcher, loadWebhookDestinations } from "./webhooks/deliver.js";
@@ -27,6 +28,7 @@ const dayStore = createDayStoreFromEnv();
 const holidayStore = createHolidayStoreFromEnv();
 const absenceStore = createAbsenceStoreFromEnv();
 const subdivisionStore = createAbsenceSubdivisionStoreFromEnv();
+const membershipStore = createMembershipAdminStoreFromEnv();
 
 const port = Number(process.env.PLATFORM_PORT ?? 3001);
 
@@ -37,6 +39,7 @@ createApp({
   events: { config: authConfig, authStore: store, eventStore },
   calendar: { config: authConfig, authStore: store, dayStore, holidayStore },
   absences: { config: authConfig, authStore: store, absenceStore, subdivisionStore },
+  members: { config: authConfig, authStore: store, membershipStore },
   publicRead: {
     authStore: store,
     dayStore,
