@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "setup:school": "tsx src/setup/setupSchool.ts",
+    "setup:platform-admin": "tsx src/setup/setupPlatformAdmin.ts"
   },
   "dependencies": {
     "@school-manage/calendar-types": "workspace:*",

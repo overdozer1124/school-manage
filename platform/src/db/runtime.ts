@@ -10,6 +10,15 @@ import { createDb } from "./client.js";
 import { createDayStore, createHolidayStore, type DayStore, type HolidayStore } from "./days.js";
 import { createEventStore, type EventStore } from "./events.js";
 import { createMasterStore, type MasterStore } from "./masters.js";
+import { runMigrations } from "./migrate.js";
+import {
+  setupPlatformAdmin,
+  setupSchool,
+  type SetupPlatformAdminInput,
+  type SetupPlatformAdminResult,
+  type SetupSchoolInput,
+  type SetupSchoolResult,
+} from "./setup.js";
 import { createWebhookStore, type WebhookStore } from "./webhooks.js";
 
 /**
@@ -61,4 +70,33 @@ export function createAbsenceSubdivisionStoreFromEnv(): AbsenceSubdivisionStore 
 export function createWebhookStoreFromEnv(): WebhookStore {
   const { db } = createDb();
   return createWebhookStore(db);
+}
+
+/**
+ * The operator setup commands (Issue #127, src/setup/cli.ts): one
+ * runner owns the connection, applies pending migrations first (an
+ * empty database is a valid starting point), and closes the client
+ * when the command finishes.
+ */
+export interface SetupRunner {
+  setupSchool(input: SetupSchoolInput): Promise<SetupSchoolResult>;
+  setupPlatformAdmin(input: SetupPlatformAdminInput): Promise<SetupPlatformAdminResult>;
+  close(): Promise<void>;
+}
+
+export function createSetupRunnerFromEnv(): SetupRunner {
+  const { db, queryClient } = createDb();
+  return {
+    async setupSchool(input) {
+      await runMigrations(db);
+      return setupSchool(db, input);
+    },
+    async setupPlatformAdmin(input) {
+      await runMigrations(db);
+      return setupPlatformAdmin(db, input);
+    },
+    async close() {
+      await queryClient.end();
+    },
+  };
 }
