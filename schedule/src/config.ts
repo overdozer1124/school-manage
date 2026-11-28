@@ -6,6 +6,17 @@
 export interface ScheduleConfig {
   /** Port the schedule server listens on (SCHEDULE_PORT, default 3002). */
   port: number;
+  /**
+   * Address the schedule server listens on (SCHEDULE_HOST).
+   * Undefined means "all interfaces", the historical behaviour, and is
+   * what development keeps. In production (NODE_ENV=production) the
+   * default is 127.0.0.1 instead: the service sits behind nginx on
+   * the same host (DESIGN 8-3-1), and listening on all interfaces
+   * would let callers reach it directly over plain HTTP, bypassing
+   * nginx and TLS entirely, whenever the host firewall leaves the
+   * port open (PR #139 review).
+   */
+  host: string | undefined;
   /** Origin of the platform service, without a trailing slash. */
   platformBaseUrl: string;
   /** SCHEDULE_DATABASE_URL (presence checked here; the client reads it). */
@@ -48,8 +59,10 @@ export function loadScheduleConfig(env: NodeJS.ProcessEnv = process.env): Schedu
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`SCHEDULE_PORT is not a valid port: ${portRaw}`);
   }
+  const host = env.SCHEDULE_HOST || (env.NODE_ENV === "production" ? "127.0.0.1" : undefined);
   return {
     port,
+    host,
     platformBaseUrl: platformBaseUrl.replace(/\/+$/, ""),
     databaseUrl,
     devAuth: env.PLATFORM_DEV_AUTH === "1",
