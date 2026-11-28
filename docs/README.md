@@ -7,6 +7,8 @@
 | [schedule/DESIGN.md](schedule/DESIGN.md) | 行事予定アプリの DB・カスタマイズ設計（定義駆動モデル、v0.6） |
 | [HANDOFF-2026-11-07.md](HANDOFF-2026-11-07.md) | セッションの引き継ぎ（開いている PR・Issue、未起票の作業、確認事項） |
 | [OPERATIONS.md](OPERATIONS.md) | 運営者向け手順（初期設定：最初の学校・管理者・運営者の作成コマンド） |
+| [DEPLOY.md](DEPLOY.md) | 運営者向け手順（初回の配備：DB と利用者の作成、環境変数、ビルド、PM2 での起動、/healthz の確認、最初の学校まで） |
+| [ENVIRONMENT.md](ENVIRONMENT.md) | 環境変数の一覧（名前と意味だけ。値は書かない） |
 | [WORKFLOW.md](WORKFLOW.md) | Issue と PR による作業の流れ（Builder＝Muse、起票とレビュー＝Claude、連絡＝swarmchat） |
 
 これらは overdozer1124/school-schedule から移したもので、2026-11-07 以降はこちらが正本です。試作のコードと、試作のレビュー対応記録（REVIEW-RESPONSE.md）は school-schedule に残っています。
