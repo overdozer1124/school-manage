@@ -18,6 +18,16 @@
  *   setPassword with { newPassword } — no currentPassword, the
  *   cookie itself is the proof. The server clears the cookie on
  *   success, and the person logs in again with the new password.
+ *   The changed password is still scoped (Issue #140, the
+ *   scope-limiting shape): it opens only the school of the
+ *   administrator who set the original — no school at all when an
+ *   operator set it — so the selection step after the fresh login
+ *   lists only the schools in scope, a login that names an
+ *   out-of-scope school is refused with the 403 notice below, and
+ *   the scope lifts only when the person re-sets the password in
+ *   a Google-login session. The screens need no branch for any of
+ *   this: they render the schools the server returns, and show
+ *   the server's 403 wording as the notice.
  * Failures are { error } with the status: 401 is a credential
  * failure (the server words a wrong password and an unknown email
  * identically), 403 is the unconfirmed-membership notice (invited,

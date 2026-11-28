@@ -198,6 +198,58 @@ describe("school selection", () => {
   });
 });
 
+describe("school selection under a scoped password (Issue #140)", () => {
+  it("offers only the schools the server returns, never more", async () => {
+    // A password an administrator set is scoped to that
+    // administrator's school: the server answers the login with
+    // just that school, and the screen offers exactly what it was
+    // given — the other school the person belongs to never shows.
+    const api = fakeApi({
+      login: vi.fn(async (): Promise<LoginOutcome> => ({
+        kind: "selection",
+        user,
+        schools: [schoolA],
+      })),
+      selectSchool: vi.fn(async (): Promise<LoginOutcome> => sessionA),
+      me: meAfterLogin(meWithPassword),
+    });
+    const { navigate } = renderApp(api);
+    await fillAndSubmitLogin();
+    expect(await screen.findByRole("heading", { name: "学校の選択" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "A学校" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "B学校" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "A学校" }));
+    await waitFor(() => expect(api.selectSchool).toHaveBeenCalledWith("s-a"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/school-a/schedule/"));
+  });
+
+  it("shows the notice when the chosen school is refused", async () => {
+    // Naming a school the password may not open — an out-of-scope
+    // school, or a membership that changed mid-flow — is refused
+    // with the server's 403 wording, shown as the notice.
+    const message =
+      "このアカウントは学校への所属が確認されていません。学校の管理者にユーザー登録を依頼してください。生徒用の公開時間割は公開用 URL からご覧ください。";
+    const api = fakeApi({
+      login: vi.fn(async (): Promise<LoginOutcome> => ({
+        kind: "selection",
+        user,
+        schools: [schoolA, schoolB],
+      })),
+      selectSchool: vi.fn(async () => {
+        throw new ApiError(403, message);
+      }),
+    });
+    renderApp(api);
+    await fillAndSubmitLogin();
+    expect(await screen.findByRole("heading", { name: "学校の選択" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "B学校" }));
+    expect(
+      await screen.findByRole("heading", { name: "ログインできませんでした" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(message)).toBeInTheDocument();
+  });
+});
+
 describe("Google login", () => {
   it("starts by asking the API for the Google URL and going there", async () => {
     const api = fakeApi();
@@ -290,5 +342,36 @@ describe("the change an administrator-set password demands (Issue #140)", () => 
       await screen.findByText("パスワードを変更しました。新しいパスワードでログインしてください。"),
     ).toBeInTheDocument();
     expect(screen.getByLabelText("メールアドレス")).toBeInTheDocument();
+  });
+
+  it("after the change, a fresh login with the new password reaches the administrator's school", async () => {
+    // The scope-limiting shape (Issue #140): the changed password
+    // opens the school of the administrator who set the original,
+    // so the fresh login the screen returns to is answered with
+    // that school's session directly — no wider choice appears.
+    const login = vi
+      .fn()
+      .mockResolvedValueOnce({ kind: "password-change-required", user } satisfies LoginOutcome)
+      .mockResolvedValue(sessionA);
+    const api = fakeApi({ login, me: meAfterLogin(meWithPassword) });
+    const { navigate } = renderApp(api);
+    await fillAndSubmitLogin();
+    expect(
+      await screen.findByRole("heading", { name: "パスワードの変更が必要です" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/変更後のパスワードで入れる学校は限られます/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("新しいパスワード"), {
+      target: { value: "my-own-password" },
+    });
+    fireEvent.change(screen.getByLabelText("新しいパスワード（確認）"), {
+      target: { value: "my-own-password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "変更する" }));
+    expect(
+      await screen.findByText("パスワードを変更しました。新しいパスワードでログインしてください。"),
+    ).toBeInTheDocument();
+    await fillAndSubmitLogin();
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith("/school-a/schedule/"));
+    expect(screen.queryByRole("heading", { name: "学校の選択" })).not.toBeInTheDocument();
   });
 });
