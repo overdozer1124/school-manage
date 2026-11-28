@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
 import { loadAuthConfig } from "./auth/config.js";
 import { loadChangesServiceConfig } from "./changes/routes.js";
@@ -13,13 +14,26 @@ import {
   createMasterStoreFromEnv,
   createMembershipAdminStoreFromEnv,
   createWebhookStoreFromEnv,
+  runMigrationsFromEnv,
 } from "./db/runtime.js";
+import { loadServerConfig } from "./serverConfig.js";
 import { createWebhookDispatcher, loadWebhookDestinations } from "./webhooks/deliver.js";
 
 // Loading the auth configuration comes first on purpose: without
 // JWT_SECRET it throws, and the process stops instead of starting with
 // an unsafe default (Issue #5).
 const authConfig = loadAuthConfig();
+
+// Production startup (Issue #132): apply pending migrations before
+// accepting traffic, so the process never serves against an
+// unmigrated schema. Development keeps the explicit db:migrate step.
+// The folder is resolved from this entry file: "../drizzle" names the
+// platform migrations folder both from src/index.ts and from the
+// bundled dist/index.js.
+if (process.env.NODE_ENV === "production") {
+  await runMigrationsFromEnv(fileURLToPath(new URL("../drizzle", import.meta.url)));
+}
+
 const store = createAuthStoreFromEnv();
 const changeStore = createChangeStoreFromEnv();
 const masterStore = createMasterStoreFromEnv();
@@ -30,9 +44,9 @@ const absenceStore = createAbsenceStoreFromEnv();
 const subdivisionStore = createAbsenceSubdivisionStoreFromEnv();
 const membershipStore = createMembershipAdminStoreFromEnv();
 
-const port = Number(process.env.PLATFORM_PORT ?? 3001);
+const { port, host } = loadServerConfig();
 
-createApp({
+const app = createApp({
   auth: { store, config: authConfig },
   changes: { config: authConfig, authStore: store, changeStore, ...loadChangesServiceConfig() },
   masters: { config: authConfig, authStore: store, masterStore },
@@ -48,9 +62,19 @@ createApp({
     masterStore,
     ...loadPublicReadConfig(),
   },
-}).listen(port, () => {
-  console.log(`platform listening on port ${port}`);
 });
+// The listen host comes from the configuration: in production it
+// defaults to 127.0.0.1, so the service is only reachable through
+// nginx on the same host and never directly from outside (PR #139
+// review). Undefined keeps the historical all-interfaces behaviour.
+const onListening = () => {
+  console.log(`platform listening on ${host ?? "*"}:${port}`);
+};
+if (host === undefined) {
+  app.listen(port, onListening);
+} else {
+  app.listen(port, host, onListening);
+}
 
 // Webhook delivery (Issue #106): only when at least one destination
 // is configured. With none, nothing polls and nothing is sent — the

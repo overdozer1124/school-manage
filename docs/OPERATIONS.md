@@ -6,6 +6,7 @@
 
 - platform のデータベースに接続できる環境変数 `PLATFORM_DATABASE_URL` が設定されていること。
 - リポジトリのルートで依存関係がインストール済みであること（`pnpm install`）。
+- 本番サーバーでは、ビルド済みの `dist/` を使う `setup:school:prod` / `setup:platform-admin:prod` を使います（手順は [DEPLOY.md](DEPLOY.md) の「6. 最初の学校を作る」）。意味は開発用のコマンドと同じです。
 - コマンドは起動時に未適用のマイグレーションを自動で適用します。空のデータベースからそのまま実行できます（先に `pnpm --filter @school-manage/platform db:migrate` を実行しても構いません）。
 
 ## 最初の学校と管理者を作る
