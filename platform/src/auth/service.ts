@@ -11,10 +11,13 @@ import {
 } from "./membership.js";
 import { createLoginOAuthState, parseLoginOAuthState } from "./oauthState.js";
 import {
+  authMethodOf,
   hashPassword,
+  signPasswordChangeToken,
   signSelectionToken,
   signSessionToken,
   verifyPassword,
+  type AuthMethod,
   type SessionClaims,
 } from "./tokens.js";
 
@@ -56,6 +59,15 @@ export type LoginResult =
       selectionToken: string;
       user: PersonSummary;
       schools: SchoolSummary[];
+    }
+  | {
+      // The credentials were right, but the password was set by an
+      // administrator (Issue #140): no session and no school choice
+      // until the person changes it. The change token is the only
+      // thing this login hands out.
+      kind: "password-change";
+      changeToken: string;
+      user: PersonSummary;
     };
 
 interface Ctx {
@@ -91,6 +103,7 @@ async function issueForCandidates(
   candidates: Membership[],
   requestedSchoolId: string | undefined,
   successAction: string,
+  authMethod: AuthMethod,
 ): Promise<LoginResult> {
   const bySchool = new Map<string, Membership>();
   for (const m of candidates) bySchool.set(m.schoolId, m);
@@ -102,6 +115,7 @@ async function issueForCandidates(
       personId: person.id,
       schoolId: school.schoolId,
       email: person.email,
+      authMethod,
     });
     await audit(ctx, {
       schoolId: school.schoolId,
@@ -146,7 +160,7 @@ async function issueForCandidates(
   });
   return {
     kind: "selection",
-    selectionToken: signSelectionToken(ctx.config, person.id),
+    selectionToken: signSelectionToken(ctx.config, person.id, authMethod),
     user: personSummary(person),
     schools: candidates
       .map((m) => schoolById.get(m.schoolId))
@@ -155,9 +169,29 @@ async function issueForCandidates(
   };
 }
 
-async function candidatesFor(ctx: Ctx, personId: string): Promise<Membership[]> {
-  const memberships = await ctx.store.listMemberships(personId);
-  return candidateMemberships(memberships, todayString());
+/**
+ * The schools a login may open, given how the person proved who
+ * they are. A Google login is the person's own proof and sees every
+ * candidate. A password login is bound by the password's school
+ * scope (Issue #140, the scope-limiting shape): while the scope is
+ * restricted, only the school that scope names is a candidate —
+ * a null scope school (an operator set the password) means no
+ * school at all. Out-of-scope schools are not offered in the
+ * selection step and cannot be picked or requested either: they
+ * simply are not candidates, so every refusal downstream is the
+ * ordinary unconfirmed-membership one.
+ */
+async function candidatesFor(
+  ctx: Ctx,
+  person: Person,
+  authMethod: AuthMethod,
+): Promise<Membership[]> {
+  const memberships = await ctx.store.listMemberships(person.id);
+  const candidates = candidateMemberships(memberships, todayString());
+  if (authMethod === "google" || !person.passwordScopeRestricted) return candidates;
+  return candidates.filter(
+    (m) => person.passwordScopeSchoolId !== null && m.schoolId === person.passwordScopeSchoolId,
+  );
 }
 
 export async function loginWithPassword(
@@ -190,13 +224,38 @@ export async function loginWithPassword(
     throw new AuthError(401, "メールアドレスまたはパスワードが正しくありません");
   }
 
-  const candidates = await candidatesFor(ctx, person.id);
+  // A password an administrator chose is a hand-over, not the
+  // person's own credential (Issue #140): it authenticates the
+  // person for exactly one purpose — changing it — and never
+  // reaches a school, whichever school was requested. This is what
+  // keeps it from opening another school the person later joins:
+  // the administrator who set it gets no further than this step.
+  if (person.passwordChangeRequired) {
+    await audit(ctx, {
+      personId: person.id,
+      action: "auth.login.password_change_required",
+      summary: "管理者が設定したパスワードのため、本人の変更が必要",
+    });
+    return {
+      kind: "password-change",
+      changeToken: signPasswordChangeToken(ctx.config, person.id),
+      user: personSummary(person),
+    };
+  }
+
+  // Past the forced change, the password's school scope still
+  // binds (Issue #140): completing the change does not widen what
+  // the password can open, because the administrator who set the
+  // original knows the changed one just as well when they walk
+  // the change step themselves.
+  const candidates = await candidatesFor(ctx, person, "password");
   return issueForCandidates(
     ctx,
     person,
     candidates,
     input.schoolId?.trim() || undefined,
     "auth.login.success",
+    "password",
   );
 }
 
@@ -321,13 +380,21 @@ export async function loginWithGoogle(
     }
   }
 
-  const candidates = await candidatesFor(ctx, person.id);
+  // The passwordChangeRequired mark (Issue #140) does not gate this
+  // path: it restricts the password credential, and Google login is
+  // the person's own identity proof — the administrator who set the
+  // password holds nothing here. Neither does the password's school
+  // scope bind this path, for the same reason; and a self-service
+  // password re-set in the session this login opens is what clears
+  // the mark and lifts the scope.
+  const candidates = await candidatesFor(ctx, person, "google");
   return issueForCandidates(
     ctx,
     person,
     candidates,
     schoolIdFromState ?? (input.schoolId?.trim() || undefined),
     "auth.google_login.success",
+    "google",
   );
 }
 
@@ -340,11 +407,23 @@ export async function selectSchool(
   ctx: Ctx,
   personId: string,
   schoolId: string,
+  authMethod: AuthMethod,
 ): Promise<Extract<LoginResult, { kind: "session" }>> {
   const person = await ctx.store.findPersonById(personId);
   if (!person) throw new AuthError(401, "認証が必要です");
-  const candidates = await candidatesFor(ctx, person.id);
-  const result = await issueForCandidates(ctx, person, candidates, schoolId, "auth.school_select");
+  // The choice is judged against the same candidates the login
+  // itself saw: a selection (or a school switch) that rests on a
+  // scoped password cannot reach an out-of-scope school by naming
+  // it here even though it was never offered (Issue #140).
+  const candidates = await candidatesFor(ctx, person, authMethod);
+  const result = await issueForCandidates(
+    ctx,
+    person,
+    candidates,
+    schoolId,
+    "auth.school_select",
+    authMethod,
+  );
   if (result.kind !== "session") throw new AuthError(403, UNCONFIRMED_SCHOOL_MEMBERSHIP_MESSAGE);
   return result;
 }
@@ -364,7 +443,7 @@ export interface MeResult {
 export async function getMe(ctx: Ctx, claims: SessionClaims): Promise<MeResult> {
   const person = await ctx.store.findPersonById(claims.personId);
   if (!person) throw new AuthError(401, "認証が必要です");
-  const candidates = await candidatesFor(ctx, person.id);
+  const candidates = await candidatesFor(ctx, person, authMethodOf(claims));
   const membership = candidates.find((m) => m.schoolId === claims.schoolId);
   if (!membership) throw new AuthError(401, "認証が必要です");
   const school = await ctx.store.findSchool(claims.schoolId);
@@ -410,7 +489,7 @@ export async function getAuthContext(
   const person = await ctx.store.findPersonById(claims.personId);
   if (!person) throw new AuthError(401, "認証が必要です");
 
-  const candidates = await candidatesFor(ctx, person.id);
+  const candidates = await candidatesFor(ctx, person, authMethodOf(claims));
   const membership = candidates.find((m) => m.schoolId === claims.schoolId);
   if (!membership) throw new AuthError(403, "権限がありません");
 
@@ -458,6 +537,24 @@ export async function getAuthContext(
  * - When a password already exists, changing it as its owner needs
  *   the current password; an administrator's reset may omit it (when
  *   one is supplied, it must verify).
+ * - A reset by somebody else marks the person
+ *   passwordChangeRequired (Issue #140): the password belongs to
+ *   the person, so the copy the administrator knows must not stay
+ *   usable — the next password login may only change it (see
+ *   loginWithPassword). A change by the person themselves clears
+ *   the mark.
+ * - The same reset also scopes the password (Issue #140, the
+ *   scope-limiting shape): from then on the password — and any
+ *   password chained from it through the forced change, which the
+ *   administrator can walk themselves — opens only the resetting
+ *   administrator's school. An operator has no school, so an
+ *   operator's reset scopes the password to no school at all. The
+ *   scope lifts, and the mark clears, only when the person re-sets
+ *   the password in a Google-login session: Google is the one
+ *   proof of the person themselves that the administrator who set
+ *   the password does not hold. A self-service change in a
+ *   password session clears the mark but keeps the scope, because
+ *   that session itself rests on the scoped password.
  * The password itself is never audited or logged — only the fact.
  */
 export async function setPassword(
@@ -470,8 +567,18 @@ export async function setPassword(
   if (!target) throw new AuthError(404, "ユーザーが見つかりません");
   const isSelf = targetId === claims.personId;
 
+  // Set when somebody else resets the password: the school the new
+  // password is scoped to (Issue #140). A school administrator's
+  // reset scopes it to their own school; an operator has no school,
+  // so theirs scopes it to null — no school at all.
+  let resetScopeSchoolId: string | null | undefined;
+  let resetByOperator = false;
   if (!isSelf) {
     const callerIsOperator = await ctx.store.isPlatformAdmin(claims.personId);
+    if (callerIsOperator) {
+      resetScopeSchoolId = null;
+      resetByOperator = true;
+    }
     if (!callerIsOperator) {
       const today = todayString();
       const callerMemberships = await ctx.store.listMemberships(claims.personId);
@@ -505,6 +612,7 @@ export async function setPassword(
       if (await ctx.store.isPlatformAdmin(targetId)) {
         throw new AuthError(403, "運営者のパスワードは運営者だけが変更できます");
       }
+      resetScopeSchoolId = claims.schoolId;
     }
   }
 
@@ -520,12 +628,83 @@ export async function setPassword(
     // the current password (source behaviour).
   }
 
-  await ctx.store.setPasswordHash(targetId, await hashPassword(input.newPassword));
+  const newHash = await hashPassword(input.newPassword);
+  if (resetScopeSchoolId !== undefined) {
+    // Somebody else's reset: the mark goes on, and the password is
+    // scoped to the resetting administrator's school (null — no
+    // school — for an operator).
+    await ctx.store.setPasswordHash(targetId, newHash, {
+      passwordChangeRequired: true,
+      passwordScopeRestricted: true,
+      passwordScopeSchoolId: resetScopeSchoolId,
+    });
+  } else if (authMethodOf(claims) === "google") {
+    // The person's own re-set in a Google-login session: Google is
+    // the one proof the administrator who set the previous password
+    // does not hold, so the mark clears and the scope lifts.
+    await ctx.store.setPasswordHash(targetId, newHash, {
+      passwordChangeRequired: false,
+      passwordScopeRestricted: false,
+      passwordScopeSchoolId: null,
+    });
+  } else {
+    // The person's own change in a password session: the mark
+    // clears, but the scope stays as it was — this session itself
+    // rests on the scoped password, so it cannot be the proof that
+    // lifts the scope.
+    await ctx.store.setPasswordHash(targetId, newHash, {
+      passwordChangeRequired: false,
+      passwordScopeRestricted: target.passwordScopeRestricted,
+      passwordScopeSchoolId: target.passwordScopeSchoolId,
+    });
+  }
   await audit(ctx, {
     schoolId: claims.schoolId,
     personId: claims.personId,
     action: "auth.password.set",
-    summary: isSelf ? "自分のパスワードを設定" : "管理者がパスワードを再設定",
+    summary: isSelf
+      ? "自分のパスワードを設定"
+      : resetByOperator
+        ? "運営者がパスワードを再設定"
+        : "管理者がパスワードを再設定",
+  });
+  return { success: true };
+}
+
+/**
+ * Completes the forced change (Issue #140): the one call a
+ * password-change token authorizes. The token itself is the proof —
+ * it is issued only by a password login that presented the
+ * administrator-set password — so no current password is asked
+ * again. The change clears the mark and the password the
+ * administrator originally set is dead — but the school scope does
+ * NOT lift here: the administrator who set the original password
+ * can walk this very step themselves, so the changed password
+ * stays confined to the administrator's school until the person
+ * re-sets it in a Google-login session (see setPassword).
+ * A token presented when no change is outstanding (already changed
+ * through a session, say) is refused rather than silently becoming
+ * a password change without the current password.
+ */
+export async function completePasswordChange(
+  ctx: Ctx,
+  personId: string,
+  newPassword: string,
+): Promise<{ success: true }> {
+  const person = await ctx.store.findPersonById(personId);
+  if (!person) throw new AuthError(404, "ユーザーが見つかりません");
+  if (!person.passwordChangeRequired) {
+    throw new AuthError(400, "パスワードの変更は必要ありません");
+  }
+  await ctx.store.setPasswordHash(personId, await hashPassword(newPassword), {
+    passwordChangeRequired: false,
+    passwordScopeRestricted: person.passwordScopeRestricted,
+    passwordScopeSchoolId: person.passwordScopeSchoolId,
+  });
+  await audit(ctx, {
+    personId,
+    action: "auth.password.set",
+    summary: "変更が必要なパスワードを変更",
   });
   return { success: true };
 }

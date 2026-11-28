@@ -8,6 +8,7 @@ import {
 } from "../src/auth/membership.js";
 import { createLoginOAuthState, parseLoginOAuthState } from "../src/auth/oauthState.js";
 import {
+  authMethodOf,
   expiresInToSeconds,
   hashPassword,
   signSelectionToken,
@@ -186,6 +187,43 @@ describe("tokens and passwords", () => {
       personId: "person-1",
       purpose: "school-selection",
     });
+  });
+
+  it("tokens record how the person proved themselves (Issue #140)", () => {
+    const googleSession = signSessionToken(config, {
+      personId: "person-1",
+      schoolId: "school-a",
+      email: "a@example.jp",
+      authMethod: "google",
+    });
+    const googleClaims = verifyAuthToken(config, googleSession);
+    expect(googleClaims).toEqual({
+      personId: "person-1",
+      schoolId: "school-a",
+      email: "a@example.jp",
+      authMethod: "google",
+    });
+    expect(googleClaims && authMethodOf(googleClaims)).toBe("google");
+
+    // A token without the record — anything issued before it was
+    // kept — verifies without it and reads as "password": the safe
+    // side, since only a Google proof can lift a password's scope.
+    const legacySession = signSessionToken(config, {
+      personId: "person-1",
+      schoolId: "school-a",
+      email: "a@example.jp",
+    });
+    const legacyClaims = verifyAuthToken(config, legacySession);
+    expect(legacyClaims && authMethodOf(legacyClaims)).toBe("password");
+
+    const googleSelection = signSelectionToken(config, "person-1", "google");
+    const selectionClaims = verifyAuthToken(config, googleSelection);
+    expect(selectionClaims).toEqual({
+      personId: "person-1",
+      purpose: "school-selection",
+      authMethod: "google",
+    });
+    expect(selectionClaims && authMethodOf(selectionClaims)).toBe("google");
   });
 
   it("refuses tokens signed with a different algorithm (HS256 only)", () => {

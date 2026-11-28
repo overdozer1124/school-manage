@@ -23,21 +23,56 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
   return bcrypt.compare(password, hash);
 }
 
+/**
+ * How the person proved who they are when this token was issued
+ * (Issue #140): the school scope of a password (see the persons
+ * schema) is lifted only by a re-set made in a "google" session,
+ * so the platform has to remember which proof a session — and the
+ * selection step that may precede it — came from. Tokens issued
+ * before this was recorded carry no authMethod; verification
+ * leaves it absent and every consumer treats the absence as
+ * "password", the safe side (such a token can never lift a scope).
+ */
+export type AuthMethod = "google" | "password";
+
 export interface SessionClaims {
   personId: string;
   schoolId: string;
   email: string;
+  authMethod?: AuthMethod;
 }
 
 export interface SelectionClaims {
   personId: string;
   purpose: "school-selection";
+  authMethod?: AuthMethod;
 }
 
-export type TokenClaims = SessionClaims | SelectionClaims;
+/**
+ * The token a password login hands out when the password was set by
+ * an administrator and the person must change it first (Issue #140).
+ * Like the selection token it names a person and nothing else — no
+ * school, no session — and the only call that accepts it is the
+ * password change itself.
+ */
+export interface PasswordChangeClaims {
+  personId: string;
+  purpose: "password-change";
+}
+
+export type TokenClaims = SessionClaims | SelectionClaims | PasswordChangeClaims;
 
 export function isSelectionClaims(claims: TokenClaims): claims is SelectionClaims {
   return "purpose" in claims && claims.purpose === "school-selection";
+}
+
+/** The proof a session or selection token rests on; absent means "password". */
+export function authMethodOf(claims: TokenClaims): AuthMethod {
+  return "authMethod" in claims && claims.authMethod === "google" ? "google" : "password";
+}
+
+export function isPasswordChangeClaims(claims: TokenClaims): claims is PasswordChangeClaims {
+  return "purpose" in claims && claims.purpose === "password-change";
 }
 
 export function signSessionToken(config: AuthConfig, claims: SessionClaims): string {
@@ -48,8 +83,22 @@ export function signSessionToken(config: AuthConfig, claims: SessionClaims): str
 }
 
 /** Short-lived token that may only be exchanged for a school choice. */
-export function signSelectionToken(config: AuthConfig, personId: string): string {
-  const claims: SelectionClaims = { personId, purpose: "school-selection" };
+export function signSelectionToken(
+  config: AuthConfig,
+  personId: string,
+  authMethod?: AuthMethod,
+): string {
+  const claims: SelectionClaims = {
+    personId,
+    purpose: "school-selection",
+    ...(authMethod ? { authMethod } : {}),
+  };
+  return jwt.sign({ ...claims }, config.jwtSecret, { expiresIn: "10m", algorithm: "HS256" });
+}
+
+/** Short-lived token that may only be spent on the password change (Issue #140). */
+export function signPasswordChangeToken(config: AuthConfig, personId: string): string {
+  const claims: PasswordChangeClaims = { personId, purpose: "password-change" };
   return jwt.sign({ ...claims }, config.jwtSecret, { expiresIn: "10m", algorithm: "HS256" });
 }
 
@@ -75,13 +124,30 @@ export function verifyAuthToken(config: AuthConfig, token: string): TokenClaims 
       algorithms: ["HS256"],
     }) as jwt.JwtPayload;
     if (typeof decoded.personId !== "string") return null;
+    // Only the exact "google" value is honoured; anything else —
+    // including a token issued before authMethod was recorded —
+    // leaves the claim absent, which consumers read as "password".
+    const authMethod: AuthMethod | undefined =
+      decoded.authMethod === "google" ? "google" : undefined;
     if (decoded.purpose === "school-selection") {
-      return { personId: decoded.personId, purpose: "school-selection" };
+      return {
+        personId: decoded.personId,
+        purpose: "school-selection",
+        ...(authMethod ? { authMethod } : {}),
+      };
+    }
+    if (decoded.purpose === "password-change") {
+      return { personId: decoded.personId, purpose: "password-change" };
     }
     if (typeof decoded.schoolId !== "string" || typeof decoded.email !== "string") {
       return null;
     }
-    return { personId: decoded.personId, schoolId: decoded.schoolId, email: decoded.email };
+    return {
+      personId: decoded.personId,
+      schoolId: decoded.schoolId,
+      email: decoded.email,
+      ...(authMethod ? { authMethod } : {}),
+    };
   } catch {
     return null;
   }

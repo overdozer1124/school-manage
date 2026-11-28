@@ -5,7 +5,12 @@ import type { AuthConfig } from "./config.js";
 import { AuthError } from "./errors.js";
 import { isMembershipCandidate, todayString } from "./membership.js";
 import { readSessionToken } from "./routes.js";
-import { isSelectionClaims, verifyAuthToken, type SessionClaims } from "./tokens.js";
+import {
+  isPasswordChangeClaims,
+  isSelectionClaims,
+  verifyAuthToken,
+  type SessionClaims,
+} from "./tokens.js";
 
 /**
  * The session / membership / writer guards shared by the platform
@@ -36,7 +41,9 @@ export interface AuthedMember {
 export function requireSession(deps: GuardDeps, req: Request): SessionClaims {
   const token = readSessionToken(req);
   const claims = token ? verifyAuthToken(deps.config, token) : null;
-  if (!claims || isSelectionClaims(claims)) throw new AuthError(401, "認証が必要です");
+  if (!claims || isSelectionClaims(claims) || isPasswordChangeClaims(claims)) {
+    throw new AuthError(401, "認証が必要です");
+  }
   return claims;
 }
 

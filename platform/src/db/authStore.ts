@@ -47,7 +47,24 @@ export interface AuthStore {
     today: string,
   ): Promise<ProductEntitlement | undefined>;
   linkGoogleId(personId: string, googleId: string): Promise<void>;
-  setPasswordHash(personId: string, passwordHash: string): Promise<void>;
+  /**
+   * Replaces the person's password hash and its marks (Issue #140)
+   * in one update, so they can never drift: the change-required
+   * flag, and the school scope the password may open (restricted,
+   * and the one school it still opens — null when an operator set
+   * it, meaning no school at all). The service decides the whole
+   * state for each way a password gets set; the store just writes
+   * it atomically with the hash it belongs to.
+   */
+  setPasswordHash(
+    personId: string,
+    passwordHash: string,
+    marks: {
+      passwordChangeRequired: boolean;
+      passwordScopeRestricted: boolean;
+      passwordScopeSchoolId: string | null;
+    },
+  ): Promise<void>;
   appendAudit(entry: {
     schoolId?: string | null;
     personId?: string | null;
@@ -137,8 +154,16 @@ export function createAuthStore(db: Db): AuthStore {
       await db.update(persons).set({ googleId }).where(eq(persons.id, personId));
     },
 
-    async setPasswordHash(personId, passwordHash) {
-      await db.update(persons).set({ passwordHash }).where(eq(persons.id, personId));
+    async setPasswordHash(personId, passwordHash, marks) {
+      await db
+        .update(persons)
+        .set({
+          passwordHash,
+          passwordChangeRequired: marks.passwordChangeRequired,
+          passwordScopeRestricted: marks.passwordScopeRestricted,
+          passwordScopeSchoolId: marks.passwordScopeSchoolId,
+        })
+        .where(eq(persons.id, personId));
     },
 
     async appendAudit(entry) {

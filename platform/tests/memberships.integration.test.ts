@@ -72,6 +72,7 @@ describe.skipIf(!url)("membership administration (Issue #128)", () => {
     items?: MemberBody[];
     error?: string;
     success?: boolean;
+    passwordChangeRequired?: boolean;
     userId?: string;
     role?: string;
     school?: { schoolId: string };
@@ -642,7 +643,10 @@ describe.skipIf(!url)("membership administration (Issue #128)", () => {
     await passwordLogin(TEACHER, "teacher-pass-2");
 
     // A school administrator resets a member's password without the
-    // current one; the member then signs in with the new password.
+    // current one. Since Issue #140 the member cannot sign in with
+    // it as-is: the login answers "change required" and hands out
+    // only the change token, and the member's own change is what
+    // makes the new password a normal credential.
     const admin = await adminCookieA();
     const reset = await request(
       "POST",
@@ -651,14 +655,29 @@ describe.skipIf(!url)("membership administration (Issue #128)", () => {
       { cookie: admin },
     );
     expect(reset.status).toBe(200);
-    await passwordLogin(TEACHER, "teacher-pass-3");
+    const handedOver = await request("POST", "/platform/api/v1/auth/login", {
+      email: TEACHER,
+      password: "teacher-pass-3",
+    });
+    expect(handedOver.status).toBe(200);
+    expect(handedOver.json.passwordChangeRequired).toBe(true);
+    expect(handedOver.setCookie).toContain("platform_change=");
+    expect(handedOver.setCookie).not.toContain("platform_session=");
+    const changedByMember = await request(
+      "POST",
+      "/platform/api/v1/auth/set-password",
+      { newPassword: "teacher-pass-4" },
+      { cookie: cookieOf(handedOver.setCookie) },
+    );
+    expect(changedByMember.status).toBe(200);
+    await passwordLogin(TEACHER, "teacher-pass-4");
 
     // A non-administrator member of the same school may not.
     const editor = await passwordLogin(EDITOR, "editor-pass-1");
     const byEditor = await request(
       "POST",
       "/platform/api/v1/auth/set-password",
-      { personId: teacherPersonId, newPassword: "teacher-pass-4" },
+      { personId: teacherPersonId, newPassword: "teacher-pass-5" },
       { cookie: editor },
     );
     expect(byEditor.status).toBe(403);
@@ -669,7 +688,7 @@ describe.skipIf(!url)("membership administration (Issue #128)", () => {
     const byAdminB = await request(
       "POST",
       "/platform/api/v1/auth/set-password",
-      { personId: teacherPersonId, newPassword: "teacher-pass-4" },
+      { personId: teacherPersonId, newPassword: "teacher-pass-5" },
       { cookie: adminB },
     );
     expect(byAdminB.status).toBe(404);
