@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
 import { loadAuthConfig } from "./auth/config.js";
 import { loadChangesServiceConfig } from "./changes/routes.js";
@@ -12,6 +13,7 @@ import {
   createHolidayStoreFromEnv,
   createMasterStoreFromEnv,
   createWebhookStoreFromEnv,
+  runMigrationsFromEnv,
 } from "./db/runtime.js";
 import { createWebhookDispatcher, loadWebhookDestinations } from "./webhooks/deliver.js";
 
@@ -19,6 +21,17 @@ import { createWebhookDispatcher, loadWebhookDestinations } from "./webhooks/del
 // JWT_SECRET it throws, and the process stops instead of starting with
 // an unsafe default (Issue #5).
 const authConfig = loadAuthConfig();
+
+// Production startup (Issue #132): apply pending migrations before
+// accepting traffic, so the process never serves against an
+// unmigrated schema. Development keeps the explicit db:migrate step.
+// The folder is resolved from this entry file: "../drizzle" names the
+// platform migrations folder both from src/index.ts and from the
+// bundled dist/index.js.
+if (process.env.NODE_ENV === "production") {
+  await runMigrationsFromEnv(fileURLToPath(new URL("../drizzle", import.meta.url)));
+}
+
 const store = createAuthStoreFromEnv();
 const changeStore = createChangeStoreFromEnv();
 const masterStore = createMasterStoreFromEnv();

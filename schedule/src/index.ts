@@ -1,8 +1,9 @@
+import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
 import { createScheduleAuth } from "./auth.js";
 import { createScheduleActions, createSchedulePublicActions } from "./composition.js";
 import { loadScheduleConfig } from "./config.js";
-import { createDbFromEnv } from "./db/runtime.js";
+import { createDbFromEnv, runMigrationsFromEnv } from "./db/runtime.js";
 import { createPlatformApiClient } from "./platformClient.js";
 import { createPublicPlatformClient } from "./publicViews/publicPlatform.js";
 
@@ -11,6 +12,16 @@ import { createPublicPlatformClient } from "./publicViews/publicPlatform.js";
 // process stops instead of starting half-wired (the platform takes
 // the same stance for its secrets).
 const config = loadScheduleConfig();
+
+// Production startup (Issue #132): apply pending migrations before
+// accepting traffic, so the process never serves against an
+// unmigrated schema. Development keeps the explicit db:migrate step.
+// The folder is resolved from this entry file: "../drizzle" names the
+// schedule migrations folder both from src/index.ts and from the
+// bundled dist/index.js.
+if (process.env.NODE_ENV === "production") {
+  await runMigrationsFromEnv(fileURLToPath(new URL("../drizzle", import.meta.url)));
+}
 
 const db = createDbFromEnv();
 const platformClient = createPlatformApiClient({ baseUrl: config.platformBaseUrl });

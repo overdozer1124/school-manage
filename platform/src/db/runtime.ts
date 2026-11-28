@@ -73,6 +73,25 @@ export function createWebhookStoreFromEnv(): WebhookStore {
 }
 
 /**
+ * Production startup (Issue #132): applies pending migrations on the
+ * platform database, then closes the connection again. The entry
+ * point calls this before it starts listening when
+ * NODE_ENV=production, so a deployed process never serves against an
+ * unmigrated schema. The migrations folder is passed in by the entry
+ * point: its location relative to the entry file is the same in the
+ * src/ layout and in the bundled dist/ layout, while this module's
+ * own location differs between the two.
+ */
+export async function runMigrationsFromEnv(migrationsFolder: string): Promise<void> {
+  const { db, queryClient } = createDb();
+  try {
+    await runMigrations(db, migrationsFolder);
+  } finally {
+    await queryClient.end();
+  }
+}
+
+/**
  * The operator setup commands (Issue #127, src/setup/cli.ts): one
  * runner owns the connection, applies pending migrations first (an
  * empty database is a valid starting point), and closes the client

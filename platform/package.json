@@ -6,6 +6,12 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
+    "build": "pnpm run build:server && pnpm run build:client",
+    "build:server": "esbuild src/index.ts src/setup/setupSchool.ts src/setup/setupPlatformAdmin.ts --bundle --platform=node --format=esm --target=node22 --packages=external --alias:@school-manage/calendar-types=../packages/calendar-types/src/index.ts --alias:@school-manage/platform-client=../packages/platform-client/src/index.ts --outdir=dist",
+    "build:client": "node scripts/build-client.mjs",
+    "start:prod": "node dist/index.js",
+    "setup:school:prod": "node dist/setup/setupSchool.js",
+    "setup:platform-admin:prod": "node dist/setup/setupPlatformAdmin.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
@@ -29,6 +35,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.18.0",
     "drizzle-kit": "^0.31.5",
+    "esbuild": "0.25.12",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
