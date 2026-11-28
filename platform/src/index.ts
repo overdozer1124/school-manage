@@ -15,6 +15,7 @@ import {
   createWebhookStoreFromEnv,
   runMigrationsFromEnv,
 } from "./db/runtime.js";
+import { loadServerConfig } from "./serverConfig.js";
 import { createWebhookDispatcher, loadWebhookDestinations } from "./webhooks/deliver.js";
 
 // Loading the auth configuration comes first on purpose: without
@@ -41,9 +42,9 @@ const holidayStore = createHolidayStoreFromEnv();
 const absenceStore = createAbsenceStoreFromEnv();
 const subdivisionStore = createAbsenceSubdivisionStoreFromEnv();
 
-const port = Number(process.env.PLATFORM_PORT ?? 3001);
+const { port, host } = loadServerConfig();
 
-createApp({
+const app = createApp({
   auth: { store, config: authConfig },
   changes: { config: authConfig, authStore: store, changeStore, ...loadChangesServiceConfig() },
   masters: { config: authConfig, authStore: store, masterStore },
@@ -58,9 +59,19 @@ createApp({
     masterStore,
     ...loadPublicReadConfig(),
   },
-}).listen(port, () => {
-  console.log(`platform listening on port ${port}`);
 });
+// The listen host comes from the configuration: in production it
+// defaults to 127.0.0.1, so the service is only reachable through
+// nginx on the same host and never directly from outside (PR #139
+// review). Undefined keeps the historical all-interfaces behaviour.
+const onListening = () => {
+  console.log(`platform listening on ${host ?? "*"}:${port}`);
+};
+if (host === undefined) {
+  app.listen(port, onListening);
+} else {
+  app.listen(port, host, onListening);
+}
 
 // Webhook delivery (Issue #106): only when at least one destination
 // is configured. With none, nothing polls and nothing is sent — the

@@ -37,7 +37,7 @@ const auth = await createScheduleAuth({
   devAuth: config.devAuth,
 });
 
-createApp({
+const app = createApp({
   auth,
   // TRUST_PROXY (Issue #41 re-review): behind the reverse proxy
   // this is what makes req.ip — and with it the public route's
@@ -49,6 +49,16 @@ createApp({
   // The public viewing actions (Issue #41) are built once: there
   // is no caller's cookie to bind — the token is the credential.
   createPublicActions: () => createSchedulePublicActions(db, publicPlatformClient),
-}).listen(config.port, () => {
-  console.log(`schedule listening on port ${config.port}`);
 });
+// The listen host comes from the configuration: in production it
+// defaults to 127.0.0.1, so the service is only reachable through
+// nginx on the same host and never directly from outside (PR #139
+// review). Undefined keeps the historical all-interfaces behaviour.
+const onListening = () => {
+  console.log(`schedule listening on ${config.host ?? "*"}:${config.port}`);
+};
+if (config.host === undefined) {
+  app.listen(config.port, onListening);
+} else {
+  app.listen(config.port, config.host, onListening);
+}

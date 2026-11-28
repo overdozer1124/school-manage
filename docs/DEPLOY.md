@@ -64,6 +64,7 @@ pnpm build
 
 - `pnpm build` は、platform と schedule のサーバー（`dist/`）と、schedule の画面（`schedule/client/dist/`）をまとめてビルドします。platform の画面はまだ無いので、その分は自動で飛ばされます（画面ができたら同じコマンドでビルドされます）。
 - メモリの小さい VPS でビルドが止まる場合は、時間割の手順と同じく `export NODE_OPTIONS="--max-old-space-size=2048"` を付けてから再実行してください。
+- 作業ユーザーのそろえ方：初回の配置はこの手順のとおり root で行い、4 で配置先の所有者を専用ユーザー `school-manage` に変えます。**2回目以降の更新（7）は、配置からビルドまで `school-manage` ユーザーで行ってください**（`sudo -u school-manage -H` を付けます）。root のまま更新すると、ファイルの所有者が混ざって PM2 側から読み書きできないファイルができます。
 
 ## 3. 環境変数の置き場所
 
@@ -104,6 +105,7 @@ env PATH=$PATH pm2 startup systemd -u school-manage --hp /home/school-manage
 
 - `deploy/ecosystem.config.cjs` が、platform と schedule の2プロセスの定義です。環境変数は3のファイルを PM2 が読みます（`env_file`）。
 - **起動時にマイグレーションが自動で流れます**（`NODE_ENV=production` のとき、受け付けを始める前に未適用分を適用します）。手で流す場合は、先に環境変数を読み込んでから `pnpm --filter @school-manage/platform db:migrate` と `pnpm --filter @school-manage/schedule db:migrate` を実行してください。
+- 2回目以降の起動では、マイグレーションの記録用の表がすでにあるため、ログに `relation "__drizzle_migrations" already exists, skipping` という NOTICE が出ることがあります。害はありません（「記録用の表は作成済みなので飛ばした」という意味です）。
 - 必須の環境変数が足りないと、プロセスは起動を止めてエラーを出します（既定値で動き続けることはしません）。`pm2 logs` で理由を確認してください。
 
 ## 5. /healthz の確認
@@ -116,6 +118,17 @@ curl -s http://127.0.0.1:3002/healthz   # schedule → {"status":"ok"} が返れ
 ```
 
 どちらも HTTP 200 で `{"status":"ok"}` が返れば、起動はできています。ドメイン経由の確認は nginx（Issue #133）の後に行います。
+
+### 外から直接届かないことの確認
+
+本番では、両サービスは `127.0.0.1` でだけ待ち受けます（nginx と同じサーバー内からしか届かない形です）。VPS のファイアウォールが 3001・3002 を開けていても、nginx と TLS を通さずに外から直接届くことはありません。待ち受けているアドレスを確認してください。
+
+```sh
+ss -ltnp | grep -E ':(3001|3002)'
+# → 127.0.0.1:3001 / 127.0.0.1:3002 のように出ればよい
+```
+
+`0.0.0.0:3001` のように出た場合は全アドレスで待ち受けているので、`/etc/school-manage/` の env ファイルに `PLATFORM_HOST` / `SCHEDULE_HOST` の指定が無いか（あれば外すか `127.0.0.1` にする）、`NODE_ENV=production` で起動しているかを確認してください。
 
 ## 6. 最初の学校を作る
 
@@ -137,11 +150,11 @@ pnpm --filter @school-manage/platform setup:school:prod \
 
 ## 7. 更新の手順（2回目以降）
 
+配置からビルドまでは、ファイルの所有者をそろえるため `school-manage` ユーザーで行います（2 の注意も見てください）。
+
 ```sh
-cd /opt/school-manage
-git pull
-pnpm install --frozen-lockfile
-pnpm build
+sudo -u school-manage -H git -C /opt/school-manage pull
+sudo -u school-manage -H bash -c 'cd /opt/school-manage && pnpm install --frozen-lockfile && pnpm build'
 sudo -u school-manage -H pm2 restart school-manage-platform school-manage-schedule
 curl -s http://127.0.0.1:3001/healthz
 curl -s http://127.0.0.1:3002/healthz

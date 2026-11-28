@@ -16,6 +16,7 @@
 |---|---|---|---|
 | `PLATFORM_DATABASE_URL` | 必須 | 秘密 | platform の DB への接続文字列。専用利用者 `platform_app` のものを使います（他の DB には接続できません）。 |
 | `PLATFORM_PORT` | 任意（既定 3001） | ― | platform が受け付けるポート。 |
+| `PLATFORM_HOST` | 任意 | ― | platform が待ち受けるアドレス。未設定のとき、本番（`NODE_ENV=production`）では `127.0.0.1`（同じサーバーの nginx からだけ届く形）、開発では全アドレスになります。 |
 | `JWT_SECRET` | 必須 | 秘密 | ログインセッションの JWT の署名鍵。未設定だと起動しません。既定値はありません。 |
 | `JWT_EXPIRES_IN` | 任意（既定 `7d`） | ― | セッションの有効期間。数値＋単位（`s`/`m`/`h`/`d`）で書きます。 |
 | `GOOGLE_CLIENT_ID` | 任意 | ― | Google ログインのクライアント ID。`GOOGLE_CLIENT_SECRET` と組で設定します（片方だけはエラー）。 |
@@ -41,6 +42,7 @@
 | `SCHEDULE_DATABASE_URL` | 必須 | 秘密 | schedule の DB への接続文字列。専用利用者 `schedule_app` のものを使います（他の DB には接続できません）。 |
 | `PLATFORM_BASE_URL` | 必須 | ― | platform のオリジン（末尾の `/` なし）。同一サーバー内では `http://127.0.0.1:3001` の形にします。未設定だと起動しません。 |
 | `SCHEDULE_PORT` | 任意（既定 3002） | ― | schedule が受け付けるポート。 |
+| `SCHEDULE_HOST` | 任意 | ― | schedule が待ち受けるアドレス。未設定のとき、本番（`NODE_ENV=production`）では `127.0.0.1`（同じサーバーの nginx からだけ届く形）、開発では全アドレスになります。 |
 | `PUBLIC_READ_SERVICE_TOKEN` | 任意 | 秘密 | 公開閲覧で platform に提示する認証情報。platform 側と**同じ値**にします。 |
 | `TRUST_PROXY` | 任意 | ― | Express の `trust proxy` 設定（例：`loopback`）。公開閲覧の接続元ごとの制限を正しく数えるために、nginx の後ろでは設定します。 |
 | `PLATFORM_DEV_AUTH` | 開発専用 | ― | `1` で開発用の認証アダプタを有効にします。**本番では絶対に設定しません。** |
