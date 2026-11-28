@@ -5,6 +5,7 @@ import { createCalendarRouter, type CalendarRouterDeps } from "./calendar/routes
 import { createChangesRouter, type ChangesRouterDeps } from "./changes/routes.js";
 import { createEventsRouter, type EventsRouterDeps } from "./events/routes.js";
 import { createMastersRouter, type MastersRouterDeps } from "./masters/routes.js";
+import { createMembersRouter, type MembersRouterDeps } from "./memberships/routes.js";
 import { createPublicReadRouter, type PublicReadRouterDeps } from "./publicRead/routes.js";
 
 /**
@@ -23,6 +24,7 @@ export interface AppDeps {
   calendar?: CalendarRouterDeps;
   absences?: AbsencesRouterDeps;
   publicRead?: PublicReadRouterDeps;
+  members?: MembersRouterDeps;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -62,6 +64,12 @@ export function createApp(deps: AppDeps = {}) {
 
   if (deps.absences) {
     app.use("/platform/api/v1", createAbsencesRouter(deps.absences));
+  }
+
+  // Membership administration (Issue #128): a school administrator
+  // invites, approves and manages their own school's members.
+  if (deps.members) {
+    app.use("/platform/api/v1", createMembersRouter(deps.members));
   }
 
   // The public-read path (Issue #82): the schedule server's

@@ -10,6 +10,7 @@ import { createDb } from "./client.js";
 import { createDayStore, createHolidayStore, type DayStore, type HolidayStore } from "./days.js";
 import { createEventStore, type EventStore } from "./events.js";
 import { createMasterStore, type MasterStore } from "./masters.js";
+import { createMembershipAdminStore, type MembershipAdminStore } from "./membershipAdmin.js";
 import { runMigrations } from "./migrate.js";
 import {
   setupPlatformAdmin,
@@ -70,6 +71,11 @@ export function createAbsenceSubdivisionStoreFromEnv(): AbsenceSubdivisionStore 
 export function createWebhookStoreFromEnv(): WebhookStore {
   const { db } = createDb();
   return createWebhookStore(db);
+}
+
+export function createMembershipAdminStoreFromEnv(): MembershipAdminStore {
+  const { db } = createDb();
+  return createMembershipAdminStore(db);
 }
 
 /**

@@ -61,3 +61,19 @@ export async function requireWriter(deps: GuardDeps, req: Request): Promise<Auth
   }
   throw new AuthError(403, "権限がありません");
 }
+
+/**
+ * Admin in either product of the session's school (Issue #128):
+ * membership administration — inviting, approving, roles, teacher
+ * links, enrolment ends — is an administrator's work (D-2/D-4), not
+ * a writer's. The school administered is always the session's own.
+ */
+export async function requireSchoolAdmin(deps: GuardDeps, req: Request): Promise<AuthedMember> {
+  const authed = await requireMember(deps, req);
+  const products: Product[] = ["schedule", "timetable"];
+  for (const product of products) {
+    const role = await deps.authStore.findProductRole(authed.membership.id, product);
+    if (role && role.role === "Admin") return authed;
+  }
+  throw new AuthError(403, "権限がありません");
+}

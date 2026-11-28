@@ -5,11 +5,13 @@ import { AuthError } from "./errors.js";
 import type { GoogleAuthClient } from "./google.js";
 import {
   candidateMemberships,
+  isMembershipCandidate,
   todayString,
   UNCONFIRMED_SCHOOL_MEMBERSHIP_MESSAGE,
 } from "./membership.js";
 import { createLoginOAuthState, parseLoginOAuthState } from "./oauthState.js";
 import {
+  hashPassword,
   signSelectionToken,
   signSessionToken,
   verifyPassword,
@@ -429,4 +431,86 @@ export async function getAuthContext(
     isSuperAdmin: await ctx.store.isPlatformAdmin(person.id),
     teacherId: membership.teacherId,
   };
+}
+
+/**
+ * Sets a person's password (Issue #128): the setPassword of
+ * school-timetable's routers/auth.ts, ported to HTTP+JSON. This is
+ * the last step of the invited person's first-login flow — they sign
+ * in first (Google, once an administrator has approved the
+ * membership), then set the password that the password login uses.
+ *
+ * The judgments are the source's, adapted to the person/membership
+ * split (8-2-1), where the password belongs to the person, not to a
+ * school row:
+ * - A session is required; a person sets their own password.
+ * - Another person's password may be reset only by an administrator
+ *   of the session's school (Admin in either product) or by a
+ *   platform operator, and — for a school administrator — only when
+ *   the target belongs to that school (tenant isolation), and never
+ *   for a platform operator (the source's SuperAdmin rule).
+ * - When a password already exists, changing it as its owner needs
+ *   the current password; an administrator's reset may omit it (when
+ *   one is supplied, it must verify).
+ * The password itself is never audited or logged — only the fact.
+ */
+export async function setPassword(
+  ctx: Ctx,
+  claims: SessionClaims,
+  input: { personId?: string; currentPassword?: string; newPassword: string },
+): Promise<{ success: true }> {
+  const targetId = input.personId ?? claims.personId;
+  const target = await ctx.store.findPersonById(targetId);
+  if (!target) throw new AuthError(404, "ユーザーが見つかりません");
+  const isSelf = targetId === claims.personId;
+
+  if (!isSelf) {
+    const callerIsOperator = await ctx.store.isPlatformAdmin(claims.personId);
+    if (!callerIsOperator) {
+      const today = todayString();
+      const callerMemberships = await ctx.store.listMemberships(claims.personId);
+      const callerMembership = callerMemberships.find(
+        (m) => m.schoolId === claims.schoolId && isMembershipCandidate(m, today),
+      );
+      let callerIsAdmin = false;
+      if (callerMembership) {
+        for (const product of PRODUCTS) {
+          const role = await ctx.store.findProductRole(callerMembership.id, product);
+          if (role?.role === "Admin") {
+            callerIsAdmin = true;
+            break;
+          }
+        }
+      }
+      if (!callerIsAdmin) throw new AuthError(403, "この操作を実行する権限がありません");
+      const targetMemberships = await ctx.store.listMemberships(targetId);
+      if (!targetMemberships.some((m) => m.schoolId === claims.schoolId)) {
+        throw new AuthError(404, "ユーザーが見つかりません");
+      }
+      if (await ctx.store.isPlatformAdmin(targetId)) {
+        throw new AuthError(403, "運営者のパスワードは運営者だけが変更できます");
+      }
+    }
+  }
+
+  if (target.passwordHash) {
+    if (isSelf || input.currentPassword !== undefined) {
+      if (input.currentPassword === undefined) {
+        throw new AuthError(400, "現在のパスワードを入力してください");
+      }
+      const ok = await verifyPassword(input.currentPassword, target.passwordHash);
+      if (!ok) throw new AuthError(401, "現在のパスワードが正しくありません");
+    }
+    // An administrator resetting another member's password may omit
+    // the current password (source behaviour).
+  }
+
+  await ctx.store.setPasswordHash(targetId, await hashPassword(input.newPassword));
+  await audit(ctx, {
+    schoolId: claims.schoolId,
+    personId: claims.personId,
+    action: "auth.password.set",
+    summary: isSelf ? "自分のパスワードを設定" : "管理者がパスワードを再設定",
+  });
+  return { success: true };
 }
