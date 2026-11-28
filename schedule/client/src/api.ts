@@ -394,9 +394,14 @@ export function createScheduleApi(options: ScheduleApiOptions = {}): ScheduleApi
 }
 
 /** The platform login URL a 401 sends the person to (8-3-1: the
- *  platform lives on the same domain, at /login). */
-export function platformLoginUrl(): string {
-  return "/login";
+ *  platform lives on the same domain, at /login). The current page
+ *  rides along as the return path (Issue #129), so a completed
+ *  login lands back here instead of at a doorway; the login page
+ *  accepts only same-domain paths, so what is attached here can
+ *  never become an open redirect. */
+export function platformLoginUrl(returnPath?: string): string {
+  const target = returnPath ?? `${window.location.pathname}${window.location.search}`;
+  return `/login?return=${encodeURIComponent(target)}`;
 }
 
 // ---- the public viewing client (Issue #41) ------------------------

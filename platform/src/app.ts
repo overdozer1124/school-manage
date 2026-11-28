@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import { createAbsencesRouter, type AbsencesRouterDeps } from "./absences/routes.js";
 import { createAuthRouter, type AuthRouterDeps } from "./auth/routes.js";
@@ -25,6 +28,10 @@ export interface AppDeps {
   absences?: AbsencesRouterDeps;
   publicRead?: PublicReadRouterDeps;
   members?: MembersRouterDeps;
+  /** Directory of the built login screens (client/dist). When it
+   *  does not exist the /login path stays unserved; tests point it
+   *  at a fixture directory. */
+  loginClientDistDir?: string;
 }
 
 export function createApp(deps: AppDeps = {}) {
@@ -77,6 +84,32 @@ export function createApp(deps: AppDeps = {}) {
   // by the service credential rather than a member's session.
   if (deps.publicRead) {
     app.use("/platform/api/v1", createPublicReadRouter(deps.publicRead));
+  }
+
+  // The login screens (Issue #129): the built platform/client is
+  // served under /login on the shared domain (8-3-1), the same
+  // arrangement as the schedule server's screens. The entry file
+  // sits beside src/ in a checkout and beside the bundled server
+  // in production, so ../client/dist names the same directory in
+  // both. When the build output does not exist, /login stays
+  // unserved rather than answering with something else.
+  const loginDistDir =
+    deps.loginClientDistDir ??
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../client/dist");
+  if (existsSync(path.join(loginDistDir, "index.html"))) {
+    const loginIndex = path.join(loginDistDir, "index.html");
+    // The exact path first: the Google callback returns to
+    // /login?code=…&state=…, and a static directory redirect would
+    // be one more hop for it to survive.
+    app.get("/login", (_req, res) => {
+      res.sendFile(loginIndex);
+    });
+    app.use("/login", express.static(loginDistDir));
+    // SPA fallback: the screens route by state, not by URL, so any
+    // path under /login that is not a file is the screen itself.
+    app.get("/login/*splat", (_req, res) => {
+      res.sendFile(loginIndex);
+    });
   }
 
   return app;

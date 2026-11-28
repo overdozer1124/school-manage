@@ -7,6 +7,7 @@
 | [schedule/DESIGN.md](schedule/DESIGN.md) | 行事予定アプリの DB・カスタマイズ設計（定義駆動モデル、v0.6） |
 | [HANDOFF-2026-11-07.md](HANDOFF-2026-11-07.md) | セッションの引き継ぎ（開いている PR・Issue、未起票の作業、確認事項） |
 | [OPERATIONS.md](OPERATIONS.md) | 運営者向け手順（初期設定：最初の学校・管理者・運営者の作成コマンド） |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | 開発手順（共通基盤と行事予定を手元で一緒に動かす） |
 | [WORKFLOW.md](WORKFLOW.md) | Issue と PR による作業の流れ（Builder＝Muse、起票とレビュー＝Claude、連絡＝swarmchat） |
 
 これらは overdozer1124/school-schedule から移したもので、2026-11-07 以降はこちらが正本です。試作のコードと、試作のレビュー対応記録（REVIEW-RESPONSE.md）は school-schedule に残っています。
