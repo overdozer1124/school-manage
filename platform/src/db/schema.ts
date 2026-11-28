@@ -67,6 +67,21 @@ export const persons = pgTable(
     // complete the person's own password change. Cleared when the
     // person sets the password themselves.
     passwordChangeRequired: boolean("password_change_required").notNull().default(false),
+    // The school scope of the current password (Issue #140, the
+    // scope-limiting shape ODN chose on 2026-11-28): while
+    // passwordScopeRestricted is on, a password login may only open
+    // passwordScopeSchoolId — the school of the administrator who
+    // set the password — and no other school, even after the forced
+    // change above has been completed with the change token (the
+    // administrator knows that password too, so the change alone
+    // proves nothing). A platform operator has no school of their
+    // own, so an operator-set password is restricted with a null
+    // school id: it opens no school at all. The restriction is
+    // lifted only when the person re-sets the password in a
+    // Google-login session, the one proof the administrator who set
+    // the password does not hold.
+    passwordScopeRestricted: boolean("password_scope_restricted").notNull().default(false),
+    passwordScopeSchoolId: text("password_scope_school_id"),
     createdAt: createdAt(),
   },
   // Email identity is case-insensitive: uniqueness is on lower(email),

@@ -18,6 +18,7 @@ import {
   type LoginResult,
 } from "./service.js";
 import {
+  authMethodOf,
   expiresInToSeconds,
   isPasswordChangeClaims,
   isSelectionClaims,
@@ -323,8 +324,11 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       if (isPasswordChangeClaims(claims)) throw new AuthError(401, "認証が必要です");
       const input = parseBody(selectSchoolSchema, req);
       // Both a selection token and a live session may choose: the first
-      // completes the login, the second is switching schools.
-      const result = await selectSchool(ctx, claims.personId, input.schoolId);
+      // completes the login, the second is switching schools. Either
+      // way the choice is judged with the proof the token rests on,
+      // so a scoped password cannot reach an out-of-scope school by
+      // naming it here (Issue #140).
+      const result = await selectSchool(ctx, claims.personId, input.schoolId, authMethodOf(claims));
       sendLoginResult(deps, res, result);
     } catch (error) {
       handleError(res, error);

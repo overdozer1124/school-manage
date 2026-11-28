@@ -330,6 +330,8 @@ export function createMembershipAdminStore(db: Db): MembershipAdminStore {
             googleId: null,
             passwordHash: null,
             passwordChangeRequired: false,
+            passwordScopeRestricted: false,
+            passwordScopeSchoolId: null,
             createdAt: new Date(),
           };
         }
